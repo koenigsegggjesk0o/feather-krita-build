@@ -1,0 +1,65 @@
+name: Android Bridge .so
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'native/krita_bridge/krita_bridge_portable.cpp'
+      - 'native/krita_bridge/krita_bridge.h'
+      - '.github/workflows/android-bridge.yml'
+
+jobs:
+  build-android-so:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Locate NDK
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
+          ls /usr/local/lib/android/sdk/ndk/ || true
+          NDK=$(ls -d /usr/local/lib/android/sdk/ndk/* 2>/dev/null | sort -V | tail -1)
+          if [ -z "$NDK" ]; then NDK="$ANDROID_NDK_HOME"; fi
+          echo "NDK_ROOT=$NDK" >> $GITHUB_ENV
+          echo "Using NDK: $NDK"
+
+      - name: Build libkrita_bridge.so for all ABIs
+        run: |
+          set -e
+          TC="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          mkdir -p out/arm64-v8a out/armeabi-v7a out/x86_64
+          # arm64-v8a
+          "$TC/aarch64-linux-android21-clang++" -std=c++17 -shared -O2 -fPIC \
+            -ffunction-sections -fdata-sections -Wl,--gc-sections \
+            native/krita_bridge/krita_bridge_portable.cpp \
+            -o out/arm64-v8a/libkrita_bridge.so -lz
+          # armeabi-v7a (thumbv7)
+          "$TC/armv7a-linux-androideabi21-clang++" -std=c++17 -shared -O2 -fPIC \
+            -ffunction-sections -fdata-sections -Wl,--gc-sections \
+            native/krita_bridge/krita_bridge_portable.cpp \
+            -o out/armeabi-v7a/libkrita_bridge.so -lz
+          # x86_64 (emulator)
+          "$TC/x86_64-linux-android21-clang++" -std=c++17 -shared -O2 -fPIC \
+            -ffunction-sections -fdata-sections -Wl,--gc-sections \
+            native/krita_bridge/krita_bridge_portable.cpp \
+            -o out/x86_64/libkrita_bridge.so -lz
+          file out/*/libkrita_bridge.so
+          ls -la out/*/libkrita_bridge.so
+
+      - name: Smoke test the Linux host build (same portable source)
+        run: |
+          g++ -std=c++17 -fPIC -shared -O2 -o /tmp/libkrita_bridge_host.so \
+            native/krita_bridge/krita_bridge_portable.cpp -lz
+          g++ -std=c++17 -O1 -o /tmp/smoke native/krita_bridge/smoke_test.cpp -ldl
+          python3 native/krita_bridge/make_test_kpp.py /tmp
+          /tmp/smoke /tmp/libkrita_bridge_host.so /tmp/synthetic-deflated.kpp
+
+      - name: Upload Android .so artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: krita-bridge-android
+          path: out/
+          retention-days: 90
