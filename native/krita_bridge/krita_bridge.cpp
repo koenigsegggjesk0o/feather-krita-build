@@ -38,17 +38,7 @@
 #include <vector>
 #include <new>
 
-// Use the system zlib when available; otherwise the bundled RFC 1951
-// inflater below covers .kpp payloads (MSVC runners ship no zlib).
-#if defined(__has_include)
-#  if __has_include(<zlib.h>)
-#    define FEATHER_HAVE_ZLIB 1
-#  endif
-#endif
-
-#ifdef FEATHER_HAVE_ZLIB
 #include <zlib.h>
-#endif
 
 #include <QImage>
 #include <QPainter>
@@ -76,9 +66,6 @@ inline uint32_t rd32(const uint8_t* p) {
            (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
 }
 
-// Inflate raw DEFLATE data. Primary implementation uses the system
-// zlib when present; the portable fallback lives below.
-#ifdef FEATHER_HAVE_ZLIB
 // Inflate raw DEFLATE data using the system zlib (inflateInit2 with
 // negative window bits = raw deflate, no zlib header).
 QByteArray inflateRaw(const char* data, size_t n) {
@@ -107,167 +94,6 @@ QByteArray inflateRaw(const char* data, size_t n) {
     return out;
 }
 
-#else
-// Tiny inflate (raw DEFLATE) implementation. Pure C++, ~150 lines,
-// no external deps. Sufficient for the small XML payloads in .kpp.
-// Based on the RFC 1951 spec.
-struct Inflator {
-    const uint8_t* in;
-    size_t inLen;
-    size_t inPos = 0;
-    int bitBuf = 0;
-    int bitCnt = 0;
-    QByteArray out;
-
-    Inflator(const char* src, size_t n) : in(reinterpret_cast<const uint8_t*>(src)), inLen(n) {}
-
-    int bit(int n) {
-        while (bitCnt < n) {
-            if (inPos >= inLen) return -1;
-            bitBuf |= int(in[inPos++]) << bitCnt;
-            bitCnt += 8;
-        }
-        int v = bitBuf & ((1 << n) - 1);
-        bitBuf >>= n;
-        bitCnt -= n;
-        return v;
-    }
-    void alignByte() {
-        bitBuf >>= (bitCnt & 7);
-        bitCnt -= (bitCnt & 7);
-    }
-    // Decode a Huffman code from a (count, symbol) table.
-    int huff(const int* counts, const int* symbols) {
-        int code = 0, first = 0, idx = 0;
-        for (int len = 1; len <= 15; ++len) {
-            code |= bit(1);
-            if (code < first + counts[len]) {
-                return symbols[idx + (code - first)];
-            }
-            idx += counts[len];
-            first = (first + counts[len]) << 1;
-            first |= 1;
-            code <<= 1;
-            if (code < 0) return -1;
-        }
-        return -1;
-    }
-    bool inflateBlock() {
-        const int bfinal = bit(1);
-        const int btype = bit(2);
-        if (btype == 0) {
-            // Stored
-            alignByte();
-            if (inPos + 4 > inLen) return false;
-            const uint16_t len = uint16_t(in[inPos]) | (uint16_t(in[inPos + 1]) << 8);
-            inPos += 4;
-            if (inPos + len > inLen) return false;
-            out.append(reinterpret_cast<const char*>(in + inPos), len);
-            inPos += len;
-        } else if (btype == 1 || btype == 2) {
-            // Fixed or dynamic Huffman
-            int litCounts[16] = {0}, litSyms[288] = {0};
-            int distCounts[16] = {0}, distSyms[32] = {0};
-            if (btype == 1) {
-                for (int i = 0; i < 144; ++i) litSyms[i] = i;
-                for (int i = 144; i < 256; ++i) litSyms[i] = i;
-                for (int i = 0; i < 24; ++i) litSyms[256 + i] = 280 + i;
-                for (int i = 0; i < 8; ++i) litSyms[280 + i] = 0; // unused
-                for (int i = 0; i < 144; ++i) litCounts[8]++;
-                for (int i = 144; i < 256; ++i) litCounts[9]++;
-                for (int i = 256; i < 280; ++i) litCounts[7]++;
-                for (int i = 280; i < 288; ++i) litCounts[8]++;
-                for (int i = 0; i < 32; ++i) { distSyms[i] = i; distCounts[5]++; }
-            } else {
-                int hlit = bit(5) + 257;
-                int hdist = bit(5) + 1;
-                int hclen = bit(4) + 4;
-                static const int order[19] = {16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15};
-                int clCounts[16] = {0}, clSyms[19] = {0};
-                for (int i = 0; i < hclen; ++i) clSyms[i] = bit(3);
-                // Build counts from clSyms (the code lengths in order)
-                int clCode[19] = {0};
-                for (int i = 0; i < hclen; ++i) clCode[order[i]] = clSyms[i];
-                // Build canonical Huffman for code-length codes
-                int clCnt[16] = {0}, clSym[19] = {0};
-                for (int i = 0; i < 19; ++i) clCnt[clCode[i]]++;
-                int idx = 0;
-                for (int len = 1; len <= 15; ++len) {
-                    for (int i = 0; i < 19; ++i) if (clCode[i] == len) clSym[idx++] = i;
-                }
-                // Read hlit + hdist code lengths
-                int total = hlit + hdist;
-                std::vector<int> lengths(total, 0);
-                int i = 0;
-                while (i < total) {
-                    int sym = huff(clCnt, clSym);
-                    if (sym < 0) return false;
-                    if (sym < 16) {
-                        lengths[i++] = sym;
-                    } else if (sym == 16) {
-                        if (i == 0) return false;
-                        int rep = bit(2) + 3;
-                        for (int k = 0; k < rep && i < total; ++k) lengths[i++] = lengths[i - 1];
-                    } else if (sym == 17) {
-                        int rep = bit(3) + 3;
-                        for (int k = 0; k < rep && i < total; ++k) lengths[i++] = 0;
-                    } else { // 18
-                        int rep = bit(7) + 11;
-                        for (int k = 0; k < rep && i < total; ++k) lengths[i++] = 0;
-                    }
-                }
-                // Build literal + distance Huffman tables
-                for (int k = 0; k < total; ++k) {
-                    if (k < hlit) litCounts[lengths[k]]++;
-                    else distCounts[lengths[k]]++;
-                }
-                int li = 0, di = 0;
-                for (int len = 1; len <= 15; ++len) {
-                    for (int k = 0; k < hlit; ++k) if (lengths[k] == len) litSyms[li++] = k;
-                    for (int k = hlit; k < total; ++k) if (lengths[k] == len) distSyms[di++] = k - hlit;
-                }
-            }
-            // Decode symbols
-            static const int lenBase[29] = {3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258};
-            static const int lenExtra[29] = {0,0,0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,0};
-            static const int distBase[30] = {1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577};
-            static const int distExtra[30] = {0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13};
-            for (;;) {
-                int sym = huff(litCounts, litSyms);
-                if (sym < 0) return false;
-                if (sym == 256) break; // end of block
-                if (sym < 256) {
-                    out.append(char(sym));
-                } else {
-                    int li = sym - 257;
-                    if (li >= 29) return false;
-                    int length = lenBase[li] + (lenExtra[li] ? bit(lenExtra[li]) : 0);
-                    int dsym = huff(distCounts, distSyms);
-                    if (dsym < 0 || dsym >= 30) return false;
-                    int dist = distBase[dsym] + (distExtra[dsym] ? bit(distExtra[dsym]) : 0);
-                    if (dist > out.size()) return false;
-                    int startPos = out.size();
-                    out.resize(out.size() + length);
-                    for (int k = 0; k < length; ++k) {
-                        out[startPos + k] = out[startPos + k - dist];
-                    }
-                }
-            }
-        } else {
-            return false;
-        }
-        return bfinal == 0;
-    }
-    QByteArray run() {
-        while (inflateBlock()) {}
-        return out;
-    }
-};
-
-QByteArray inflateRaw(const char* data, size_t n) {
-    Inflator inf(data, n);
-
-#endif
 
 // Find the End-of-Central-Directory record. Returns its offset or -1.
 qint64 findEocd(const QByteArray& data) {

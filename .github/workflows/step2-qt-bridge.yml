@@ -12,6 +12,9 @@ jobs:
   compile:
     runs-on: windows-2022
     timeout-minutes: 30
+    env:
+      VCPKG_ROOT: 'C:\vcpkg'
+      VCPKG_TRIPLET: 'x64-windows-static-md'
     steps:
       - uses: actions/checkout@v4
 
@@ -26,19 +29,27 @@ jobs:
           python -m aqt install-qt windows desktop 6.6.3 win64_msvc2019_64 --outputdir C:\Qt
           echo "Qt6_DIR=C:\Qt\6.6.3\msvc2019_64" >> $env:GITHUB_ENV
 
-      - name: Compile krita_bridge.dll (Qt-only, no Krita headers)
+      - name: Install zlib (vcpkg, static /MD triplet)
+        run: |
+          & "$env:VCPKG_ROOT\vcpkg.exe" install "zlib:$env:VCPKG_TRIPLET"
+          & "$env:VCPKG_ROOT\vcpkg.exe" list
+
+      - name: Compile krita_bridge.dll (Qt + zlib, no Krita headers)
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           set QT=C:\Qt\6.6.3\msvc2019_64
+          set VCPKG_INC=%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\include
+          set VCPKG_LIB=%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\lib
           cl /nologo /std:c++17 /Zc:__cplusplus /permissive- /Zc:preprocessor /EHsc /MD /O2 /LD ^
             -I"native\krita_bridge" ^
             -I"%QT%\include" -I"%QT%\include\QtCore" -I"%QT%\include\QtGui" ^
+            -I"%VCPKG_INC%" ^
             /DQT_CORE_LIB /DQT_GUI_LIB /DQT_NO_DEBUG /DNDEBUG /D_USE_MATH_DEFINES ^
             native\krita_bridge\krita_bridge.cpp ^
             /Fe:krita_bridge.dll ^
-            /link /LIBPATH:"%QT%\lib" ^
-            Qt6Core.lib Qt6Gui.lib ^
+            /link /LIBPATH:"%QT%\lib" /LIBPATH:"%VCPKG_LIB%" ^
+            Qt6Core.lib Qt6Gui.lib zlib.lib ^
             /SUBSYSTEM:CONSOLE /MACHINE:X64
           if exist krita_bridge.dll (echo SUCCESS) else (echo FAILED && exit 1)
 
@@ -52,12 +63,24 @@ jobs:
             /link /SUBSYSTEM:CONSOLE
           if exist smoke_test.exe (echo SMOKE TEST BUILT) else (echo FAILED && exit 1)
 
-      - name: Run runtime smoke test against DLL
+      - name: Generate synthetic .kpp test presets
+        run: python native/krita_bridge/make_test_kpp.py .
+
+      - name: Run runtime smoke test against DLL (dab + DEFLATED preset)
         shell: cmd
         run: |
           set QT=C:\Qt\6.6.3\msvc2019_64
           set PATH=%CD%;%QT%\bin;%PATH%
-          smoke_test.exe krita_bridge.dll
+          smoke_test.exe krita_bridge.dll synthetic-deflated.kpp
+          echo EXITCODE=%ERRORLEVEL%
+          exit /b %ERRORLEVEL%
+
+      - name: Run runtime smoke test against DLL (STORED preset)
+        shell: cmd
+        run: |
+          set QT=C:\Qt\6.6.3\msvc2019_64
+          set PATH=%CD%;%QT%\bin;%PATH%
+          smoke_test.exe krita_bridge.dll synthetic-stored.kpp
           echo EXITCODE=%ERRORLEVEL%
           exit /b %ERRORLEVEL%
 
@@ -72,5 +95,5 @@ jobs:
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          dumpbin /exports krita_bridge.dll | findstr /R "krita_brush_init krita_brush_destroy krita_brush_generate_dab krita_brush_load_preset krita_brush_version" || (echo MISSING SYMBOLS && exit 1)
+          dumpbin /exports krita_bridge.dll | findstr /R "krita_brush_init krita_brush_destroy krita_brush_generate_dab krita_brush_load_preset krita_brush_version krita_brush_get_size" || (echo MISSING SYMBOLS && exit 1)
           echo All expected symbols present.
