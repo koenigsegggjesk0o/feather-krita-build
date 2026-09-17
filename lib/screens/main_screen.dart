@@ -27,7 +27,6 @@ import 'package:vector_math/vector_math_64.dart' show Vector2, Vector3;
 import 'package:feather_krita/theme/app_theme.dart';
 import 'package:feather_krita/state/editor_state.dart';
 import 'package:feather_krita/engine/stroke_manager.dart';
-import 'package:feather_krita/engine/synthetic_dab.dart';
 import 'package:feather_krita/ffi/krita_bindings.dart';
 import 'package:feather_krita/io/app_dirs.dart';
 import 'package:feather_krita/io/feather_project.dart';
@@ -289,12 +288,12 @@ class _MainScreenState extends State<MainScreen> {
     return FeatherProjectDocument.fromEditor(_state).toJsonString();
   }
 
-  /// Dab source for GIF stroke replay. Strokes always replay with the
-  /// pure-Dart dab at their own recorded color: the native engine only
-  /// holds the single globally-configured color, which would repaint
-  /// multi-color documents with the wrong palette.
+  /// Dab source for GIF stroke replay. Delegates to [EditorState]'s
+  /// shared replay rule (synthetic dab at the stroke's recorded color —
+  /// the native engine only holds the globally-configured color, which
+  /// would repaint multi-color documents with the wrong palette).
   BrushDab _replayDab(Stroke stroke, double pressure, double sizePx) {
-    return syntheticDab(sizePx, stroke.color);
+    return _state.replayDab(stroke, pressure, sizePx);
   }
 
   // ----- Open project -----------------------------------------------------

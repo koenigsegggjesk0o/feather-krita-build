@@ -280,7 +280,7 @@ class _AppEntryState extends State<_AppEntry> with SingleTickerProviderStateMixi
                 right: 0,
                 child: Center(
                   child: Text(
-                    'v0.8 · GPL-2.0-or-later',
+                    'v0.11 · GPL-2.0-or-later',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.2),
                       fontSize: 10,

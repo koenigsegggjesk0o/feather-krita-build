@@ -14,11 +14,11 @@
 // stroke color matches the live brush, and the pure-Dart synthetic dab
 // otherwise (the native engine only knows the globally configured color).
 
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 
+import 'package:feather_krita/engine/stroke_replay.dart';
 import 'package:feather_krita/engine/texture_painter.dart';
 import 'package:feather_krita/ffi/krita_bindings.dart';
 import 'package:feather_krita/models/stroke.dart';
@@ -89,39 +89,11 @@ class GifExporter {
 
     // Build the paint plan: a flat list of stamp operations (uv, pressure,
     // stroke) with the same inter-point spacing the canvas uses.
-    final plan = <_Stamp>[];
-    for (final stroke in strokes) {
-      if (!stroke.isVisible || stroke.points.isEmpty) continue;
-      final pts = stroke.points;
-      _Stamp? previous;
-      for (final p in pts) {
-        final uv = p.uv;
-        if (uv == null) continue; // replay-unknown footprint
-        if (previous != null) {
-          // Interpolate dabs between samples using the canvas heuristic:
-          // step = (size / texWidth) * (0.25 + spacing * 1.5), with the
-          // default spacing 0.10 folded in (0.4 factor).
-          final step = (brushSizePx / sourceTextureSize) * 0.4;
-          if (step > 0) {
-            final du = uv.x - previous.u;
-            final dv = uv.y - previous.v;
-            final dist = math.sqrt(du * du + dv * dv);
-            final count = (dist / step).floor();
-            for (var i = 1; i <= count; i++) {
-              final t = i / (count + 1);
-              plan.add(_Stamp(
-                stroke,
-                previous.u + du * t,
-                previous.v + dv * t,
-                previous.pressure * (1 - t) + p.pressure * t,
-              ));
-            }
-          }
-        }
-        plan.add(_Stamp(stroke, uv.x, uv.y, p.pressure));
-        previous = _Stamp(stroke, uv.x, uv.y, p.pressure);
-      }
-    }
+    final plan = buildReplayPlan(
+      strokes: strokes,
+      brushSizePx: brushSizePx,
+      sourceTextureSize: sourceTextureSize,
+    );
 
     final encoder = img.GifEncoder(
       delay: frameDelayCs,
@@ -187,13 +159,4 @@ class GifExporter {
     }
     return image;
   }
-}
-
-class _Stamp {
-  const _Stamp(this.stroke, this.u, this.v, this.pressure);
-
-  final Stroke stroke;
-  final double u;
-  final double v;
-  final double pressure;
 }

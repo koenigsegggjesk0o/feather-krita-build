@@ -15,6 +15,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:feather_krita/ffi/krita_bindings.dart';
+import 'package:meta/meta.dart';
 
 /// Composite blend modes supported by [TexturePainter].
 enum BlendMode {
@@ -166,6 +167,11 @@ class TexturePainter {
   final List<Uint8List> _undoStack;
   final List<Uint8List> _redoStack;
 
+  /// Whether a stroke-scoped undo transaction is currently open (see
+  /// [beginStrokeUndo]). While open, [paintDab] does NOT push its own
+  /// undo snapshot — the transaction's single entry covers the stroke.
+  bool _strokeUndoOpen = false;
+
   /// Width of the texture in pixels.
   int get width => _width;
 
@@ -187,8 +193,11 @@ class TexturePainter {
   }
 
   /// Clears the texture to fully transparent black.
-  void clear() {
-    _pushUndo();
+  ///
+  /// Set [pushUndo] to false inside a stroke transaction (or replay) that
+  /// already captures the pre-operation state.
+  void clear({bool pushUndo = true}) {
+    if (pushUndo) _pushUndo();
     _pixels.fillRange(0, _pixels.length, 0);
   }
 
@@ -202,6 +211,34 @@ class TexturePainter {
       _pixels[i + 3] = a;
     }
   }
+
+  /// Number of entries currently on the undo stack. Exposed for tests
+  /// that assert snapshot coalescing.
+  int get undoDepth => _undoStack.length;
+
+  /// Opens a stroke-scoped undo transaction.
+  ///
+  /// Pushes exactly ONE undo snapshot for the whole stroke, no matter how
+  /// many dabs it stamps. This used to be a full-texture copy PER DAB
+  /// (16 MB each on the default 2048x2048 texture) — a fast stroke could
+  /// allocate hundreds of megabytes of snapshots and get the app
+  /// OOM-killed on low-memory devices (loop-14 root cause). The canvas
+  /// calls this on pointer-down and [endStrokeUndo] on pointer-up/cancel.
+  void beginStrokeUndo() {
+    if (_strokeUndoOpen) return;
+    _pushUndo();
+    _strokeUndoOpen = true;
+  }
+
+  /// Closes the stroke-scoped undo transaction opened by
+  /// [beginStrokeUndo]. Safe to call without an open transaction.
+  void endStrokeUndo() {
+    _strokeUndoOpen = false;
+  }
+
+  /// True while a stroke transaction is open (paintDab pushes nothing).
+  @visibleForTesting
+  bool get isStrokeUndoOpen => _strokeUndoOpen;
 
   /// Pushes the current buffer onto the undo stack.
   void _pushUndo() {
@@ -217,6 +254,7 @@ class TexturePainter {
 
   /// Reverts to the previous texture state if any.
   bool undo() {
+    _strokeUndoOpen = false; // an undo cannot straddle an open stroke
     if (_undoStack.isEmpty) return false;
     _redoStack.add(Uint8List.fromList(_pixels));
     final prev = _undoStack.removeLast();
@@ -226,6 +264,7 @@ class TexturePainter {
 
   /// Redoes a previously undone operation if any.
   bool redo() {
+    _strokeUndoOpen = false;
     if (_redoStack.isEmpty) return false;
     _undoStack.add(Uint8List.fromList(_pixels));
     final next = _redoStack.removeLast();
@@ -292,6 +331,12 @@ class TexturePainter {
   /// destination, and the global [eraser] flag forces this behavior.
   ///
   /// Returns the number of destination pixels that were modified.
+  ///
+  /// Set [pushUndo] to false when the caller manages undo snapshots
+  /// itself (stroke transactions via [beginStrokeUndo], or replays).
+  /// Even with [pushUndo] true, no snapshot is pushed while a stroke
+  /// transaction is open — the transaction's single snapshot covers the
+  /// whole stroke.
   int paintDab(
     BrushDab dab,
     double u,
@@ -301,9 +346,10 @@ class TexturePainter {
     BlendMode mode = BlendMode.normal,
     bool eraser = false,
     double opacity = 1.0,
+    bool pushUndo = true,
   }) {
     if (dab.isEmpty) return 0;
-    _pushUndo();
+    if (pushUndo && !_strokeUndoOpen) _pushUndo();
 
     final effectiveMode = eraser ? BlendMode.erase : mode;
     final dabW = dab.width;

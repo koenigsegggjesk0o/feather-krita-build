@@ -210,6 +210,9 @@ class CanvasWidgetState extends State<CanvasWidget>
       time: 0,
       uv: hit.uv.clone(),
     ));
+    // One undo snapshot for the whole stroke (loop-14): per-dab snapshots
+    // were full-texture copies (16 MB each) and could OOM-kill the app.
+    widget.state.texture.beginStrokeUndo();
     _stampDab(hit.uv);
     HapticFeedback.selectionClick();
   }
@@ -262,6 +265,7 @@ class CanvasWidgetState extends State<CanvasWidget>
     _livePoints.clear();
     _lastUV = null;
     _lastWorld = null;
+    widget.state.texture.endStrokeUndo();
     setState(() {});
   }
 

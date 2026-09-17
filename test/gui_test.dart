@@ -226,6 +226,9 @@ void main() {
     expect(state.fileName, 'SavedDoc.feather');
     expect(state.strokes.strokes.first.points.first.uv, isNotNull,
         reason: 'v2 documents must restore per-point UVs');
+    expect(state.texture.isEmpty, isFalse,
+        reason: 'opening a project must re-render the canvas pixels from '
+            'the strokes (loop-14 texture restore)');
   });
 
   testWidgets('canvas ticker mutes when idle and wakes on interaction',

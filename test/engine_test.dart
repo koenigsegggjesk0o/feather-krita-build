@@ -9,6 +9,8 @@
 import 'package:feather_krita/engine/camera_controller.dart';
 import 'package:feather_krita/engine/guide_surface.dart';
 import 'package:feather_krita/engine/stroke_manager.dart';
+import 'package:feather_krita/engine/stroke_replay.dart';
+import 'package:feather_krita/engine/synthetic_dab.dart';
 import 'package:feather_krita/engine/texture_painter.dart';
 import 'package:feather_krita/ffi/krita_bindings.dart';
 import 'package:feather_krita/models/stroke.dart';
@@ -72,6 +74,81 @@ void main() {
       expect(pixelChannel(tex, 8, 8, 0), 255, reason: 'red after undo');
       expect(tex.redo(), isTrue);
       expect(pixelChannel(tex, 8, 8, 2), 255, reason: 'blue after redo');
+    });
+
+    test('stroke transaction coalesces undo snapshots', () {
+      final tex = TexturePainter(width: 64, height: 64);
+      final dab = syntheticDab(24, 0xFF204080);
+
+      // Inside a transaction: N dabs, ONE snapshot.
+      tex.beginStrokeUndo();
+      expect(tex.isStrokeUndoOpen, isTrue);
+      for (var i = 0; i < 5; i++) {
+        tex.paintDab(dab, 0.2 + i * 0.1, 0.5);
+      }
+      expect(tex.undoDepth, 1,
+          reason: 'the whole stroke must push exactly one snapshot '
+              '(per-dab snapshots OOM-killed the app — loop-14)');
+      tex.endStrokeUndo();
+      expect(tex.isStrokeUndoOpen, isFalse);
+      expect(tex.undoDepth, 1);
+
+      // Undo restores the pre-stroke state in one step.
+      expect(tex.isEmpty, isFalse);
+      expect(tex.undo(), isTrue);
+      expect(tex.isEmpty, isTrue, reason: 'undo must revert the full stroke');
+      expect(tex.undoDepth, 0);
+      expect(tex.undo(), isFalse);
+    });
+
+    test('paintDab without a transaction still pushes per dab', () {
+      final tex = TexturePainter(width: 64, height: 64);
+      final dab = syntheticDab(16, 0xFF102030);
+      tex.paintDab(dab, 0.3, 0.3);
+      tex.paintDab(dab, 0.6, 0.6);
+      expect(tex.undoDepth, 2,
+          reason: 'standalone callers keep the per-call undo contract');
+      expect(tex.undo(), isTrue);
+      expect(tex.undo(), isTrue);
+      expect(tex.undo(), isFalse);
+    });
+
+    test('replay restores a project texture without undo churn', () {
+      final source = TexturePainter(width: 128, height: 128);
+      source.beginStrokeUndo();
+      replayStrokesIntoTexture(
+        strokes: <Stroke>[
+          Stroke(
+            brushType: BrushType.basic,
+            color: 0xFFCC4040,
+            thickness: 20,
+            points: <StrokePoint>[
+              StrokePoint(
+                position: Vector3.zero(),
+                pressure: 1.0,
+                time: 0,
+                uv: Vector2(0.2, 0.5),
+              ),
+              StrokePoint(
+                position: Vector3.zero(),
+                pressure: 1.0,
+                time: 0.1,
+                uv: Vector2(0.8, 0.5),
+              ),
+            ],
+          ),
+        ],
+        texture: source,
+        dabFor: (stroke, pressure, sizePx) => syntheticDab(sizePx, stroke.color),
+        brushSizePx: 20,
+        brushOpacity: 1.0,
+        sourceTextureSize: 128,
+      );
+      source.endStrokeUndo();
+      expect(source.isEmpty, isFalse, reason: 'replay must stamp dabs');
+      expect(source.undoDepth, 1,
+          reason: 'the transaction pushed exactly ONE pre-replay snapshot '
+              'for the whole document restore — replay dabs push nothing');
     });
   });
 

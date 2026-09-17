@@ -319,3 +319,30 @@ Stage Summary:
 - The brush picker is REAL for the first time: 3 bundled presets + any user .kpp dropped into ~/feather_presets load through the same tolerant parser the native engine uses.
 - The editor no longer burns CPU while idle: frame ticker mutes at rest and wakes on interaction; the camera damping actually damps now (cumulative-elapsed bug fixed).
 - Remaining deferred: MP4 exporter, on-device/e2e verification, camera state in project files, file_picker UX polish.
+
+Addendum (5-loop-13, post-push):
+- Public repo sync pushed (06ab262): Build Feather-Krita App run 35282509128 SUCCESS with v0.10 code.
+- Artifacts verified: Windows zip = feather_krita.exe + krita_bridge.dll (66048 B v3); APK ships libkrita_bridge.so for arm64-v8a / armeabi-v7a / x86_64.
+- RELEASE v0.10-preset-library published (id 391102452) with both installers: https://github.com/koenigsegggjesk0o/krita/releases/tag/v0.10-preset-library
+- Private HEAD: 573716b (+ worklog). Public CI repo HEAD: 06ab262, all green. Health gates: analyze 0 issues, 39/39 tests (twice).
+
+---
+Task ID: 5-loop-14
+Agent: Z.ai Code (main, autonomous loop)
+Task: Diagnose the intermittent GUI-test-suite crash ("did not complete") — root cause was an OOM kill from per-dab undo snapshots — and fix it; restore canvas pixels on project open.
+
+Work Log:
+- Private step2-qt-bridge: unchanged billing failure (no new runs). Public builder: green at 06ab262. Entry gates: analyze 0 issues; tests FAILED 2/2 full-suite runs at gui test #4 with cascading silent "did not complete" errors (loop-13 had seen this once and dismissed it as a flake — it was not).
+- DIAGNOSIS CHAIN: (1) failing test passed alone → not deterministic; (2) running gui_test without the native .so passed 9/9 → implicated the native path; (3) standalone Dart FFI repro (scripts/ffi_repro.dart) with 12 init/destroy/paint cycles passed → bridge itself clean; (4) bisect variants (1+2, 3+4, 1+2+4, 1+2+3+4) all passed; (5) dmesg gave the smoking gun: "Out of memory: Killed process flutter_tester anon-rss:1446232kB".
+- ROOT CAUSE: TexturePainter.paintDab pushed a full-texture undo snapshot PER DAB. On the default 2048x2048 RGBA8 texture each snapshot is 16 MB; a native-engine stroke (fine spacing) stamps ~18 dabs → ~288 MB retained per stroke, up to 30 snapshots (480 MB) per EditorState. With the native engine loaded the suite crossed ~1.4 GB RSS and the kernel OOM-killer terminated flutter_tester mid-suite; the synthetic-dab fallback stayed under the line, which is why the crash looked native-correlated and probabilistic (load-dependent).
+- FIX (per-stroke undo coalescing): TexturePainter gained beginStrokeUndo()/endStrokeUndo() — ONE snapshot per stroke; paintDab(pushUndo:) suppresses per-dab pushes while a transaction is open; undo()/redo() close any open transaction; clear()/fill gained pushUndo:. CanvasWidget opens the transaction at pointer-down (before the first stamp) and closes it in _endStroke. Standalone paintDab callers keep the per-call contract (engine tests unchanged).
+- BONUS FIX (real UX gap found on the way): FeatherProjectDocument.applyTo restored strokes/brush/surface but NEVER touched the texture — opening a project left the previous document's pixels (or an empty canvas) on screen. Now applyTo clears the texture and re-renders the strokes through a NEW shared replay pipeline (lib/engine/stroke_replay.dart: buildReplayPlan + replayStrokesIntoTexture, extracted from GifExporter's identical heuristic), wrapped in one stroke transaction so the restore is atomic and cheap; per-stroke recorded thickness is honored via sizePxForStroke. GifExporter now uses the shared plan builder (behavior unchanged); EditorState.replayDab() is the shared dab rule (synthetic dab at the stroke's recorded color), main_screen delegates to it.
+- Doc fix: krita_bindings.dart BrushInputNative comment said "total 72 bytes" — the struct is and always was 64 bytes (6 double + 2 float + 2 int32); the stale comment was the exact bug class that produced loop-9's ctypes probe error.
+- Tests: engine_test +3 (transaction coalescing — 5 dabs → undoDepth 1, undo reverts the whole stroke; standalone per-dab contract preserved; replay stamps pixels without undo churn), gui_test open-dialog +1 assertion (texture non-empty after open). NOTE: first run had 1 failure — my own new test asserted undoDepth 0 after beginStrokeUndo; the pre-replay snapshot IS pushed by design, fixed the assertion.
+- Health: flutter analyze 0 issues; flutter test 42/42 PASS THREE consecutive times (bridge 7, project 5, gif/gltf 4, gui 9, engine 14, preset 3). Version 0.11.0+1; splash label v0.11; README updated (42-test gate, per-stroke undo coalescing, project texture re-render).
+- Bisect artifacts removed (test/bisect_*); scripts/ffi_repro.dart kept as the standing FFI crash-repro harness.
+
+Stage Summary:
+- The suite-stability mystery from loop-13 is SOLVED and it was a REAL app bug, not a sandbox quirk: per-dab 16 MB undo snapshots could OOM-kill the app on any low-memory device during fast strokes. Undo now costs one snapshot per stroke (~40x less memory per stroke).
+- Opening a .feather project now re-renders the canvas from the strokes — the last visible gap in the save/open loop.
+- Roadmap: steps 1-7 done + regression-gated (42 tests); remaining deferred: MP4 exporter, on-device/e2e GUI verification, camera state in project files, file_picker UX polish, undo model unification (stroke history vs texture snapshots are still separate stacks — texture undo is engine-level only today).

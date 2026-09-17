@@ -23,9 +23,11 @@ import 'package:feather_krita/engine/stroke_manager.dart';
 import 'package:feather_krita/engine/camera_controller.dart';
 import 'package:feather_krita/engine/texture_painter.dart';
 import 'package:feather_krita/engine/guide_surface.dart';
+import 'package:feather_krita/engine/synthetic_dab.dart';
 import 'package:feather_krita/ffi/krita_bindings.dart';
 import 'package:feather_krita/io/app_dirs.dart';
 import 'package:feather_krita/models/brush_preset.dart';
+import 'package:feather_krita/models/stroke.dart';
 
 /// The eight tools shown in the bottom toolbar.
 enum Tool {
@@ -307,6 +309,15 @@ class EditorState extends ChangeNotifier {
 
   void undo() => _strokes.undo();
   void redo() => _strokes.redo();
+
+  /// Dab source for stroke replay (GIF export, project-open texture
+  /// restore). Strokes always replay with the pure-Dart synthetic dab at
+  /// their own recorded color: the native engine only holds the single
+  /// globally-configured color, which would repaint multi-color
+  /// documents with the wrong palette.
+  BrushDab replayDab(Stroke stroke, double pressure, double sizePx) {
+    return syntheticDab(sizePx, stroke.color);
+  }
 
   /// Clears the document and texture for a fresh canvas.
   void newDocument() {

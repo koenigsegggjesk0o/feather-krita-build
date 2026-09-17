@@ -22,8 +22,8 @@ import 'package:ffi/ffi.dart';
 /// Mirrors `BrushInput` in `krita_bridge.h`.
 ///
 /// Describes the state of the stylus / pointer at one instant in time. The
-/// layout is identical to the C struct: 6 doubles + 2 floats + 1 int32 +
-/// padding, total 72 bytes.
+/// layout is identical to the C struct: 6 doubles + 2 floats + 2 int32
+/// (flags + explicit padding), total 64 bytes.
 final class BrushInputNative extends Struct {
   /// X position in device-independent pixels relative to the dab origin.
   @Double()

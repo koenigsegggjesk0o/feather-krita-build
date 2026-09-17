@@ -21,6 +21,7 @@
 import 'dart:convert';
 
 import 'package:feather_krita/engine/guide_surface.dart';
+import 'package:feather_krita/engine/stroke_replay.dart';
 import 'package:feather_krita/models/stroke.dart';
 import 'package:feather_krita/state/editor_state.dart';
 
@@ -187,6 +188,28 @@ class FeatherProjectDocument {
       },
     });
     state.strokes.fromJsonString(snapshot, recordUndo: true);
+
+    // Restore the canvas pixels: the .feather format stores no bitmap, so
+    // the texture is re-rendered from the strokes (loop-14). Before this,
+    // opening a project left the PREVIOUS document's pixels on screen.
+    // The whole replay shares ONE undo snapshot (the pre-open state) via
+    // a stroke transaction, and replay dabs push nothing themselves.
+    final tex = state.texture;
+    tex.beginStrokeUndo();
+    tex.clear(pushUndo: false);
+    replayStrokesIntoTexture(
+      strokes: state.strokes.strokes,
+      texture: tex,
+      dabFor: state.replayDab,
+      brushSizePx: brushSize,
+      brushOpacity: brushOpacity,
+      sourceTextureSize: textureWidth,
+      // Honor each stroke's recorded thickness (source == target size).
+      sizePxForStroke: (stroke, defaultPx) =>
+          stroke.thickness > 0 ? stroke.thickness : defaultPx,
+    );
+    tex.endStrokeUndo();
+
     state
       ..mirrorX = mirrorX
       ..mirrorY = mirrorY
