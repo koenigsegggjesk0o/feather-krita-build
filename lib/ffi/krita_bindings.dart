@@ -285,6 +285,23 @@ typedef _KritaBrushCleanupDart = void Function(Pointer<Void> handle);
 typedef _KritaBrushLastErrorNative = Pointer<Utf8> Function(Pointer<Void> handle);
 typedef _KritaBrushLastErrorDart = Pointer<Utf8> Function(Pointer<Void> handle);
 
+typedef _KritaBrushGetSizeNative = Double Function(Pointer<Void> handle);
+typedef _KritaBrushGetSizeDart = double Function(Pointer<Void> handle);
+
+typedef _KritaBrushGetOpacityNative = Double Function(Pointer<Void> handle);
+typedef _KritaBrushGetOpacityDart = double Function(Pointer<Void> handle);
+
+typedef _KritaBrushGetSpacingNative = Double Function(Pointer<Void> handle);
+typedef _KritaBrushGetSpacingDart = double Function(Pointer<Void> handle);
+
+typedef _KritaBrushGetHardnessNative = Double Function(Pointer<Void> handle);
+typedef _KritaBrushGetHardnessDart = double Function(Pointer<Void> handle);
+
+typedef _KritaBrushGetPresetNameNative = Pointer<Utf8> Function(
+    Pointer<Void> handle);
+typedef _KritaBrushGetPresetNameDart = Pointer<Utf8> Function(
+    Pointer<Void> handle);
+
 // ---------------------------------------------------------------------------
 // Dynamic library loader.
 // ---------------------------------------------------------------------------
@@ -422,7 +439,9 @@ class KritaBrushEngine {
   /// Loads a Krita brush preset (.kpp) from the filesystem.
   ///
   /// Returns `true` on success. On failure [lastError] will contain a
-  /// description.
+  /// description. After a successful load, read [currentSize],
+  /// [currentOpacity] and [currentSpacing] to reflect the preset's values
+  /// in the app UI.
   bool loadPreset(String path) {
     _checkAlive();
     final pathPtr = path.toNativeUtf8();
@@ -432,6 +451,56 @@ class KritaBrushEngine {
     } finally {
       calloc.free(pathPtr);
     }
+  }
+
+  // ----- Parameter getters (reflect loaded presets into the UI) ----------
+
+  late final _KritaBrushGetSizeDart _getSize =
+      _lib.lookupFunction<_KritaBrushGetSizeNative, _KritaBrushGetSizeDart>(
+          'krita_brush_get_size');
+  late final _KritaBrushGetOpacityDart _getOpacity =
+      _lib.lookupFunction<_KritaBrushGetOpacityNative, _KritaBrushGetOpacityDart>(
+          'krita_brush_get_opacity');
+  late final _KritaBrushGetSpacingDart _getSpacing =
+      _lib.lookupFunction<_KritaBrushGetSpacingNative, _KritaBrushGetSpacingDart>(
+          'krita_brush_get_spacing');
+  late final _KritaBrushGetHardnessDart _getHardness =
+      _lib.lookupFunction<_KritaBrushGetHardnessNative, _KritaBrushGetHardnessDart>(
+          'krita_brush_get_hardness');
+  late final _KritaBrushGetPresetNameDart _getPresetName =
+      _lib.lookupFunction<_KritaBrushGetPresetNameNative, _KritaBrushGetPresetNameDart>(
+          'krita_brush_get_preset_name');
+
+  /// The brush diameter currently set on the native engine.
+  double get currentSize {
+    _checkAlive();
+    return _getSize(_handle);
+  }
+
+  /// The flow / opacity currently set on the native engine.
+  double get currentOpacity {
+    _checkAlive();
+    return _getOpacity(_handle);
+  }
+
+  /// The dab spacing currently set on the native engine.
+  double get currentSpacing {
+    _checkAlive();
+    return _getSpacing(_handle);
+  }
+
+  /// The hardness currently set on the native engine.
+  double get currentHardness {
+    _checkAlive();
+    return _getHardness(_handle);
+  }
+
+  /// The name of the last successfully loaded preset, or '' if none.
+  String get currentPresetName {
+    _checkAlive();
+    final ptr = _getPresetName(_handle);
+    if (ptr == nullptr) return '';
+    return ptr.toDartString();
   }
 
   /// Sets the brush diameter in pixels.
