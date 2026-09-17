@@ -38,8 +38,9 @@ jobs:
         shell: cmd
         run: |
           rem Capture vcpkg paths BEFORE vcvars64.bat — vcvars overwrites VCPKG_ROOT
-          set VCPKG_INC=C:\vcpkg\installed\x64-windows-static-md\include
-          set VCPKG_LIB=C:\vcpkg\installed\x64-windows-static-md\lib
+          rem Use the packages staging dir — installed/ layout is unreliable here
+          set VCPKG_INC=C:\vcpkg\packages\zlib_x64-windows-static-md\include
+          set VCPKG_LIB=C:\vcpkg\packages\zlib_x64-windows-static-md\lib
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           set QT=C:\Qt\6.6.3\msvc2019_64
           echo VCPKG_INC=%VCPKG_INC%
