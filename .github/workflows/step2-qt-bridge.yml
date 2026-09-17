@@ -41,6 +41,9 @@ jobs:
           set QT=C:\Qt\6.6.3\msvc2019_64
           set VCPKG_INC=%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\include
           set VCPKG_LIB=%VCPKG_ROOT%\installed\%VCPKG_TRIPLET%\lib
+          echo VCPKG_INC=%VCPKG_INC%
+          dir /b "%VCPKG_INC%\zlib.h" || (echo === zlib.h NOT in %VCPKG_INC% === && dir /b "%VCPKG_ROOT%\installed" && exit /b 1)
+          dir /b "%VCPKG_LIB%\zlib.lib" || (echo === zlib.lib missing === && exit /b 1)
           cl /nologo /std:c++17 /Zc:__cplusplus /permissive- /Zc:preprocessor /EHsc /MD /O2 /LD ^
             -I"native\krita_bridge" ^
             -I"%QT%\include" -I"%QT%\include\QtCore" -I"%QT%\include\QtGui" ^
