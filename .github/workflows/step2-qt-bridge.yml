@@ -1,0 +1,76 @@
+name: Step 2 Qt Bridge
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, feather-krita-flutter]
+    paths:
+      - 'native/krita_bridge/**'
+      - '.github/workflows/step2-qt-bridge.yml'
+
+jobs:
+  compile:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Qt6
+        run: |
+          pip install aqtinstall
+          python -m aqt install-qt windows desktop 6.6.3 win64_msvc2019_64 --outputdir C:\Qt
+          echo "Qt6_DIR=C:\Qt\6.6.3\msvc2019_64" >> $env:GITHUB_ENV
+
+      - name: Compile krita_bridge.dll (Qt-only, no Krita headers)
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          set QT=C:\Qt\6.6.3\msvc2019_64
+          cl /nologo /std:c++17 /Zc:__cplusplus /permissive- /Zc:preprocessor /EHsc /MD /O2 /LD ^
+            -I"native\krita_bridge" ^
+            -I"%QT%\include" -I"%QT%\include\QtCore" -I"%QT%\include\QtGui" ^
+            /DQT_CORE_LIB /DQT_GUI_LIB /DQT_NO_DEBUG /DNDEBUG /D_USE_MATH_DEFINES ^
+            native\krita_bridge\krita_bridge.cpp ^
+            /Fe:krita_bridge.dll ^
+            /link /LIBPATH:"%QT%\lib" ^
+            Qt6Core.lib Qt6Gui.lib ^
+            /SUBSYSTEM:CONSOLE /MACHINE:X64
+          if exist krita_bridge.dll (echo SUCCESS) else (echo FAILED && exit 1)
+
+      - name: Compile runtime smoke test
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          cl /nologo /std:c++17 /EHsc /MD /O2 ^
+            native\krita_bridge\smoke_test.cpp ^
+            /Fe:smoke_test.exe ^
+            /link /SUBSYSTEM:CONSOLE
+          if exist smoke_test.exe (echo SMOKE TEST BUILT) else (echo FAILED && exit 1)
+
+      - name: Run runtime smoke test against DLL
+        shell: cmd
+        run: |
+          set QT=C:\Qt\6.6.3\msvc2019_64
+          set PATH=%CD%;%QT%\bin;%PATH%
+          smoke_test.exe krita_bridge.dll
+          echo EXITCODE=%ERRORLEVEL%
+          exit /b %ERRORLEVEL%
+
+      - name: Upload krita_bridge.dll
+        uses: actions/upload-artifact@v4
+        with:
+          name: krita-bridge-dll
+          path: krita_bridge.dll
+          retention-days: 90
+
+      - name: Verify DLL exports
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          dumpbin /exports krita_bridge.dll | findstr /R "krita_brush_init krita_brush_destroy krita_brush_generate_dab krita_brush_load_preset krita_brush_version" || (echo MISSING SYMBOLS && exit 1)
+          echo All expected symbols present.
