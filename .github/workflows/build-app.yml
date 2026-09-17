@@ -1,0 +1,99 @@
+name: Build Feather-Krita App
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'lib/**'
+      - 'windows/**'
+      - 'android/**'
+      - 'assets/**'
+      - 'pubspec.yaml'
+      - 'native/krita_bridge/**'
+      - '.github/workflows/build-app.yml'
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.3'
+          channel: stable
+          cache: true
+
+      - name: Flutter doctor
+        run: flutter doctor -v
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Flutter analyze
+        run: flutter analyze
+
+      - name: Build Windows EXE (release)
+        run: flutter build windows --release
+
+      - name: Verify bundled DLL next to exe
+        shell: pwsh
+        run: |
+          $exe = "build/windows/x64/runner/Release/feather_krita.exe"
+          $dll = "build/windows/x64/runner/Release/krita_bridge.dll"
+          if (-not (Test-Path $exe)) { Get-ChildItem build/windows/x64/runner/Release; Write-Error "exe missing"; exit 1 }
+          if (-not (Test-Path $dll)) { Write-Error "krita_bridge.dll NOT bundled next to exe"; exit 1 }
+          Write-Host "OK: exe + krita_bridge.dll present in Release output"
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath feather-krita-windows.zip
+          Get-Item feather-krita-windows.zip | Select-Object Name, Length
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: feather-krita-windows
+          path: feather-krita-windows.zip
+          retention-days: 30
+
+  build-android:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.3'
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build Android APK (release, debug-signed for direct install)
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk feather-krita-android.apk
+          ls -la feather-krita-android.apk
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: feather-krita-android
+          path: feather-krita-android.apk
+          retention-days: 30

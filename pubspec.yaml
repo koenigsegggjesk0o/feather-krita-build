@@ -1,0 +1,66 @@
+name: feather_krita
+description: 3D Drawing app with Krita brush engine - like Feather 3D but for Windows & Android
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # 3D Rendering (disabled for now - causes build issues)
+  # flutter_gl: ^0.0.21
+  # three_dart: ^0.0.16
+  
+  # FFI for Krita C++ engine
+  ffi: ^2.1.0
+  
+  # State Management
+  riverpod: ^2.5.0
+  flutter_riverpod: ^2.5.0
+  
+  # UI Components
+  # flutter_acrylic: ^1.1.0  # disabled - Windows VS2026 compat issue
+  # bitsdojo_window: ^0.1.6  # disabled - Windows VS2026 compat issue
+  # glassmorphism_widgets: ^0.1.2  # disabled - not critical
+  
+  # File & Export
+  file_picker: ^8.0.0
+  share_plus: ^9.0.0
+  path_provider: ^2.1.0
+  
+  # Math & Vector
+  vector_math: ^2.1.4
+  
+  # Image Processing
+  image: ^3.3.0
+  
+  # Archive / XML (for Krita .kpp brush preset loading)
+  archive: ^3.4.0
+  xml: ^6.4.0
+  
+  # Storage
+  shared_preferences: ^2.3.0
+  
+  # Sensors (for mobile)
+  sensors_plus: ^6.0.0
+  
+  # Permission (Android) - disabled for Windows compat
+  # permission_handler: ^11.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/brushes/
+    - assets/textures/
+    - assets/icons/
