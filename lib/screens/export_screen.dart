@@ -101,37 +101,49 @@ class _ExportScreenState extends State<ExportScreen> {
           children: [
             _Header(onClose: widget.onClose),
             const Divider(height: 24, color: AppTheme.glassBorder),
-            _FormatGrid(
-              selected: _selected,
-              isPro: widget.isPro,
-              onSelected: (f) => setState(() {
-                _selected = f;
-                _resultPath = null;
-                _error = null;
-              }),
-            ),
-            const SizedBox(height: 16),
-            _QualityRow(
-              quality: _quality,
-              enabled: _qualityApplicable(),
-              onChanged: (q) => setState(() => _quality = q.round()),
-            ),
-            const SizedBox(height: 16),
-            _SummaryRow(
-              format: _selected,
-              baseName: widget.baseName,
-              quality: _quality,
-            ),
-            const SizedBox(height: 16),
-            _ActionArea(
-              busy: _busy,
-              progress: _progress,
-              locked: _locked,
-              resultPath: _resultPath,
-              error: _error,
-              onExport: _run,
-              onUpgrade: widget.onUpgrade,
-              onClose: widget.onClose,
+            // Scrollable body: on short screens (landscape phones, small
+            // desktop windows) the dialog would otherwise overflow and push
+            // the action buttons out of the hit-test region.
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _FormatGrid(
+                      selected: _selected,
+                      isPro: widget.isPro,
+                      onSelected: (f) => setState(() {
+                        _selected = f;
+                        _resultPath = null;
+                        _error = null;
+                      }),
+                    ),
+                    const SizedBox(height: 16),
+                    _QualityRow(
+                      quality: _quality,
+                      enabled: _qualityApplicable(),
+                      onChanged: (q) => setState(() => _quality = q.round()),
+                    ),
+                    const SizedBox(height: 16),
+                    _SummaryRow(
+                      format: _selected,
+                      baseName: widget.baseName,
+                      quality: _quality,
+                    ),
+                    const SizedBox(height: 16),
+                    _ActionArea(
+                      busy: _busy,
+                      progress: _progress,
+                      locked: _locked,
+                      resultPath: _resultPath,
+                      error: _error,
+                      onExport: _run,
+                      onUpgrade: widget.onUpgrade,
+                      onClose: widget.onClose,
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         ),

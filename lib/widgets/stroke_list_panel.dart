@@ -153,12 +153,17 @@ class _Header extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        const Text(
-          'Layers',
-          style: TextStyle(
-            color: AppTheme.textPrimary,
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
+        // Expanded + ellipsis: keeps the header from overflowing when the
+        // title (or a localized equivalent) is wider than the panel.
+        const Expanded(
+          child: Text(
+            'Layers',
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
         const SizedBox(width: 6),
@@ -177,7 +182,6 @@ class _Header extends StatelessWidget {
             ),
           ),
         ),
-        const Spacer(),
         IconButton(
           icon: const Icon(Icons.select_all_rounded, size: 16),
           color: AppTheme.textTertiary,

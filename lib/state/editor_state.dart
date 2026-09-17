@@ -118,6 +118,10 @@ class EditorState extends ChangeNotifier {
 
   void _forward() => notifyListeners();
 
+  /// Public change-notification wrapper. Widgets that mutate [EditorState]
+  /// fields directly (e.g. grid toggles) call this to rebuild listeners.
+  void notify() => notifyListeners();
+
   // ----- Brush engine lifecycle -----------------------------------------
 
   void _tryLoadBrushEngine() {
@@ -202,14 +206,27 @@ class EditorState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Loads [preset] into the native brush engine (if available) and updates
-  /// the displayed preset name. Non-fatal if the engine rejects the preset.
+  /// Loads [preset] into the native brush engine (if available), reflects
+  /// the preset's parameter values into the UI state (sliders, name) and
+  /// updates the displayed preset name. Non-fatal if the engine rejects
+  /// the preset — the synthetic dab fallback still works.
   void loadBrushPreset(BrushPreset preset) {
     _brushPresetName = preset.name;
     final path = preset.filePath;
     if (_brushEngine != null && path != null) {
       try {
-        _brushEngine!.loadPreset(path);
+        final e = _brushEngine!;
+        if (e.loadPreset(path)) {
+          // Reflect the native engine's values (parsed from the .kpp)
+          // back into the session state so the UI stays in sync.
+          if (e.currentSize > 0) _brushSize = e.currentSize.clamp(1.0, 500.0);
+          if (e.currentOpacity > 0) {
+            _brushOpacity = e.currentOpacity.clamp(0.0, 1.0);
+          }
+          if (e.currentSpacing > 0) {
+            _brushSpacing = e.currentSpacing.clamp(0.0, 1.0);
+          }
+        }
       } catch (_) {
         // Ignore — the synthetic dab fallback still works.
       }
