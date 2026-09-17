@@ -44,7 +44,11 @@ jobs:
           set QT=C:\Qt\6.6.3\msvc2019_64
           echo VCPKG_INC=%VCPKG_INC%
           dir /b "%VCPKG_INC%\zlib.h" || (echo === zlib.h NOT in %VCPKG_INC% === && dir /b "C:\vcpkg\installed" && exit /b 1)
-          dir /b "%VCPKG_LIB%\zlib.lib" || (echo === zlib.lib missing === && exit /b 1)
+          echo === LIB DIR CONTENTS ===
+          dir /b "%VCPKG_LIB%"
+          set ZLIB_LIB=zlib.lib
+          if not exist "%VCPKG_LIB%\zlib.lib" set ZLIB_LIB=zlibstatic.lib
+          echo Using ZLIB_LIB=%ZLIB_LIB%
           cl /nologo /std:c++17 /Zc:__cplusplus /permissive- /Zc:preprocessor /EHsc /MD /O2 /LD ^
             -I"native\krita_bridge" ^
             -I"%QT%\include" -I"%QT%\include\QtCore" -I"%QT%\include\QtGui" ^
@@ -53,7 +57,7 @@ jobs:
             native\krita_bridge\krita_bridge.cpp ^
             /Fe:krita_bridge.dll ^
             /link /LIBPATH:"%QT%\lib" /LIBPATH:"%VCPKG_LIB%" ^
-            Qt6Core.lib Qt6Gui.lib zlib.lib ^
+            Qt6Core.lib Qt6Gui.lib %ZLIB_LIB% ^
             /SUBSYSTEM:CONSOLE /MACHINE:X64
           if exist krita_bridge.dll (echo SUCCESS) else (echo FAILED && exit 1)
 
