@@ -1,32 +1,45 @@
-# feather-krita-build
+# Feather-Krita
 
-CI builder for the [Feather-Krita](https://github.com/koenigsegggjesk0o/krita) native brush bridge.
+A 3D painting app: draw on parametric guide surfaces (spheres, cylinders,
+tori, custom tubes) with a real Krita-compatible brush engine, sculpt with
+liquify tools, preview in an orbit-camera 3D viewport, and export to PNG /
+JPEG / GIF / video / OBJ / glTF.
 
-This repository exists to compile `krita_bridge.dll` on GitHub Actions Windows runners.
-It is public because public repositories receive unlimited GitHub Actions minutes,
-while the main project repository is private (quota-limited).
+Built with Flutter (Dart) plus a native C++ brush engine (`krita_bridge`)
+accessed through `dart:ffi`.
 
-## What is built
+## Architecture
 
-- `native/krita_bridge/krita_bridge.cpp` — Qt-only implementation of the
-  Krita-compatible brush engine C ABI (`krita_bridge.h`):
-  - Soft-round brush dabs (radial-gradient falloff, pressure-scaled, hardness-aware)
-  - `.kpp` preset loading via built-in ZIP reader + raw DEFLATE inflater + XML parser
-  - Error handling with descriptive messages
-- `native/krita_bridge/smoke_test.cpp` — runtime test that loads the DLL
-  (LoadLibrary/GetProcAddress — same mechanism as Dart FFI), generates dabs at
-  multiple pressures, verifies pixel output, and exercises error paths.
+| Layer | Path | What it does |
+|---|---|---|
+| Native bridge | `native/krita_bridge/` | C ABI brush engine: soft-round radial-gradient dabs, pressure/hardness, eraser masks, `.kpp` preset loading (built-in ZIP reader + zlib + XML). Two builds: **Qt6** (desktop, links QPainter) and **portable** (Qt-free, ships on Android/Linux). |
+| FFI bindings | `lib/ffi/krita_bindings.dart` | Struct-safe Dart bindings matching `krita_bridge.h` byte-for-byte; dynamic-library loader per platform. |
+| 3D engine | `lib/engine/` | `TexturePainter` (2048² RGBA8 texture, 14 blend modes, undo/redo), `GuideSurface` (parametric meshes + raycast), `StrokeManager` (mirror, liquify, 50-level history), `CameraController` (damped orbit). |
+| UI | `lib/screens/`, `lib/widgets/` | Glassmorphism editor: 8 tools, brush settings, color picker, joystick, stroke list. |
+| Tests | `test/` | 15 tests: native dab contract, preset loading, texture compositing, mirror, raycast, PNG export round-trip. |
 
-## Workflow
+## Platform status
 
-`step2-qt-bridge.yml`:
-1. Install Qt 6.6.3 (msvc2019_64) via aqtinstall
-2. Compile `krita_bridge.dll` with MSVC (`/std:c++17`, x64)
-3. Compile + run the runtime smoke test against the DLL
-4. Upload `krita_bridge.dll` as artifact `krita-bridge-dll`
-5. Verify exported symbols with dumpbin
+| Platform | Native lib | Status |
+|---|---|---|
+| Windows | `krita_bridge.dll` (Qt build, MSVC x64) | ✅ CI-built, bundled next to `feather_krita.exe` |
+| Android | `libkrita_bridge.so` (portable) × arm64-v8a / armeabi-v7a / x86_64 | ✅ CI-built, in `jniLibs/` |
+| Linux | `libkrita_bridge.so` (portable) | ✅ bundled via `linux/CMakeLists.txt` (`flutter build linux` needs GTK3 dev headers) |
 
-## Validation status
+## Building
 
-The same source compiles cleanly with `g++ -std=c++17` on Linux against Qt 6.6.3
-and passes the runtime smoke test (dab alpha falloff, pressure scaling, error paths).
+```bash
+flutter pub get
+flutter test          # 15-test regression suite (loads the real native bridge)
+flutter analyze       # must report zero issues
+flutter build windows # or: flutter build apk / flutter build linux
+```
+
+Windows/Linux builds copy the native bridge automatically (see
+`windows/runner/CMakeLists.txt` and `linux/CMakeLists.txt`).
+
+## Releases
+
+Installable artifacts (Windows zip, Android APK) are published on the
+[GitHub releases page](https://github.com/koenigsegggjesk0o/krita/releases):
+`v0.6-bridge-working`, `v0.7-eraser-fix`.

@@ -211,7 +211,7 @@ class _CanvasWidgetState extends State<CanvasWidget>
 
   void _endStroke() {
     _drawing = false;
-    if (_livePoints.length >= 1) {
+    if (_livePoints.isNotEmpty) {
       final isErase = widget.state.activeTool == Tool.erase;
       final stroke = Stroke(
         brushType: isErase ? BrushType.eraser : _brushTypeForTool(),
@@ -687,7 +687,7 @@ class _ScenePainter extends CustomPainter {
 
   void _drawStroke(Canvas canvas, Size size, Matrix4 vp, Stroke stroke,
       {required bool isMirror}) {
-    if (stroke.points.length < 1) return;
+    if (stroke.points.isEmpty) return;
     final pts = <Offset>[];
     final widths = <double>[];
     final distScale = (state.camera.currentDistance / 6.0).clamp(0.3, 3.0);

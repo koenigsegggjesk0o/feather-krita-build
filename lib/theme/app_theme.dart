@@ -34,9 +34,9 @@ class AppTheme {
   // Text colors
   static const Color textPrimary = Color(0xFFFFFFFF);
   static const Color textSecondary = Color(0xFFEBEBF5);
-  static const Color textTertiary = Color(0xFFEBEBF599);
+  static const Color textTertiary = Color(0x99EBEBF5);
   static const Color textDark = Color(0xFF000000);
-  static const Color textDarkSecondary = Color(0xFF3C3C4399);
+  static const Color textDarkSecondary = Color(0x993C3C43);
 
   // Glass effect colors
   static const Color glassBlur = Color(0x30FFFFFF);
