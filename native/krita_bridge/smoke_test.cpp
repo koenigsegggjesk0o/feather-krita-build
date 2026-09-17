@@ -122,6 +122,34 @@ int main(int argc, char** argv) {
     printf("low-pressure dab: ok=%d w=%d\n", (int)ok, dab.width);
     if (ok) releaseDab(ctx, &dab);
 
+    // Eraser mode: must return a BLACK-ALPHA MASK dab (not transparent).
+    // The Dart compositor uses the dab alpha as the erase strength.
+    // Regression: a DestinationOut-painted transparent dab made erasing a
+    // silent no-op on Windows.
+    bool eraserOk = true;
+    {
+        input.pressure = 1.0;
+        input.flags = 1; // kBrushInputEraser
+        ok = generateDab(ctx, &input, &dab);
+        if (!ok || !dab.pixels || dab.width == 0) {
+            printf("FAIL: eraser generate_dab ok=%d\n", (int)ok);
+            eraserOk = false;
+        } else {
+            const uint8_t* ec = dab.pixels + ((size_t)dab.height / 2) * dab.stride + ((size_t)dab.width / 2) * 4;
+            printf("eraser center RGBA: %d,%d,%d,%d\n", ec[0], ec[1], ec[2], ec[3]);
+            size_t nonZero = 0;
+            for (size_t i = 0; i < (size_t)dab.stride * dab.height; ++i) if (dab.pixels[i]) ++nonZero;
+            if (nonZero == 0) { printf("FAIL: eraser dab fully transparent\n"); eraserOk = false; }
+            if (ec[0] != 0 || ec[1] != 0 || ec[2] != 0 || ec[3] < 200) {
+                printf("FAIL: eraser dab must be black+opaque at center\n");
+                eraserOk = false;
+            }
+            releaseDab(ctx, &dab);
+        }
+        input.flags = 0;
+    }
+    printf("eraser mask: %s\n", eraserOk ? "OK" : "FAIL");
+
     // Preset API robustness
     int32_t rc = loadPreset(ctx, "/nonexistent/file.kpp");
     printf("load_preset(badpath): rc=%d (expect nonzero)\n", rc);
@@ -164,6 +192,6 @@ int main(int argc, char** argv) {
     cleanup(ctx);
     destroy(ctx);
     printf("destroy: OK\n");
-    printf((pixelsOk && presetOk) ? "SMOKE TEST: PASS\n" : "SMOKE TEST: FAIL\n");
-    return (pixelsOk && presetOk) ? 0 : 1;
+    printf((pixelsOk && presetOk && eraserOk) ? "SMOKE TEST: PASS\n" : "SMOKE TEST: FAIL\n");
+    return (pixelsOk && presetOk && eraserOk) ? 0 : 1;
 }

@@ -281,8 +281,11 @@ QImage makeDab(double radius, double hardness, double pressure,
     QRadialGradient grad(QPointF(r, r), radius);
     const QColor col(int(cr * 255), int(cg * 255), int(cb * 255), int(a * 255 * pressure));
     if (eraser) {
-        // Eraser: paint transparent (destination-out).
-        p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
+        // Eraser: return a BLACK-ALPHA MASK dab. The Dart compositor applies
+        // it with BlendMode.erase (destination-out), using the dab's alpha as
+        // the erase strength. NOTE: painting with CompositionMode_DestinationOut
+        // onto this transparent image would be a no-op (dest alpha 0 stays 0),
+        // so we must paint the mask with the default SourceOver mode.
         grad.setColorAt(0.0, QColor(0, 0, 0, int(255 * pressure)));
         grad.setColorAt(std::min(1.0, hardness), QColor(0, 0, 0, int(255 * pressure)));
         grad.setColorAt(1.0, QColor(0, 0, 0, 0));
