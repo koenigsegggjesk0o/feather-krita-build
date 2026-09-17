@@ -38,6 +38,8 @@
 #include <vector>
 #include <new>
 
+#include <zlib.h>
+
 #include <QImage>
 #include <QPainter>
 #include <QTransform>
@@ -64,165 +66,32 @@ inline uint32_t rd32(const uint8_t* p) {
            (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
 }
 
-// Tiny inflate (raw DEFLATE) implementation. Pure C++, ~150 lines,
-// no external deps. Sufficient for the small XML payloads in .kpp.
-// Based on the RFC 1951 spec.
-struct Inflator {
-    const uint8_t* in;
-    size_t inLen;
-    size_t inPos = 0;
-    int bitBuf = 0;
-    int bitCnt = 0;
-    QByteArray out;
-
-    Inflator(const char* src, size_t n) : in(reinterpret_cast<const uint8_t*>(src)), inLen(n) {}
-
-    int bit(int n) {
-        while (bitCnt < n) {
-            if (inPos >= inLen) return -1;
-            bitBuf |= int(in[inPos++]) << bitCnt;
-            bitCnt += 8;
-        }
-        int v = bitBuf & ((1 << n) - 1);
-        bitBuf >>= n;
-        bitCnt -= n;
-        return v;
-    }
-    void alignByte() {
-        bitBuf >>= (bitCnt & 7);
-        bitCnt -= (bitCnt & 7);
-    }
-    // Decode a Huffman code from a (count, symbol) table.
-    int huff(const int* counts, const int* symbols) {
-        int code = 0, first = 0, idx = 0;
-        for (int len = 1; len <= 15; ++len) {
-            code |= bit(1);
-            if (code < first + counts[len]) {
-                return symbols[idx + (code - first)];
-            }
-            idx += counts[len];
-            first = (first + counts[len]) << 1;
-            first |= 1;
-            code <<= 1;
-            if (code < 0) return -1;
-        }
-        return -1;
-    }
-    bool inflateBlock() {
-        const int bfinal = bit(1);
-        const int btype = bit(2);
-        if (btype == 0) {
-            // Stored
-            alignByte();
-            if (inPos + 4 > inLen) return false;
-            const uint16_t len = uint16_t(in[inPos]) | (uint16_t(in[inPos + 1]) << 8);
-            inPos += 4;
-            if (inPos + len > inLen) return false;
-            out.append(reinterpret_cast<const char*>(in + inPos), len);
-            inPos += len;
-        } else if (btype == 1 || btype == 2) {
-            // Fixed or dynamic Huffman
-            int litCounts[16] = {0}, litSyms[288] = {0};
-            int distCounts[16] = {0}, distSyms[32] = {0};
-            if (btype == 1) {
-                for (int i = 0; i < 144; ++i) litSyms[i] = i;
-                for (int i = 144; i < 256; ++i) litSyms[i] = i;
-                for (int i = 0; i < 24; ++i) litSyms[256 + i] = 280 + i;
-                for (int i = 0; i < 8; ++i) litSyms[280 + i] = 0; // unused
-                for (int i = 0; i < 144; ++i) litCounts[8]++;
-                for (int i = 144; i < 256; ++i) litCounts[9]++;
-                for (int i = 256; i < 280; ++i) litCounts[7]++;
-                for (int i = 280; i < 288; ++i) litCounts[8]++;
-                for (int i = 0; i < 32; ++i) { distSyms[i] = i; distCounts[5]++; }
-            } else {
-                int hlit = bit(5) + 257;
-                int hdist = bit(5) + 1;
-                int hclen = bit(4) + 4;
-                static const int order[19] = {16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15};
-                int clCounts[16] = {0}, clSyms[19] = {0};
-                for (int i = 0; i < hclen; ++i) clSyms[i] = bit(3);
-                // Build counts from clSyms (the code lengths in order)
-                int clCode[19] = {0};
-                for (int i = 0; i < hclen; ++i) clCode[order[i]] = clSyms[i];
-                // Build canonical Huffman for code-length codes
-                int clCnt[16] = {0}, clSym[19] = {0};
-                for (int i = 0; i < 19; ++i) clCnt[clCode[i]]++;
-                int idx = 0;
-                for (int len = 1; len <= 15; ++len) {
-                    for (int i = 0; i < 19; ++i) if (clCode[i] == len) clSym[idx++] = i;
-                }
-                // Read hlit + hdist code lengths
-                int total = hlit + hdist;
-                std::vector<int> lengths(total, 0);
-                int i = 0;
-                while (i < total) {
-                    int sym = huff(clCnt, clSym);
-                    if (sym < 0) return false;
-                    if (sym < 16) {
-                        lengths[i++] = sym;
-                    } else if (sym == 16) {
-                        if (i == 0) return false;
-                        int rep = bit(2) + 3;
-                        for (int k = 0; k < rep && i < total; ++k) lengths[i++] = lengths[i - 1];
-                    } else if (sym == 17) {
-                        int rep = bit(3) + 3;
-                        for (int k = 0; k < rep && i < total; ++k) lengths[i++] = 0;
-                    } else { // 18
-                        int rep = bit(7) + 11;
-                        for (int k = 0; k < rep && i < total; ++k) lengths[i++] = 0;
-                    }
-                }
-                // Build literal + distance Huffman tables
-                for (int k = 0; k < total; ++k) {
-                    if (k < hlit) litCounts[lengths[k]]++;
-                    else distCounts[lengths[k]]++;
-                }
-                int li = 0, di = 0;
-                for (int len = 1; len <= 15; ++len) {
-                    for (int k = 0; k < hlit; ++k) if (lengths[k] == len) litSyms[li++] = k;
-                    for (int k = hlit; k < total; ++k) if (lengths[k] == len) distSyms[di++] = k - hlit;
-                }
-            }
-            // Decode symbols
-            static const int lenBase[29] = {3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258};
-            static const int lenExtra[29] = {0,0,0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,0};
-            static const int distBase[30] = {1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577};
-            static const int distExtra[30] = {0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13};
-            for (;;) {
-                int sym = huff(litCounts, litSyms);
-                if (sym < 0) return false;
-                if (sym == 256) break; // end of block
-                if (sym < 256) {
-                    out.append(char(sym));
-                } else {
-                    int li = sym - 257;
-                    if (li >= 29) return false;
-                    int length = lenBase[li] + (lenExtra[li] ? bit(lenExtra[li]) : 0);
-                    int dsym = huff(distCounts, distSyms);
-                    if (dsym < 0 || dsym >= 30) return false;
-                    int dist = distBase[dsym] + (distExtra[dsym] ? bit(distExtra[dsym]) : 0);
-                    if (dist > out.size()) return false;
-                    int startPos = out.size();
-                    out.resize(out.size() + length);
-                    for (int k = 0; k < length; ++k) {
-                        out[startPos + k] = out[startPos + k - dist];
-                    }
-                }
-            }
-        } else {
-            return false;
-        }
-        return bfinal == 0;
-    }
-    QByteArray run() {
-        while (inflateBlock()) {}
-        return out;
-    }
-};
-
+// Inflate raw DEFLATE data using the system zlib (inflateInit2 with
+// negative window bits = raw deflate, no zlib header).
 QByteArray inflateRaw(const char* data, size_t n) {
-    Inflator inf(data, n);
-    return inf.run();
+    z_stream zs;
+    std::memset(&zs, 0, sizeof(zs));
+    // -15 = raw deflate (no zlib wrapper), 32KB window.
+    if (inflateInit2(&zs, -15) != Z_OK) return QByteArray();
+    zs.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(data));
+    zs.avail_in = uint(n);
+    QByteArray out;
+    out.reserve(4096);
+    uint8_t buf[8192];
+    int ret = Z_OK;
+    do {
+        zs.next_out = buf;
+        zs.avail_out = sizeof(buf);
+        ret = inflate(&zs, Z_NO_FLUSH);
+        if (ret == Z_STREAM_ERROR || ret == Z_NEED_DICT || ret == Z_DATA_ERROR || ret == Z_MEM_ERROR) {
+            inflateEnd(&zs);
+            return QByteArray();
+        }
+        const size_t produced = sizeof(buf) - zs.avail_out;
+        if (produced > 0) out.append(reinterpret_cast<const char*>(buf), produced);
+    } while (ret != Z_STREAM_END && zs.avail_out == 0);
+    inflateEnd(&zs);
+    return out;
 }
 
 // Find the End-of-Central-Directory record. Returns its offset or -1.
@@ -280,6 +149,38 @@ QByteArray zipExtractFile(const QByteArray& zipData, const QString& name) {
         return QByteArray();
     }
     return QByteArray();
+}
+
+// List the names of all entries in a ZIP archive that end with ".xml".
+// Real Krita .kpp files name their preset XML after the preset itself
+// (e.g. "b) Basic-1.kpp" contains "b) Basic-1.xml"), so a fixed list of
+// entry names is not enough — callers should try each .xml in order.
+QList<QByteArray> zipListXmlEntries(const QByteArray& zipData) {
+    QList<QByteArray> names;
+    const qint64 eocd = findEocd(zipData);
+    if (eocd < 0) return names;
+    const uint8_t* base = reinterpret_cast<const uint8_t*>(zipData.constData());
+    const uint8_t* e = base + eocd;
+    const uint32_t cdOffset = rd32(e + 16);
+    const uint32_t cdSize = rd32(e + 12);
+    if (cdOffset + cdSize > (uint32_t)zipData.size()) return names;
+
+    const uint8_t* cd = base + cdOffset;
+    const uint8_t* cdEnd = cd + cdSize;
+    while (cd + 46 <= cdEnd) {
+        if (rd32(cd) != 0x02014b50UL) break;
+        const uint16_t nameLen = rd16(cd + 28);
+        const uint16_t extraLen = rd16(cd + 30);
+        const uint16_t commentLen = rd16(cd + 32);
+        const QByteArray entryName(reinterpret_cast<const char*>(cd + 46), nameLen);
+        cd += 46 + nameLen + extraLen + commentLen;
+        if (entryName.length() >= 4 &&
+            entryName.endsWith(".xml") &&
+            !entryName.contains('/')) {
+            names.append(entryName);
+        }
+    }
+    return names;
 }
 
 // Parse brush parameters from the .kpp preset XML.
@@ -440,6 +341,23 @@ int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path) {
         xml = zipExtractFile(zipData, QString::fromUtf8(xmlNames[i]));
     }
     if (xml.isEmpty()) {
+        // Real Krita .kpp archives name the preset XML after the preset.
+        // Try every top-level *.xml entry and pick the first one that
+        // yields any recognized brush parameter.
+        const QList<QByteArray> xmlEntries = zipListXmlEntries(zipData);
+        for (const QByteArray& entryName : xmlEntries) {
+            const QByteArray candidate = zipExtractFile(
+                zipData, QString::fromUtf8(entryName));
+            if (candidate.isEmpty()) continue;
+            const PresetParams probe = parsePresetXml(candidate);
+            if (probe.size > 0 || probe.opacity > 0 || probe.spacing > 0 ||
+                probe.hardness > 0) {
+                xml = candidate;
+                break;
+            }
+        }
+    }
+    if (xml.isEmpty()) {
         // Not a ZIP, or no XML — maybe it's a raw XML file.
         if (zipData.startsWith("<?xml") || zipData.startsWith("<")) {
             xml = zipData;
@@ -481,6 +399,30 @@ void krita_brush_set_spacing(KritaBrushContext* handle, double spacing) {
 void krita_brush_set_smudge(KritaBrushContext* handle, double smudge) {
     if (!handle) return;
     handle->smudge = smudge < 0.0 ? 0.0 : (smudge > 1.0 ? 1.0 : smudge);
+}
+
+// ---------------------------------------------------------------------------
+// Parameter getters — let the app reflect loaded preset values into its UI.
+// ---------------------------------------------------------------------------
+double krita_brush_get_size(KritaBrushContext* handle) {
+    return handle ? handle->size : 0.0;
+}
+double krita_brush_get_opacity(KritaBrushContext* handle) {
+    return handle ? handle->opacity : 0.0;
+}
+double krita_brush_get_spacing(KritaBrushContext* handle) {
+    return handle ? handle->spacing : 0.0;
+}
+double krita_brush_get_hardness(KritaBrushContext* handle) {
+    return handle ? handle->hardness : 0.0;
+}
+double krita_brush_get_smudge(KritaBrushContext* handle) {
+    return handle ? handle->smudge : 0.0;
+}
+const char* krita_brush_get_preset_name(KritaBrushContext* handle) {
+    if (!handle) return "";
+    handle->presetNameBuffer = handle->presetName.toStdString();
+    return handle->presetNameBuffer.c_str();
 }
 
 bool krita_brush_generate_dab(KritaBrushContext* handle,

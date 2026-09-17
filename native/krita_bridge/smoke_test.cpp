@@ -114,6 +114,7 @@ int main(int argc, char** argv) {
     const bool pixelsOk = center[3] > 200 && corner[3] < 60;
     releaseDab(ctx, &dab);
     printf("release_dab: OK\n");
+    bool presetOk = true;
 
     // Low pressure
     input.pressure = 0.25;
@@ -127,9 +128,42 @@ int main(int argc, char** argv) {
     printf("last_error: %s\n", lastError(ctx));
     printf("preset_count: %d\n", presetCount(ctx));
 
+    // ---- Preset loading from real-shaped .kpp files (ZIP + XML) ----
+    // After loading, size should be 77, opacity 0.42, spacing 0.07.
+    // Verify by reading back the param getters.
+    using GetSizeFn = double (*)(void*);
+    using GetOpacityFn = double (*)(void*);
+    using GetSpacingFn = double (*)(void*);
+    auto getSize = (GetSizeFn)sym(lib, "krita_brush_get_size");
+    auto getOpacity = (GetOpacityFn)sym(lib, "krita_brush_get_opacity");
+    auto getSpacing = (GetSpacingFn)sym(lib, "krita_brush_get_spacing");
+    if (getSize && getOpacity && getSpacing) {
+        if (argc > 2) {
+            // Explicitly reset to known defaults first: size 16, opacity 1.
+            setSize(ctx, 16.0);
+            setOpacity(ctx, 1.0);
+            setSpacing(ctx, 0.15);
+            int32_t prc = loadPreset(ctx, argv[2]);
+            printf("load_preset(%s): rc=%d\n", argv[2], prc);
+            if (prc != 0) {
+                printf("last_error: %s\n", lastError(ctx));
+                presetOk = false;
+            } else {
+                const double gs = getSize(ctx);
+                const double go = getOpacity(ctx);
+                const double gsp = getSpacing(ctx);
+                printf("after preset: size=%.2f opacity=%.2f spacing=%.3f\n", gs, go, gsp);
+                const bool good = gs == 77.0 && go == 0.42 && gsp == 0.07;
+                if (!good) presetOk = false;
+            }
+        }
+    } else {
+        printf("note: param getters not exported; skipping preset value check\n");
+    }
+
     cleanup(ctx);
     destroy(ctx);
     printf("destroy: OK\n");
-    printf(pixelsOk ? "SMOKE TEST: PASS\n" : "SMOKE TEST: FAIL\n");
-    return pixelsOk ? 0 : 1;
+    printf((pixelsOk && presetOk) ? "SMOKE TEST: PASS\n" : "SMOKE TEST: FAIL\n");
+    return (pixelsOk && presetOk) ? 0 : 1;
 }

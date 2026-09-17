@@ -144,6 +144,16 @@ KRITA_BRIDGE_API void krita_brush_set_spacing(KritaBrushContext* handle, double 
 KRITA_BRIDGE_API void krita_brush_set_smudge(KritaBrushContext* handle, double smudge);
 
 // ---------------------------------------------------------------------------
+// Parameter getters — let the app reflect loaded preset values into its UI.
+// ---------------------------------------------------------------------------
+KRITA_BRIDGE_API double krita_brush_get_size(KritaBrushContext* handle);
+KRITA_BRIDGE_API double krita_brush_get_opacity(KritaBrushContext* handle);
+KRITA_BRIDGE_API double krita_brush_get_spacing(KritaBrushContext* handle);
+KRITA_BRIDGE_API double krita_brush_get_hardness(KritaBrushContext* handle);
+KRITA_BRIDGE_API double krita_brush_get_smudge(KritaBrushContext* handle);
+KRITA_BRIDGE_API const char* krita_brush_get_preset_name(KritaBrushContext* handle);
+
+// ---------------------------------------------------------------------------
 // Dab generation.
 // ---------------------------------------------------------------------------
 
