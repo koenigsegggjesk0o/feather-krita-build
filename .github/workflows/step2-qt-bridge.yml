@@ -49,6 +49,8 @@ jobs:
           dir /b "%VCPKG_LIB%"
           set ZLIB_LIB=zlib.lib
           if not exist "%VCPKG_LIB%\zlib.lib" set ZLIB_LIB=zlibstatic.lib
+          if not exist "%VCPKG_LIB%\zlibstatic.lib" set ZLIB_LIB=zs.lib
+          if not exist "%VCPKG_LIB%\zs.lib" (echo === no zlib lib variant found === && exit /b 1)
           echo Using ZLIB_LIB=%ZLIB_LIB%
           cl /nologo /std:c++17 /Zc:__cplusplus /permissive- /Zc:preprocessor /EHsc /MD /O2 /LD ^
             -I"native\krita_bridge" ^
