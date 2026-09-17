@@ -26,10 +26,15 @@ import 'package:vector_math/vector_math_64.dart' show Vector2, Vector3;
 
 import 'package:feather_krita/theme/app_theme.dart';
 import 'package:feather_krita/state/editor_state.dart';
-import 'package:feather_krita/engine/guide_surface.dart';
 import 'package:feather_krita/engine/stroke_manager.dart';
+import 'package:feather_krita/engine/synthetic_dab.dart';
+import 'package:feather_krita/ffi/krita_bindings.dart';
+import 'package:feather_krita/io/feather_project.dart';
+import 'package:feather_krita/io/gif_exporter.dart';
+import 'package:feather_krita/io/gltf_exporter.dart';
 import 'package:feather_krita/models/brush_preset.dart';
 import 'package:feather_krita/models/export_format.dart';
+import 'package:feather_krita/models/stroke.dart';
 import 'package:feather_krita/screens/brush_picker_screen.dart';
 import 'package:feather_krita/screens/export_screen.dart';
 import 'package:feather_krita/screens/settings_screen.dart';
@@ -38,6 +43,7 @@ import 'package:feather_krita/widgets/canvas_widget.dart';
 import 'package:feather_krita/widgets/glass_app_bar.dart';
 import 'package:feather_krita/widgets/glass_bottom_bar.dart';
 import 'package:feather_krita/widgets/joystick_widget.dart';
+import 'package:feather_krita/widgets/open_project_dialog.dart';
 import 'package:feather_krita/widgets/stroke_list_panel.dart';
 
 class MainScreen extends StatefulWidget {
@@ -227,9 +233,26 @@ class _MainScreenState extends State<MainScreen> {
           onProgress(0.5);
           File(path).writeAsStringSync(_buildProjectJson());
           break;
-        case ExportFormat.gif:
-        case ExportFormat.mp4:
         case ExportFormat.gltf:
+          onProgress(0.5);
+          File(path).writeAsStringSync(
+              buildGltf(_state.guideSurface.mesh, name: safe));
+          break;
+        case ExportFormat.gif:
+          onProgress(0.2);
+          final gif = GifExporter(
+            frameCount: 8 + quality ~/ 10,
+          ).export(
+            strokes: _state.strokes.strokes,
+            dabFor: _replayDab,
+            brushSizePx: _state.brushSize,
+            brushOpacity: _state.brushOpacity,
+            sourceTextureSize: _state.texture.width,
+            onProgress: (p) => onProgress(0.2 + p * 0.8),
+          );
+          File(path).writeAsBytesSync(gif);
+          break;
+        case ExportFormat.mp4:
           return 'error: ${exportInfo(format).label} export is coming in a '
               'future build.';
       }
@@ -247,10 +270,13 @@ class _MainScreenState extends State<MainScreen> {
     for (var y = 0; y < tex.height; y++) {
       for (var x = 0; x < tex.width; x++) {
         final i = y * tex.stride + x * 4;
+        // The image package (3.x) stores pixels as #AABBGGRR — R in the
+        // LOW byte. Packing ARGB here would silently swap red and blue in
+        // every exported PNG/JPEG.
         final packed = (px[i + 3] << 24) |
-            (px[i] << 16) |
+            (px[i + 2] << 16) |
             (px[i + 1] << 8) |
-            px[i + 2];
+            px[i];
         image.setPixel(x, y, packed);
       }
     }
@@ -286,17 +312,35 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   String _buildProjectJson() {
-    final strokes = _state.strokes.toJsonString();
-    return '{"version":1,'
-        '"fileName":"${_state.fileName.replaceAll('"', r'\"')}",'
-        '"texture":{"width":${_state.texture.width},'
-        '"height":${_state.texture.height}},'
-        '"guideSurface":"${guideSurfaceTypeName(_state.guideSurface.type)}",'
-        '"brush":{"preset":"${_state.brushPresetName.replaceAll('"', r'\"')}",'
-        '"size":${_state.brushSize.toStringAsFixed(2)},'
-        '"opacity":${_state.brushOpacity.toStringAsFixed(3)},'
-        '"color":${_state.brushColor}},'
-        '"strokes":$strokes}';
+    return FeatherProjectDocument.fromEditor(_state).toJsonString();
+  }
+
+  /// Dab source for GIF stroke replay. Strokes always replay with the
+  /// pure-Dart dab at their own recorded color: the native engine only
+  /// holds the single globally-configured color, which would repaint
+  /// multi-color documents with the wrong palette.
+  BrushDab _replayDab(Stroke stroke, double pressure, double sizePx) {
+    return syntheticDab(sizePx, stroke.color);
+  }
+
+  // ----- Open project -----------------------------------------------------
+
+  Future<void> _showOpenProject() async {
+    HapticFeedback.selectionClick();
+    final path = await showDialog<String>(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (_) => OpenProjectDialog(initialDir: _exportDir().path),
+    );
+    if (path == null || !mounted) return;
+    try {
+      final doc = FeatherProjectDocument.parse(File(path).readAsStringSync());
+      doc.applyTo(_state);
+      if (mounted) setState(() {});
+      _toast('Opened ${doc.fileName} — ${doc.strokes.length} strokes.');
+    } catch (e) {
+      _toast('Could not open project: $e');
+    }
   }
 
   // ----- Joystick ---------------------------------------------------------
@@ -377,8 +421,7 @@ class _MainScreenState extends State<MainScreen> {
                     canRedo: _state.canRedo,
                     onUndo: _state.undo,
                     onRedo: _state.redo,
-                    onOpenFolder: () =>
-                        _toast('Open document is coming in a future build.'),
+                    onOpenFolder: _showOpenProject,
                     onRename: (name) => setState(() => _state.fileName = name),
                     onShowSettings: _showSettingsSheet,
                   ),

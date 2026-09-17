@@ -9,6 +9,8 @@
 //   pointer drag → CanvasWidget raycast → dab into TexturePainter →
 //   stroke history → undo/redo through the app bar → export sheet.
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -178,5 +180,51 @@ void main() {
     await tester.tap(find.text('Light'));
     await tester.pump(const Duration(milliseconds: 450));
     expect(state.showGrid, isTrue);
+  });
+
+  testWidgets('open dialog restores a saved project document', (tester) async {
+    final state = EditorState();
+    addTearDown(state.dispose);
+    await tester.pumpWidget(_host(state));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(state.strokes.strokeCount, 0);
+
+    // Write a real project file with one stroke into a temp location.
+    // Synchronous IO on purpose: real async IO never completes under the
+    // widget test's fake event loop (see loop-11 export-stall lesson).
+    final dir = Directory.systemTemp
+        .createTempSync('feather_open_test');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final file = File('${dir.path}${Platform.pathSeparator}saved.feather');
+    file.writeAsStringSync('{"version":2,'
+        '"fileName":"SavedDoc.feather",'
+        '"texture":{"width":2048,"height":2048},'
+        '"guideSurface":"Sphere",'
+        '"brush":{"preset":"Pencil","size":21.00,"opacity":0.500,'
+        '"color":4294901760,"mirrorX":false,"mirrorY":false,"mirrorZ":false},'
+        '"strokes":{"strokes":[{"id":2,"brushType":"pencil",'
+        '"color":4294901760,"thickness":12.0,"points":['
+        '{"x":0.1,"y":0.0,"z":1.4,"p":0.8,"tx":0.0,"ty":0.0,"t":0.0,'
+        '"u":0.5,"v":0.5}],'
+        '"isVisible":true,"name":"loaded stroke"}],'
+        '"selectedIds":[],"nextId":3}}');
+
+    // Open the dialog through the app bar folder button.
+    await tester.tap(find.byIcon(Icons.folder_open_rounded).first);
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('Open project'), findsOneWidget);
+
+    await tester.enterText(
+        find.byType(TextField), file.path);
+    await tester.tap(find.text('Open'));
+    await tester.pump(const Duration(milliseconds: 450));
+
+    expect(state.strokes.strokeCount, 1);
+    expect(state.strokes.strokes.first.name, 'loaded stroke');
+    expect(state.strokes.strokes.first.id, 2);
+    expect(state.brushPresetName, 'Pencil');
+    expect(state.fileName, 'SavedDoc.feather');
+    expect(state.strokes.strokes.first.points.first.uv, isNotNull,
+        reason: 'v2 documents must restore per-point UVs');
   });
 }

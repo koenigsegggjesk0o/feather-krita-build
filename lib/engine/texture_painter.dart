@@ -205,6 +205,9 @@ class TexturePainter {
 
   /// Pushes the current buffer onto the undo stack.
   void _pushUndo() {
+    // maxUndoSteps <= 0 disables undo tracking entirely (replay / export
+    // textures): skip the full-buffer copy per dab.
+    if (maxUndoSteps <= 0) return;
     _undoStack.add(Uint8List.fromList(_pixels));
     if (_undoStack.length > maxUndoSteps) {
       _undoStack.removeAt(0);

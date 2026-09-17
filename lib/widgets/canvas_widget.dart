@@ -33,6 +33,7 @@ import 'package:vector_math/vector_math_64.dart' hide Colors;
 
 import 'package:feather_krita/theme/app_theme.dart';
 import 'package:feather_krita/state/editor_state.dart';
+import 'package:feather_krita/engine/synthetic_dab.dart';
 import 'package:feather_krita/engine/guide_surface.dart';
 import 'package:feather_krita/engine/stroke_manager.dart';
 import 'package:feather_krita/models/stroke.dart';
@@ -173,6 +174,7 @@ class _CanvasWidgetState extends State<CanvasWidget>
       position: hit.point.clone(),
       pressure: _pressure,
       time: 0,
+      uv: hit.uv.clone(),
     ));
     _stampDab(hit.uv);
     HapticFeedback.selectionClick();
@@ -204,6 +206,7 @@ class _CanvasWidgetState extends State<CanvasWidget>
       position: hit.point.clone(),
       pressure: _pressure,
       time: now - _strokeStartTime,
+      uv: hit.uv.clone(),
     ));
     _stampDab(hit.uv);
     setState(() {});
@@ -291,39 +294,7 @@ class _CanvasWidgetState extends State<CanvasWidget>
         // fall through to synthetic dab.
       }
     }
-    return _syntheticDab(state.brushSize, state.brushColor);
-  }
-
-  /// Builds a soft radial-gradient dab in pure Dart (used when the native
-  /// Krita engine is unavailable). The result is a square RGBA8 image of
-  /// side `ceil(radius) * 2` with a smooth falloff.
-  static BrushDab _syntheticDab(double radius, int argb) {
-    final r = radius.ceil().clamp(1, 256).toInt();
-    final size = r * 2;
-    final px = Uint8List(size * size * 4);
-    final cr = (argb >> 16) & 0xff;
-    final cg = (argb >> 8) & 0xff;
-    final cb = argb & 0xff;
-    for (var y = 0; y < size; y++) {
-      for (var x = 0; x < size; x++) {
-        final dx = x - r + 0.5;
-        final dy = y - r + 0.5;
-        final d = math.sqrt(dx * dx + dy * dy) / r;
-        final a = (1.0 - d.clamp(0.0, 1.0));
-        final soft = a * a * (3 - 2 * a); // smoothstep
-        final i = (y * size + x) * 4;
-        px[i] = cr;
-        px[i + 1] = cg;
-        px[i + 2] = cb;
-        px[i + 3] = (soft * 255).round().clamp(0, 255);
-      }
-    }
-    return BrushDab(
-      width: size,
-      height: size,
-      stride: size * 4,
-      pixels: px,
-    );
+    return syntheticDab(state.brushSize, state.brushColor);
   }
 
   // ----- Build -----------------------------------------------------------

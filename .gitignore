@@ -1,0 +1,27 @@
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.lock
+!pubspec.lock
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+.gradle/
+local.properties
+.gradle
+*.o
+*.so
+*.dll
+*.dylib
+.godot/
+*.pyc
+__pycache__/
+# Prebuilt native brush bridge is bundled intentionally (small, CI-built)
+!windows/runner/krita_bridge.dll
+!assets/native/krita_bridge.dll

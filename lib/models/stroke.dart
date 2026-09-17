@@ -24,10 +24,20 @@ class StrokePoint {
     this.pressure = 0.5,
     Vector2? tilt,
     this.time = 0.0,
+    this.uv,
   }) : tilt = tilt ?? Vector2.zero();
 
   /// Position in stroke-local space.
   Vector3 position;
+
+  /// Texture-space coordinate the point was painted at, when known.
+  ///
+  /// The canvas records this while drawing (the raycast already produced
+  /// the UV), which makes strokes replayable onto the texture without
+  /// re-raycasting (GIF export, project reload). `null` for points that
+  /// were created without a surface hit (e.g. legacy documents saved
+  /// before v2 of the project format).
+  Vector2? uv;
 
   /// Normalized stylus pressure in [0, 1].
   double pressure;
@@ -44,6 +54,9 @@ class StrokePoint {
         pressure: pressure * (1 - t) + other.pressure * t,
         tilt: tilt * (1 - t) + other.tilt * t,
         time: time * (1 - t) + other.time * t,
+        uv: uv == null || other.uv == null
+            ? null
+            : uv! * (1 - t) + other.uv! * t,
       );
 
   /// Returns a deep copy of this point.
@@ -52,6 +65,7 @@ class StrokePoint {
         pressure: pressure,
         tilt: tilt.clone(),
         time: time,
+        uv: uv?.clone(),
       );
 
   /// Returns a copy with optional field overrides.
@@ -60,12 +74,14 @@ class StrokePoint {
     double? pressure,
     Vector2? tilt,
     double? time,
+    Vector2? uv,
   }) =>
       StrokePoint(
         position: position ?? this.position.clone(),
         pressure: pressure ?? this.pressure,
         tilt: tilt ?? this.tilt.clone(),
         time: time ?? this.time,
+        uv: uv ?? this.uv?.clone(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -76,6 +92,8 @@ class StrokePoint {
         'tx': tilt.x,
         'ty': tilt.y,
         't': time,
+        if (uv != null) 'u': uv!.x,
+        if (uv != null) 'v': uv!.y,
       };
 
   factory StrokePoint.fromJson(Map<String, dynamic> json) {
@@ -91,6 +109,12 @@ class StrokePoint {
         (json['ty'] as num?)?.toDouble() ?? 0.0,
       ),
       time: (json['t'] as num?)?.toDouble() ?? 0.0,
+      uv: json['u'] == null || json['v'] == null
+          ? null
+          : Vector2(
+              (json['u'] as num).toDouble(),
+              (json['v'] as num).toDouble(),
+            ),
     );
   }
 
@@ -331,7 +355,15 @@ class Stroke {
       brushType: brushType,
       color: color,
       thickness: thickness,
-      points: points.map((p) => p.copy()).toList(),
+      // Mirror copies are overlay-only visuals: the live canvas never
+      // stamps them into the texture, so their texture UVs are unknown.
+      // Nulling UV keeps texture replay (GIF export) faithful to what was
+      // actually painted.
+      points: points.map((p) {
+        final c = p.copy();
+        c.uv = null;
+        return c;
+      }).toList(),
       isVisible: isVisible,
       name: name,
       transform: newTransform,

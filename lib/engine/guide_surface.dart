@@ -30,7 +30,7 @@ enum GuideSurfaceType {
   customCurve,
 }
 
-/// Returns a human-readable name for [type].
+/// Returns the human-readable name for [type].
 String guideSurfaceTypeName(GuideSurfaceType type) {
   switch (type) {
     case GuideSurfaceType.sphere:
@@ -45,6 +45,32 @@ String guideSurfaceTypeName(GuideSurfaceType type) {
       return 'Plane';
     case GuideSurfaceType.customCurve:
       return 'Custom Curve';
+  }
+}
+
+/// Parses a [GuideSurfaceType] from a display name (as written by
+/// [guideSurfaceTypeName]) or a raw enum name. Falls back to
+/// [GuideSurfaceType.sphere] for unknown values.
+GuideSurfaceType guideSurfaceTypeFromName(String? name) {
+  switch (name?.trim().toLowerCase()) {
+    case 'sphere':
+      return GuideSurfaceType.sphere;
+    case 'cylinder':
+      return GuideSurfaceType.cylinder;
+    case 'cone':
+      return GuideSurfaceType.cone;
+    case 'ring / torus':
+    case 'ring':
+    case 'torus':
+      return GuideSurfaceType.ring;
+    case 'plane':
+      return GuideSurfaceType.plane;
+    case 'custom curve':
+    case 'customcurve':
+    case 'custom_curve':
+      return GuideSurfaceType.customCurve;
+    default:
+      return GuideSurfaceType.sphere;
   }
 }
 
@@ -173,6 +199,26 @@ class GuideSurface {
 
   /// Marks the cached inverse as dirty after [transform] is mutated.
   void markTransformDirty() => _inverseDirty = true;
+
+  /// Builds a default-shaped surface of [type] with the editor's standard
+  /// dimensions. Used when restoring a project that stores only the
+  /// surface's type name.
+  factory GuideSurface.forType(GuideSurfaceType type) {
+    switch (type) {
+      case GuideSurfaceType.sphere:
+        return GuideSurface.sphere(radius: 1.4, segments: 24, rings: 14);
+      case GuideSurfaceType.cylinder:
+        return GuideSurface.cylinder();
+      case GuideSurfaceType.cone:
+        return GuideSurface.cone();
+      case GuideSurfaceType.ring:
+        return GuideSurface.ring();
+      case GuideSurfaceType.plane:
+        return GuideSurface.plane();
+      case GuideSurfaceType.customCurve:
+        return GuideSurface.plane();
+    }
+  }
 
   // ----- Factory constructors for each surface type ---------------------
 

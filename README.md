@@ -3,7 +3,8 @@
 A 3D painting app: draw on parametric guide surfaces (spheres, cylinders,
 tori, custom tubes) with a real Krita-compatible brush engine, sculpt with
 liquify tools, preview in an orbit-camera 3D viewport, and export to PNG /
-JPEG / GIF / video / OBJ / glTF.
+JPEG / GIF (animated stroke replay) / OBJ / glTF / `.feather` project files
+(save + open, full undoable document restore).
 
 Built with Flutter (Dart) plus a native C++ brush engine (`krita_bridge`)
 accessed through `dart:ffi`.
@@ -16,7 +17,7 @@ accessed through `dart:ffi`.
 | FFI bindings | `lib/ffi/krita_bindings.dart` | Struct-safe Dart bindings matching `krita_bridge.h` byte-for-byte; dynamic-library loader per platform. |
 | 3D engine | `lib/engine/` | `TexturePainter` (2048² RGBA8 texture, 14 blend modes, undo/redo), `GuideSurface` (parametric meshes + raycast), `StrokeManager` (mirror, liquify, 50-level history), `CameraController` (damped orbit). |
 | UI | `lib/screens/`, `lib/widgets/` | Glassmorphism editor: 8 tools, brush settings, color picker, joystick, stroke list. |
-| Tests | `test/` | 15 tests: native dab contract, preset loading, texture compositing, mirror, raycast, PNG export round-trip. |
+| Tests | `test/` | 32 tests: native dab contract, preset loading, texture compositing, mirror, raycast, PNG export round-trip, project save/load round-trip, GIF replay frames, glTF structure, plus 8 GUI wiring tests. |
 
 ## Platform status
 
@@ -30,7 +31,7 @@ accessed through `dart:ffi`.
 
 ```bash
 flutter pub get
-flutter test          # 15-test regression suite (loads the real native bridge)
+flutter test          # 32-test regression suite (loads the real native bridge)
 flutter analyze       # must report zero issues
 flutter build windows # or: flutter build apk / flutter build linux
 ```
