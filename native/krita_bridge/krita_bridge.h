@@ -24,6 +24,17 @@ extern "C" {
 #include <stdbool.h>
 
 // ---------------------------------------------------------------------------
+// Export macros. On Windows the functions must be marked with
+// __declspec(dllexport) or they will not appear in the DLL's export table;
+// on Linux/macOS default visibility is already exported.
+// ---------------------------------------------------------------------------
+#if defined(_WIN32) || defined(__CYGWIN__)
+  #define KRITA_BRIDGE_API __declspec(dllexport)
+#else
+  #define KRITA_BRIDGE_API __attribute__((visibility("default")))
+#endif
+
+// ---------------------------------------------------------------------------
 // Opaque handle.
 // ---------------------------------------------------------------------------
 
@@ -102,11 +113,11 @@ typedef struct BrushDab {
 /// with [krita_brush_destroy] to avoid leaking native memory.
 ///
 /// Returns NULL if allocation fails.
-KritaBrushContext* krita_brush_init(void);
+KRITA_BRIDGE_API KritaBrushContext* krita_brush_init(void);
 
 /// Releases all resources held by [handle] and frees the handle itself.
 /// After this call [handle] is invalid.
-void krita_brush_destroy(KritaBrushContext* handle);
+KRITA_BRIDGE_API void krita_brush_destroy(KritaBrushContext* handle);
 
 // ---------------------------------------------------------------------------
 // Brush configuration.
@@ -115,22 +126,22 @@ void krita_brush_destroy(KritaBrushContext* handle);
 /// Loads a Krita brush preset (.kpp file) from [path]. Returns 0 on
 /// success, non-zero on failure (use [krita_brush_last_error] for
 /// details).
-int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path);
+KRITA_BRIDGE_API int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path);
 
 /// Sets the brush diameter in pixels.
-void krita_brush_set_size(KritaBrushContext* handle, double size);
+KRITA_BRIDGE_API void krita_brush_set_size(KritaBrushContext* handle, double size);
 
 /// Sets the brush color as a packed ARGB value (0xAARRGGBB).
-void krita_brush_set_color(KritaBrushContext* handle, uint32_t argb);
+KRITA_BRIDGE_API void krita_brush_set_color(KritaBrushContext* handle, uint32_t argb);
 
 /// Sets the brush flow / opacity in [0, 1].
-void krita_brush_set_opacity(KritaBrushContext* handle, double opacity);
+KRITA_BRIDGE_API void krita_brush_set_opacity(KritaBrushContext* handle, double opacity);
 
 /// Sets the dab spacing in [0, 5] (fraction of brush diameter).
-void krita_brush_set_spacing(KritaBrushContext* handle, double spacing);
+KRITA_BRIDGE_API void krita_brush_set_spacing(KritaBrushContext* handle, double spacing);
 
 /// Sets the smudge ratio in [0, 1].
-void krita_brush_set_smudge(KritaBrushContext* handle, double smudge);
+KRITA_BRIDGE_API void krita_brush_set_smudge(KritaBrushContext* handle, double smudge);
 
 // ---------------------------------------------------------------------------
 // Dab generation.
@@ -143,22 +154,22 @@ void krita_brush_set_smudge(KritaBrushContext* handle, double smudge);
 /// Returns `true` if a dab was generated (caller should inspect
 /// [out_dab] and copy the data out before releasing), `false` if no
 /// dab was produced (e.g. zero pressure and skip-on-zero enabled).
-bool krita_brush_generate_dab(KritaBrushContext* handle,
+KRITA_BRIDGE_API bool krita_brush_generate_dab(KritaBrushContext* handle,
                               const BrushInput* input,
                               BrushDab* out_dab);
 
 /// Releases the pixel buffer of [dab]. Safe to call with a dab whose
 /// pixels pointer is NULL.
-void krita_brush_release_dab(KritaBrushContext* handle, BrushDab* dab);
+KRITA_BRIDGE_API void krita_brush_release_dab(KritaBrushContext* handle, BrushDab* dab);
 
 /// Resets the brush's internal stroke state. Call between strokes so the
 /// next dab is treated as the start of a fresh stroke.
-void krita_brush_cleanup(KritaBrushContext* handle);
+KRITA_BRIDGE_API void krita_brush_cleanup(KritaBrushContext* handle);
 
 /// Returns a pointer to a UTF-8 string describing the most recent error,
 /// or an empty string if there is none. The pointer is owned by the
 /// bridge and remains valid until the next call on [handle].
-const char* krita_brush_last_error(KritaBrushContext* handle);
+KRITA_BRIDGE_API const char* krita_brush_last_error(KritaBrushContext* handle);
 
 // ---------------------------------------------------------------------------
 // Optional helpers for engine integration.
@@ -166,16 +177,16 @@ const char* krita_brush_last_error(KritaBrushContext* handle);
 
 /// Returns the Krita version string (e.g. "5.2.0"). The pointer is
 /// static and valid for the lifetime of the bridge library.
-const char* krita_brush_version(void);
+KRITA_BRIDGE_API const char* krita_brush_version(void);
 
 /// Returns the number of brush presets bundled with the loaded Krita
 /// installation, or -1 if Krita is not available.
-int32_t krita_brush_preset_count(KritaBrushContext* handle);
+KRITA_BRIDGE_API int32_t krita_brush_preset_count(KritaBrushContext* handle);
 
 /// Returns the name of the preset at [index], or NULL if out of range.
 /// The returned pointer is owned by the handle and invalidated by the
 /// next call on [handle].
-const char* krita_brush_preset_name(KritaBrushContext* handle, int32_t index);
+KRITA_BRIDGE_API const char* krita_brush_preset_name(KritaBrushContext* handle, int32_t index);
 
 #ifdef __cplusplus
 } // extern "C"
