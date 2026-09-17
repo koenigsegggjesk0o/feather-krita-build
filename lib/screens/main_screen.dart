@@ -29,6 +29,7 @@ import 'package:feather_krita/state/editor_state.dart';
 import 'package:feather_krita/engine/stroke_manager.dart';
 import 'package:feather_krita/engine/synthetic_dab.dart';
 import 'package:feather_krita/ffi/krita_bindings.dart';
+import 'package:feather_krita/io/app_dirs.dart';
 import 'package:feather_krita/io/feather_project.dart';
 import 'package:feather_krita/io/gif_exporter.dart';
 import 'package:feather_krita/io/gltf_exporter.dart';
@@ -68,6 +69,9 @@ class _MainScreenState extends State<MainScreen> {
     super.initState();
     _ownsState = widget.state == null;
     _state = widget.state ?? EditorState();
+    // Fire-and-forget: the picker rebuilds via notifyListeners when the
+    // scan completes.
+    _state.loadPresetLibrary().catchError((_) {});
   }
 
   @override
@@ -140,7 +144,7 @@ class _MainScreenState extends State<MainScreen> {
             Navigator.of(context).pop();
           },
           onImport: () =>
-              _toast('Copy .kpp files to the app presets folder to import.'),
+              _toast('Copy .kpp files to ${presetsDir().path} — they appear in the picker on the next launch.'),
           onClose: () => Navigator.of(context).pop(),
         ),
       ),
@@ -161,37 +165,7 @@ class _MainScreenState extends State<MainScreen> {
 
   // ----- Exporter ---------------------------------------------------------
 
-  static Directory _exportDir() {
-    Directory base;
-    try {
-      base = _appDocuments();
-    } catch (_) {
-      base = Directory.systemTemp;
-    }
-    final dir = Directory('${base.path}${Platform.pathSeparator}feather_exports');
-    if (!dir.existsSync()) dir.createSync(recursive: true);
-    return dir;
-  }
-
-  static Directory _appDocuments() {
-    // path_provider would be the canonical source, but resolving it through
-    // the platform channel makes the exporter unusable inside tests and on
-    // hosts where the plugin is not registered. The env override keeps the
-    // exporter deterministic everywhere; on-device it falls back to the
-    // platform documents directory.
-    final override = Platform.environment['FEATHER_EXPORT_DIR'];
-    if (override != null && override.isNotEmpty) {
-      return Directory(override);
-    }
-    try {
-      final home = Platform.environment['HOME'] ??
-          Platform.environment['USERPROFILE'];
-      if (home != null && home.isNotEmpty) {
-        return Directory(home);
-      }
-    } catch (_) {}
-    return Directory.systemTemp;
-  }
+  static Directory _exportDir() => exportsDir();
 
   /// Real export implementation behind [ExportScreen]'s [ExportRunner].
   ///

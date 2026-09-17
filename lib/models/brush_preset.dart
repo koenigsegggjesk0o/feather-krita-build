@@ -301,32 +301,53 @@ class BrushPreset {
   }) {
     final document = xml.XmlDocument.parse(xmlString);
 
-    // Find the root <Preset> or <brush_definition> element.
+    // Tolerant root lookup: Krita ships several shapes — <Preset>,
+    // <brush_definition>, and <Paintop> (the shape the native bridge
+    // parses). Fall back to the document root when none match so
+    // param-scanning still runs.
     Iterable<xml.XmlElement> presets = document.findAllElements('Preset');
     if (presets.isEmpty) {
       presets = document.findAllElements('brush_definition');
     }
     if (presets.isEmpty) {
-      throw FormatException('No <Preset> or <brush_definition> root found');
+      presets = document.findAllElements('Paintop');
+    }
+    if (presets.isEmpty) {
+      presets = [document.rootElement];
     }
     final root = presets.first;
 
-    final name = root.getAttribute('name') ??
-        root.getAttribute('id') ??
-        id;
     final paintop = root.getAttribute('paintopid') ??
         root.getAttribute('paintop') ??
         root.findElements('paintop').firstOrNull?.getAttribute('id') ??
+        (root.localName == 'Paintop' ? root.getAttribute('id') : null) ??
         'basic';
 
-    final settings = <String, BrushSettingValue>{};
-    // Krita stores each setting as a <param name="...">value</param>.
-    for (final param in root.findAllElements('param')) {
-      final pname = param.getAttribute('name');
-      if (pname == null) continue;
-      final value = param.innerText.trim();
-      settings[pname] = _classifySetting(pname, value);
+    var name = root.getAttribute('name') ?? root.getAttribute('id') ?? id;
+    // A <Paintop id="paintbrush" name="paintbrush"> root is generic; the
+    // file name is the meaningful preset name in that shape.
+    if (root.localName == 'Paintop' && name == root.getAttribute('id')) {
+      name = id;
     }
+
+    final settings = <String, BrushSettingValue>{};
+    // Krita stores each setting as <param name="...">value</param> — but
+    // real files (and this app's bundled presets) use
+    // <param id="..." value="..."/>. Accept both spellings, matching the
+    // native bridge's parsePresetXml.
+    void readParams(Iterable<xml.XmlElement> nodes) {
+      for (final param in nodes) {
+        final pname =
+            param.getAttribute('name') ?? param.getAttribute('id');
+        if (pname == null) continue;
+        final value =
+            param.getAttribute('value') ?? param.innerText.trim();
+        settings[pname] = _classifySetting(pname, value);
+      }
+    }
+
+    readParams(root.findAllElements('param'));
+    readParams(root.findAllElements('brush_parameter'));
     // Some presets use <Setting name="...">...</Setting>.
     for (final s in root.findAllElements('Setting')) {
       final pname = s.getAttribute('name');

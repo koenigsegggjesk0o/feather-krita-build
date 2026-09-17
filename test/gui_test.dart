@@ -227,4 +227,36 @@ void main() {
     expect(state.strokes.strokes.first.points.first.uv, isNotNull,
         reason: 'v2 documents must restore per-point UVs');
   });
+
+  testWidgets('canvas ticker mutes when idle and wakes on interaction',
+      (tester) async {
+    final state = EditorState();
+    addTearDown(state.dispose);
+    await tester.pumpWidget(_host(state));
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    final canvas = tester.state<CanvasWidgetState>(
+        find.byType(CanvasWidget));
+
+    // Camera starts settled: after a couple of idle frames the ticker must
+    // stop scheduling work (battery muting).
+    expect(canvas.isTicking, isFalse,
+        reason: 'idle editor must mute its frame ticker');
+
+    // Any canvas interaction wakes it.
+    final origin = tester.getCenter(find.byType(CanvasWidget));
+    final gesture = await tester.startGesture(origin);
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(canvas.isTicking, isTrue,
+        reason: 'a stroke in flight must keep frames running');
+
+    await gesture.up();
+    // After the gesture ends the camera is settled and the stroke is done:
+    // the next idle tick mutes the ticker again.
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(canvas.isTicking, isFalse,
+        reason: 'ticker must re-mute after the interaction settles');
+  });
 }

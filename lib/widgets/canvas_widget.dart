@@ -46,13 +46,21 @@ class CanvasWidget extends StatefulWidget {
   final EditorState state;
 
   @override
-  State<CanvasWidget> createState() => _CanvasWidgetState();
+  State<CanvasWidget> createState() => CanvasWidgetState();
 }
 
-class _CanvasWidgetState extends State<CanvasWidget>
+/// State for [CanvasWidget]. Public (with a testing-only accessor) so
+/// widget tests can assert the ticker's idle-muting behavior.
+class CanvasWidgetState extends State<CanvasWidget>
     with SingleTickerProviderStateMixin {
   late Ticker _ticker;
   bool _drawing = false;
+
+  /// Elapsed of the previous tick — the Ticker callback reports CUMULATIVE
+  /// time since start (which resets on restart), so frame deltas must be
+  /// derived here. Feeding cumulative time into camera.tick() made the
+  /// damping snap instantly after ~1s of app uptime.
+  Duration? _lastElapsed;
 
   // Live stroke state.
   final List<StrokePoint> _livePoints = <StrokePoint>[];
@@ -80,11 +88,34 @@ class _CanvasWidgetState extends State<CanvasWidget>
     super.dispose();
   }
 
+  /// Whether the frame ticker is currently running. The ticker mutes
+  /// itself once the camera damping settles and no stroke is in flight —
+  /// a permanently-running ticker burns battery for zero visual change.
+  @visibleForTesting
+  bool get isTicking => _ticker.isActive;
+
+  /// Restarts the muted ticker. Called from every input path that can
+  /// move the camera or start a stroke.
+  void wake() {
+    if (_ticker.isActive) return;
+    _lastElapsed = null;
+    _ticker.start();
+  }
+
   void _onTick(Duration elapsed) {
-    final dt = elapsed.inMicroseconds / 1000000.0;
+    final last = _lastElapsed;
+    _lastElapsed = elapsed;
+    final dt = last == null
+        ? 1 / 60.0
+        : ((elapsed - last).inMicroseconds / 1000000.0)
+            .clamp(1 / 1000.0, 0.25);
     final changed = widget.state.camera.tick(dt);
     if (changed || _drawing) {
       setState(() {});
+    } else {
+      // Camera settled and nothing is animating — stop scheduling frames
+      // until the next interaction wakes us.
+      _ticker.stop();
     }
   }
 
@@ -98,6 +129,7 @@ class _CanvasWidgetState extends State<CanvasWidget>
   // ----- Input handling --------------------------------------------------
 
   void _onScaleStart(ScaleStartDetails details) {
+    wake();
     _pressure = 0.85;
     if (_isDrawTool && details.pointerCount == 1) {
       _beginStroke(details.localFocalPoint);
@@ -105,6 +137,7 @@ class _CanvasWidgetState extends State<CanvasWidget>
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
+    wake();
     if (details.pointerCount == 1) {
       if (_isDrawTool && _drawing) {
         _continueStroke(details.localFocalPoint);
@@ -140,6 +173,7 @@ class _CanvasWidgetState extends State<CanvasWidget>
 
   void _onPointerSignal(PointerSignalEvent event) {
     if (event is PointerScrollEvent) {
+      wake();
       widget.state.camera
           .handleMouseWheel(event.scrollDelta.dy.toInt().toDouble());
     }

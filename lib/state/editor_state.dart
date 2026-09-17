@@ -14,13 +14,17 @@
 // NOT mutate engine fields directly but use the setter helpers below so
 // that the native brush engine and mirror configuration stay in sync.
 
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 
 import 'package:feather_krita/engine/stroke_manager.dart';
 import 'package:feather_krita/engine/camera_controller.dart';
 import 'package:feather_krita/engine/texture_painter.dart';
 import 'package:feather_krita/engine/guide_surface.dart';
 import 'package:feather_krita/ffi/krita_bindings.dart';
+import 'package:feather_krita/io/app_dirs.dart';
 import 'package:feather_krita/models/brush_preset.dart';
 
 /// The eight tools shown in the bottom toolbar.
@@ -143,6 +147,54 @@ class EditorState extends ChangeNotifier {
       ..spacing = _brushSpacing
       ..smudge = _brushSmudge
       ..color = BrushColor.fromPacked(_brushColor);
+  }
+
+  // ----- Preset library -------------------------------------------------
+
+  /// Bundled .kpp assets seeded into the user presets folder on first
+  /// load so the picker always has something to show and users can drop
+  /// their own .kpp files right next to them.
+  static const List<String> kBundledPresetAssets = <String>[
+    'basic_soft_round.kpp',
+    'ink_fineliner.kpp',
+    'airbrush_soft.kpp',
+  ];
+
+  /// Loads the brush-preset library: seeds the bundled .kpp presets into
+  /// the user presets folder (idempotent), then scans that folder for
+  /// every .kpp file. Failures are non-fatal (the synthetic dab fallback
+  /// still works). Call once after construction; notifies on completion.
+  ///
+  /// [directory] overrides the scan folder (tests); defaults to
+  /// [presetsDir()].
+  Future<void> loadPresetLibrary({String? directory}) async {
+    final found = <BrushPreset>[];
+    try {
+      final dir = directory != null
+          ? Directory(directory)
+          : presetsDir();
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+
+      // Seed bundled presets (skip anything already on disk).
+      for (final name in kBundledPresetAssets) {
+        final target = File('${dir.path}${Platform.pathSeparator}$name');
+        if (target.existsSync()) continue;
+        try {
+          final data = await rootBundle.load('assets/brushes/$name');
+          target.writeAsBytesSync(data.buffer.asUint8List(), flush: true);
+        } catch (_) {
+          // Asset missing (e.g. stripped build) — skip silently.
+        }
+      }
+
+      found.addAll(await BrushPreset.listFromDirectory(dir.path));
+    } catch (_) {
+      // A broken folder must never take the editor down.
+    }
+    presets
+      ..clear()
+      ..addAll(found);
+    notifyListeners();
   }
 
   // ----- Tool / mode setters --------------------------------------------

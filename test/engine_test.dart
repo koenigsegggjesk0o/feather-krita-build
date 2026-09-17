@@ -6,6 +6,7 @@
 //
 // The compositing tests use the REAL native bridge through the app's FFI
 // wrapper, validating the engine path end-to-end.
+import 'package:feather_krita/engine/camera_controller.dart';
 import 'package:feather_krita/engine/guide_surface.dart';
 import 'package:feather_krita/engine/stroke_manager.dart';
 import 'package:feather_krita/engine/texture_painter.dart';
@@ -154,10 +155,13 @@ void main() {
       for (var y = 0; y < tex.height; y++) {
         for (var x = 0; x < tex.width; x++) {
           final i = y * tex.stride + x * 4;
+          // image 3.x packs pixels #AABBGGRR — R in the LOW byte (the same
+          // layout the production exporters use; packing ARGB here would
+          // swap red and blue in the exported file).
           final packed = (tex.pixels[i + 3] << 24) |
-              (tex.pixels[i] << 16) |
+              (tex.pixels[i + 2] << 16) |
               (tex.pixels[i + 1] << 8) |
-              tex.pixels[i + 2];
+              tex.pixels[i];
           image.setPixel(x, y, packed);
         }
       }
@@ -166,9 +170,43 @@ void main() {
 
       final decoded = img.decodePng(png)!;
       final back = decoded.getPixel(10, 10);
-      expect((back >> 16) & 0xFF, 255, reason: 'red channel');
-      expect(back & 0xFF, 0);
-      expect((back >> 24) & 0xFF, 255, reason: 'alpha');
+      expect(img.getRed(back), 255, reason: 'red channel');
+      expect(img.getGreen(back), 0, reason: 'green channel');
+      expect(img.getBlue(back), 0, reason: 'blue channel');
+      expect(img.getAlpha(back), 255, reason: 'alpha');
+    });
+  });
+
+  group('CameraController damping', () {
+    test('orbit damps gradually and settles', () {
+      final camera = CameraController(yaw: 0.0, pitch: -0.4, distance: 6.0);
+      camera.orbit(0.8, 0.0);
+
+      // First tick must move the camera but NOT snap to the target.
+      expect(camera.tick(1 / 60), isTrue, reason: 'damping in flight');
+      expect(camera.tick(1 / 60), isTrue,
+          reason: 'still converging after 2 frames');
+
+      // Repeated small-dt ticks converge within a sane number of frames.
+      var ticks = 2;
+      while (camera.tick(1 / 60) && ticks < 600) {
+        ticks++;
+      }
+      expect(ticks, lessThan(600),
+          reason: 'damping must settle (it never did)');
+    });
+
+    test('tick treats non-positive dt as one frame', () {
+      final camera = CameraController(yaw: 0.0, pitch: -0.4, distance: 6.0);
+      camera.orbit(0.5, 0.0);
+      expect(camera.tick(0), isTrue);
+    });
+
+    test('a settled camera reports no change', () {
+      final camera = CameraController(yaw: 0.0, pitch: -0.4, distance: 6.0);
+      expect(camera.tick(1 / 60), isFalse,
+          reason: 'no pending target — must be idle (ticker muting relies '
+              'on this signal)');
     });
   });
 }
