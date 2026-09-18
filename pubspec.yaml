@@ -1,7 +1,7 @@
 name: feather_krita
 description: 3D Drawing app with Krita brush engine - like Feather 3D but for Windows & Android
 publish_to: 'none'
-version: 0.12.0+1
+version: 0.13.0+1
 
 environment:
   sdk: '>=3.2.0 <4.0.0'

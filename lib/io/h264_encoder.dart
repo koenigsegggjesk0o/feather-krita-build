@@ -173,7 +173,7 @@ class H264IdrEncoder {
     this.fps = 20,
     this.flatThreshold = 6,
     this.qp = 26,
-    this.enableResiduals = false,
+    this.enableResiduals = true,
     int? residualMaxErr,
   })  : assert(width > 0 && height > 0),
         assert(qp >= 12 && qp <= 42),
@@ -207,9 +207,12 @@ class H264IdrEncoder {
   final int residualMaxErr;
 
   /// When false the encoder emits only flat I_16x16 + I_PCM macroblocks
-  /// (the v0.12-validated behavior). The CAVLC residual path passes an
-  /// internal round-trip and single-MB ffmpeg checks, but still desyncs
-  /// ffmpeg on some multi-macroblock content; enable only for testing.
+  /// (the v0.12-validated behavior). When true (default) luma/chroma
+  /// residuals are CAVLC-coded; the full bisect matrix in
+  /// scripts/cavlc_bisect.dart decodes cleanly in ffmpeg 7.1.5 and the
+  /// block-index order bug that desynced multi-macroblock content was
+  /// fixed in loop 17 (AC blocks must be written in H.264 2x2-quadrant
+  /// blkIdx order, not pixel row-major order).
   final bool enableResiduals;
 
   final int mbWidth;
@@ -695,20 +698,29 @@ class H264IdrEncoder {
     _writeCavlcBlock(b, dcZig, 16, nC: _blockNnz(mbX, mbY, 0, 4, 0, 0),
         kind: 'L-DC');
 
-    // 15 luma AC blocks (raster order), zigzag positions 1..15.
+    // Luma AC blocks in H.264 block-index order, zigzag positions 1..15.
+    // The decoder assigns the k-th coded AC block to blkIdx k, which
+    // scans the 4x4 block grid in 2x2-quadrant order (ff_h264_scan8:
+    // blk 2 sits below blk 0, blk 4 right of blk 1) - NOT pixel
+    // row-major. _levY is stored row-major (blk = y*4+x), so map
+    // blkIdx -> row-major here. nC neighbours are position-based
+    // lookups into the row-major records and stay correct.
     if (cbpLuma) {
-      for (var blk = 0; blk < 16; blk++) {
+      for (var bIdx = 0; bIdx < 16; bIdx++) {
+        final i8 = bIdx ~/ 4, i4 = bIdx % 4;
+        final x = (i8 % 2) * 2 + (i4 % 2);
+        final y = (i8 ~/ 2) * 2 + (i4 ~/ 2);
+        final blk = y * 4 + x;
         final zig = Int32List(15);
         for (var k = 0; k < 15; k++) {
           zig[k] = _levY[blk * 16 + h264ZigzagScan[k + 1]];
         }
-        final r = blk ~/ 4, c = blk % 4;
         _writeCavlcBlock(
           b,
           zig,
           15,
-          nC: _blockNnz(mbX, mbY, 0, 4, r, c),
-          kind: 'L$blk',
+          nC: _blockNnz(mbX, mbY, 0, 4, y, x),
+          kind: 'L$bIdx',
         );
       }
     }
@@ -866,9 +878,20 @@ class H264IdrEncoder {
   int _pendingErrY = 0;
   int _pendingErrC = 0;
 
-  /// Luma DC levels from the 16 block-DC targets: the exact inverse of
-  /// the decoder's H' Hadamard + dequant chain,
-  /// d = round(H' * (1024*T00) * H' / (400 * qmul0)).
+  /// Row-major block index (blk = y*4+x, our internal _levY/_tY layout)
+  /// of the H.264 block with blkIdx B = 4*i8 + i4 (the 2x2-quadrant
+  /// scan): position x = (i8&1)*2 + (i4&1), y = (i8>>1)*2 + (i4>>1).
+  int _dcRowMajorIdx(int i4, int i8) =>
+      ((i8 >> 1) * 2 + (i4 >> 1)) * 4 + ((i8 & 1) * 2 + (i4 & 1));
+
+  /// Luma DC levels from the 16 block-DC targets. Decoder convention
+  /// (ff_h264_luma_dc_dequant_idct): the level matrix M satisfies
+  /// Z = H' M H'^T with Z[r][c] scattered to the block at H.264 blkIdx
+  /// B(4r+c) = 4*(c) + r — i.e. mb_luma_dc[j] holds the DC of blkIdx
+  /// 4*(j%4) + (j/4) (bit-interleaved i4x4/i8x8 layout, NOT row-major).
+  /// Hence M = (16/qmul)*(4/25) * H' Z H' and
+  /// d[j] = round(64 * u[j] / (25 * qmul0)) with u = H' Z H' and
+  /// Z[r][c] = T00 of blkIdx B(4r+c).
   bool _lumaDcLevels() {
     final tmp = Int32List(16);
     final u = Int32List(16);
@@ -876,7 +899,7 @@ class H264IdrEncoder {
       for (var c = 0; c < 4; c++) {
         var sum = 0;
         for (var k = 0; k < 4; k++) {
-          sum += _hadamard4[r][k] * _tY[(k * 4 + c) * 16];
+          sum += _hadamard4[r][k] * _tY[_dcRowMajorIdx(k, c) * 16];
         }
         tmp[r * 4 + c] = sum;
       }
@@ -949,7 +972,10 @@ class H264IdrEncoder {
           for (var k = 0; k < 4; k++) {
             sum += tmp[r * 4 + k] * _hadamard4[c][k];
           }
-          storedDc[r * 4 + c] = (sum * q0 + 128) >> 8;
+          // Scatter to the decoder's block placement: Z[r][c] lands in
+          // the block at H.264 blkIdx B(4r+c) = 4*c + r (see the class
+          // doc on _lumaDcLevels).
+          storedDc[_dcRowMajorIdx(r, c)] = (sum * q0 + 128) >> 8;
         }
       }
     }
@@ -1405,20 +1431,21 @@ class H264IdrEncoder {
       return _yRec[(mbY * 16 + localY) * codedWidth + mbX * 16 - 1];
     }
     if (mode == 2) {
-      // DC: constant — 4 samples from above + 4 from the left.
+      // DC for Intra_16x16 (spec 8.3.3.1): mean of ALL 16 samples from
+      // the row above and ALL 16 from the left column, per availability.
       var sum = 0, cnt = 0;
       if (canV) {
-        final row = (mbY * 16 - 1) * codedWidth + mbX * 16 + 12;
-        for (var i = 0; i < 4; i++) {
+        final row = (mbY * 16 - 1) * codedWidth + mbX * 16;
+        for (var i = 0; i < 16; i++) {
           sum += _yRec[row + i];
-          cnt++;
+          cnt += 4;
         }
       }
       if (canH) {
-        final col = (mbY * 16 + 12) * codedWidth + mbX * 16 - 1;
-        for (var i = 0; i < 4; i++) {
+        final col = (mbY * 16) * codedWidth + mbX * 16 - 1;
+        for (var i = 0; i < 16; i++) {
           sum += _yRec[col + i * codedWidth];
-          cnt++;
+          cnt += 4;
         }
       }
       if (cnt == 0) return 128;
@@ -1440,19 +1467,19 @@ class H264IdrEncoder {
       return plane[(cy0 + localY) * cw + cx0 - 1];
     }
     if (mode == 2) {
-      // DC for an 8x8 block: mean of available adjacent samples
-      // (top row 8 + left column 8, clipped to availability).
+      // DC for an 8x8 chroma block (spec 8.3.3.1): mean of the 4 samples
+      // above and the 4 to the left, per availability.
       var sum = 0, cnt = 0;
       if (canV) {
-        for (var i = 0; i < 8; i++) {
+        for (var i = 0; i < 4; i++) {
           sum += plane[(cy0 - 1) * cw + cx0 + i];
-          cnt++;
+          cnt += 2;
         }
       }
       if (canH) {
-        for (var i = 0; i < 8; i++) {
+        for (var i = 0; i < 4; i++) {
           sum += plane[(cy0 + i) * cw + cx0 - 1];
-          cnt++;
+          cnt += 2;
         }
       }
       if (cnt == 0) return 128;

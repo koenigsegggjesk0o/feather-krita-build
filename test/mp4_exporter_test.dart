@@ -105,16 +105,21 @@ void main() {
       final nal = enc.encodeIdr();
       // Every block is flat EXCEPT MB(0,0): an all-zero frame is Y=16,
       // while the corner DC prediction with no reference samples is 128
-      // (spec 8.3.3.2) → error > threshold → the corner goes I_PCM.
+      // (spec 8.3.3.2) → the corner takes the residual path and codes a
+      // perfect DC-only residual.
       expect(enc.lastFlatMacroblocks, 15);
-      expect(enc.lastPcmMacroblocks, 1);
+      expect(enc.lastResidualMacroblocks, 1);
+      expect(enc.lastPcmMacroblocks, 0);
       // NAL type 5: header byte 0x65.
       expect(nal[0], 0x65);
       expect(nal.length, greaterThan(4));
     });
 
     test('uses PCM macroblocks for noisy regions', () {
-      final enc = H264IdrEncoder(width: 64, height: 64, fps: 20);
+      // Residuals off: noisy content cannot be flat-coded, so every
+      // macroblock must take the I_PCM escape (the v0.12 path).
+      final enc = H264IdrEncoder(
+          width: 64, height: 64, fps: 20, enableResiduals: false);
       final rng = math.Random(7);
       final rgba = Uint8List(64 * 64 * 4);
       for (var i = 0; i < rgba.length; i += 4) {
@@ -127,6 +132,25 @@ void main() {
       enc.encodeIdr();
       // Nearly every macroblock must exceed the flat threshold.
       expect(enc.lastPcmMacroblocks, greaterThan(10));
+    });
+
+    test('codes noisy regions as residuals by default', () {
+      // Residuals on (default): the same noise is CAVLC-coded instead of
+      // PCM for most macroblocks (hard blocks may still escape to PCM).
+      final enc = H264IdrEncoder(width: 64, height: 64, fps: 20);
+      final rng = math.Random(7);
+      final rgba = Uint8List(64 * 64 * 4);
+      for (var i = 0; i < rgba.length; i += 4) {
+        rgba[i] = rng.nextInt(256);
+        rgba[i + 1] = rng.nextInt(256);
+        rgba[i + 2] = rng.nextInt(256);
+        rgba[i + 3] = 255;
+      }
+      enc.loadRgba(rgba);
+      enc.encodeIdr();
+      expect(
+          enc.lastResidualMacroblocks + enc.lastPcmMacroblocks, greaterThan(10));
+      expect(enc.lastFlatMacroblocks, lessThan(6));
     });
 
     test('builds SPS/PPS with baseline profile', () {
@@ -217,22 +241,23 @@ void main() {
   });
 
 
-      test('CAVLC residual path is gated off by default', () {
+      test('CAVLC residual path is on by default', () {
         // A diagonal gradient cannot be flat-coded: with the default
-        // flags every macroblock must fall back to I_PCM.
+        // flags the macroblock must be residual-coded, not PCM.
         final enc = H264IdrEncoder(width: 16, height: 16);
+        enc.loadRgba(_diagonalGradient(16, 16));
+        enc.encodeIdr();
+        expect(enc.lastResidualMacroblocks, 1);
+        expect(enc.lastPcmMacroblocks, 0);
+      });
+
+      test('CAVLC residual path can be disabled (flat+PCM fallback)', () {
+        final enc =
+            H264IdrEncoder(width: 16, height: 16, enableResiduals: false);
         enc.loadRgba(_diagonalGradient(16, 16));
         enc.encodeIdr();
         expect(enc.lastResidualMacroblocks, 0);
         expect(enc.lastPcmMacroblocks + enc.lastFlatMacroblocks, 1);
-      });
-
-      test('CAVLC residual path engages when explicitly enabled', () {
-        final enc =
-            H264IdrEncoder(width: 16, height: 16, enableResiduals: true);
-        enc.loadRgba(_diagonalGradient(16, 16));
-        enc.encodeIdr();
-        expect(enc.lastResidualMacroblocks, 1);
       });
   group('external ffmpeg verification', () {
     final hasFfmpeg = () {

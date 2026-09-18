@@ -101,49 +101,80 @@ void writeCase(String name, H264IdrEncoder enc, Uint8List frame) {
 
 void main() {
   // V1: single MB, uniform offset -> luma DC only, no AC, no chroma.
-  writeCase('v1_dconly', H264IdrEncoder(width: 16, height: 16, fps: 20),
+  writeCase('v1_dconly', H264IdrEncoder(enableResiduals: true, width: 16, height: 16, fps: 20),
       gray(16, 16, 140));
   // V2: single MB, luma ramp -> luma DC + AC.
-  writeCase('v2_lumaac', H264IdrEncoder(width: 16, height: 16, fps: 20),
+  writeCase('v2_lumaac', H264IdrEncoder(enableResiduals: true, width: 16, height: 16, fps: 20),
       lumaRamp(16, 16, 128, 60));
   // V3: single MB, chroma ramp -> chroma DC/AC too.
-  writeCase('v3_chroma', H264IdrEncoder(width: 16, height: 16, fps: 20),
+  writeCase('v3_chroma', H264IdrEncoder(enableResiduals: true, width: 16, height: 16, fps: 20),
       chromaRamp(16, 16, 128, 80));
   // V4: two MBs, luma ramp across both.
-  writeCase('v4_twomb', H264IdrEncoder(width: 32, height: 16, fps: 20),
+  writeCase('v4_twomb', H264IdrEncoder(enableResiduals: true, width: 32, height: 16, fps: 20),
       lumaRamp(32, 16, 128, 90));
   // V5: strong ramp (forces bigger levels / escapes).
-  writeCase('v5_strong', H264IdrEncoder(width: 16, height: 16, fps: 20),
+  writeCase('v5_strong', H264IdrEncoder(enableResiduals: true, width: 16, height: 16, fps: 20),
       lumaRamp(16, 16, 60, 160));
   // V6: mild chroma ramp (small chroma levels, no escapes).
-  writeCase('v6_mildchroma', H264IdrEncoder(width: 16, height: 16, fps: 20),
+  writeCase('v6_mildchroma', H264IdrEncoder(enableResiduals: true, width: 16, height: 16, fps: 20),
       chromaRamp(16, 16, 128, 12));
   // V7: strong chroma ramp at high QP (chroma quantizes to ~0).
-  writeCase('v7_highqp', H264IdrEncoder(width: 16, height: 16, fps: 20, qp: 40),
+  writeCase('v7_highqp', H264IdrEncoder(enableResiduals: true, width: 16, height: 16, fps: 20, qp: 40),
       chromaRamp(16, 16, 128, 80));
   for (final amp in [20, 30, 40, 50, 60, 80]) {
-    writeCase('a$amp', H264IdrEncoder(width: 16, height: 16, fps: 20),
+    writeCase('a$amp', H264IdrEncoder(enableResiduals: true, width: 16, height: 16, fps: 20),
         chromaRamp(16, 16, 128, amp));
   }
   // V10: 16x16 diagonal gradient (single MB, tc>10 -> suffix_length=1
   // first-level path).
-  writeCase('v10_diag', H264IdrEncoder(width: 16, height: 16, fps: 20),
+  writeCase('v10_diag', H264IdrEncoder(enableResiduals: true, width: 16, height: 16, fps: 20),
       gradientFrame(16, 16));
   // V11: same but 32x32 (4 MBs, the known-failing gradient geometry).
-  writeCase('v11_diag32', H264IdrEncoder(width: 32, height: 32, fps: 20),
+  writeCase('v11_diag32', H264IdrEncoder(enableResiduals: true, width: 32, height: 32, fps: 20),
       gradientFrame(32, 32));
   for (final qp in [20, 26, 32, 38]) {
-    writeCase('q$qp', H264IdrEncoder(width: 32, height: 32, fps: 20, qp: qp),
+    writeCase('q$qp', H264IdrEncoder(enableResiduals: true, width: 32, height: 32, fps: 20, qp: qp),
         gradientFrame(32, 32));
   }
   for (final amp in [10, 20, 30, 40]) {
-    writeCase('g$amp', H264IdrEncoder(width: 32, height: 32, fps: 20),
+    writeCase('g$amp', H264IdrEncoder(enableResiduals: true, width: 32, height: 32, fps: 20),
         gradientFrame(32, 32, amp: amp));
   }
   // Pure chroma variation with FLAT luma: set r=128+d, g=b=128-d/2 so
   // luma 66r+129g+25b stays ~constant while chroma varies.
-  writeCase('v8_purechroma', H264IdrEncoder(width: 16, height: 16, fps: 20),
+  writeCase('v8_purechroma', H264IdrEncoder(enableResiduals: true, width: 16, height: 16, fps: 20),
       pureChromaRamp(16, 16, 128, 80));
-  writeCase('v9_purechroma_mild', H264IdrEncoder(width: 16, height: 16, fps: 20),
+  writeCase('v9_purechroma_mild', H264IdrEncoder(enableResiduals: true, width: 16, height: 16, fps: 20),
       pureChromaRamp(16, 16, 128, 40));
+  // Multi-MB chroma: horizontal (left/right Cb neighbours) and stacked
+  // (top/bottom Cb neighbours - exercises the chroma top-border fill).
+  writeCase('v12_chromah2', H264IdrEncoder(enableResiduals: true, width: 32, height: 16, fps: 20),
+      pureChromaRamp(32, 16, 128, 80));
+  writeCase('v13_chromav2', H264IdrEncoder(enableResiduals: true, width: 16, height: 32, fps: 20),
+      verticalChromaRamp(16, 32, 128, 80));
+  // Milder variants: keep BOTH macroblocks on the residual path so the
+  // cross-MB Cb/Cr neighbour derivation is really exercised.
+  writeCase('v12b_chromah2m', H264IdrEncoder(enableResiduals: true, width: 32, height: 16, fps: 20),
+      pureChromaRamp(32, 16, 128, 36));
+  writeCase('v13b_chromav2m', H264IdrEncoder(enableResiduals: true, width: 16, height: 32, fps: 20),
+      verticalChromaRamp(16, 32, 128, 36));
+  // Luma+chroma residuals together across 2 stacked MBs.
+  writeCase('v14_fullstack', H264IdrEncoder(enableResiduals: true, width: 16, height: 32, fps: 20),
+      gradientFrame(16, 32));
+}
+
+/// Chroma ramp that varies along Y (rows) instead of X: stacked MBs
+/// see different chroma content, exercising cross-MB Cb/Cr neighbours.
+Uint8List verticalChromaRamp(int w, int h, int base, int amp) {
+  final f = gray(w, h, base);
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      final d = (amp * y) ~/ h;
+      final i = (y * w + x) * 4;
+      f[i] = (base + d).clamp(0, 255);
+      f[i + 1] = (base - d).clamp(0, 255);
+      f[i + 2] = (base - d ~/ 2).clamp(0, 255);
+    }
+  }
+  return f;
 }

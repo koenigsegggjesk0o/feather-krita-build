@@ -412,3 +412,35 @@ Stage Summary:
 - The CAVLC residual encoder is ~90% built and validated against single-MB ffmpeg cases; four real bitstream bugs were found and fixed via a bisect harness. The last multi-MB desync is isolated to a reproducible case (32x32 gray diagonal gradient) with all evidence tooling in place.
 - The exporter output remains ffmpeg-validated (flat+PCM); no broken MP4s can ship.
 - Roadmap: steps 1-7 done + GIF/glTF/PNG/MP4 exports + 51 tests. Deferred: finish CAVLC multi-MB desync (loop 17 primary), camera state in project files, file_picker UX polish, undo model unification, on-device GUI verification.
+
+---
+Task ID: 5-loop-16 (addendum, post-push)
+Agent: Z.ai Code (main, autonomous loop)
+Task: public CI validation of the gated CAVLC tree
+
+Work Log:
+- Full-tree sync pushed to the public builder repo as 0c79f94 (.github excluded per the loop-14 rule).
+- Build Feather-Krita App run 35304220430 SUCCESS at 0c79f94: the gated tree (flat+PCM default, CAVLC machinery present) builds and passes CI on Windows + Android targets.
+- Private HEAD: 1326460; public CI repo HEAD: 0c79f94, all green. Health gates: analyze 0 issues, 51/51 tests.
+- No release this loop (no user-visible change; the exporter output is byte-compatible with v0.12). Loop 17 primary: find the multi-MB CAVLC desync (repro: scripts/cavlc_bisect.dart v11_diag32 + mp4_smoke), flip enableResiduals on, then release v0.13.
+
+---
+Task ID: 5-loop-17
+Agent: Z.ai Code (main, autonomous loop)
+Task: fix the CAVLC multi-MB desync, flip enableResiduals on, ship v0.13
+
+Work Log:
+- Entry gates: analyze 0 issues, 51/51 tests, public builder green at 0c79f94; private step2-qt-bridge still billing-blocked (documented).
+- METHOD: pulled the REAL ffmpeg n7.1.5 sources (h264_cavlc.c, h264dec.h, h264_mvpred.h, h264_mb.c/template, h264idct_template.c, h264_ps.c, h264data.c, h264_parse.h) into scripts/out/ffmpeg-ref/ and diffed the encoder against the actual decoder instead of spec folklore.
+- BUG 1 (the desync): luma AC blocks were written in pixel row-major order; the decoder assigns the k-th coded block to blkIdx k, which scans the 4x4 grid in 2x2-QUADRANT order (ff_h264_scan8: blk2 below blk0, blk4 right of blk1). nC neighbour lookups were position-consistent, so flat/symmetric content passed and real gradients desynced ("negative number of zero coeffs"). Fixed: write AC blocks in blkIdx order, map blkIdx->row-major _levY.
+- BUG 2 (pixels 16x off): dequant4Mul dropped the default scaling matrix - ffmpeg builds dequant4_coeff = init*scaling_matrix4(16) << (qp/6+2), we had init << (qp/6+2). All residual levels were 16x too large (v1 uniform decoded to solid 255). Fixed: *16.
+- BUG 3 (DC placement): mb_luma_dc is NOT row-major - ff_h264_luma_dc_dequant_idct scatters Z[r][c] to blkIdx B(4r+c) = 4*c+r (bit-interleaved i4x4/i8x8), i.e. mb_luma_dc[j] = DC of blkIdx 4*(j%4)+(j/4). Fixed the quant gather and the reconstruction scatter via _dcRowMajorIdx(i4,i8); the stream write dcZig[m]=_dcLevels[zigzag[m]] was already right under this convention.
+- BUG 4 (prediction mismatch): Intra_16x16 DC prediction used 4 samples/edge (chroma rule) instead of the spec-8.3.3.1 16 samples/edge; chroma 8x8 DC used 8/edge instead of 4. Encoder prediction now mirrors the decoder bit-exactly (v mode/H mode unchanged, both read _yRec).
+- HARNESS: cavlc_bisect.dart now passes enableResiduals:true everywhere (it predates the loop-16 gate) and gained v12/v12b (side-by-side chroma), v13/v13b (stacked chroma, top-border fill), v14 (stacked luma+chroma). New scripts/check_pixels.py decodes streams with ffmpeg and per-pixel-compares luma against the source gradient.
+- VERIFICATION: all 27 bisect cases decode clean in ffmpeg 7.1.5; per-pixel luma error mean 1.8-3.6 / max <= 13 across v11_diag32, g10/g20/g40, v14_fullstack, q26 (was mean ~92 / max 117 - scrambled). Corner-MB uniform case now codes a perfect DC-only residual (err 0) instead of falling back to PCM.
+- SHIPPED: enableResiduals defaults to TRUE (gating tests rewritten: "on by default" + "can be disabled"); noisy-content test now expects residual coding by default with the explicit-false variant keeping the v0.12 flat+PCM escape. Version 0.13.0+1; README test count 52.
+- Health: flutter analyze 0 issues; flutter test 52/52 (ran twice, incl. the external ffmpeg decode gate on residual-coded stroke replay).
+
+Stage Summary:
+- The H.264 encoder's residual path is now ffmpeg-EXACT end to end: block order, dequant scale, DC matrix convention, and intra prediction all verified against the n7.1.5 sources AND per-pixel decode checks. The enableResiduals gate is ON, so MP4 export gets real CAVLC residuals (smaller files than the flat+PCM fallback for brush edges).
+- Roadmap: steps 1-7 done + GIF/glTF/PNG/MP4 exports + 52 tests; MP4 residual coding promoted from experimental to default. Next candidates: release v0.13 artifacts via CI, CAVLC 8x8 (i8x8DCT) if ever needed, camera state in project files, undo model unification, on-device GUI verification.

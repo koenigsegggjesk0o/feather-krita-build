@@ -207,8 +207,9 @@ int coeffTokenBand(int nC) {
 
 /// Dequantization multiplier for raster position [pos] (row*4+col) at
 /// luma/chroma QP [qp], default scaling matrix (all 16).
-/// Mirrors ffmpeg: init[qp%6][(pos&1)+((pos>>2)&1)] * 16 << (qp~/6 + 2).
+/// Mirrors ffmpeg init_dequant4_coeff_table: init[qp%6][(pos&1)+((pos>>2)&1)]
+/// * scaling_matrix4 (16) << (qp/6 + 2).
 int dequant4Mul(int qp, int pos) {
   final cls = (pos & 1) + ((pos >> 2) & 1);
-  return kDequant4Init[qp % 6][cls] << (qp ~/ 6 + 2);
+  return kDequant4Init[qp % 6][cls] * 16 << (qp ~/ 6 + 2);
 }
