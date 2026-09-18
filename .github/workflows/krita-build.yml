@@ -55,7 +55,7 @@ jobs:
             libkf5configwidgets-dev libkf5iconthemes-dev libkf5service-dev \
             libkf5windowsystem-dev libkf5notifications-dev libkf5parts-dev \
             libkf5plotting-dev libkf5kdelibs4support-dev libkf5crash-dev \
-            libkf5archive-dev libkf5sonnet-dev libkf5kio-dev \
+            libkf5archive-dev libkf5sonnet-dev libkf5kio-dev libqt5svg5 \
             libboost-dev libboost-system-dev libboost-filesystem-dev \
             libeigen3-dev libexiv2-dev libfftw3-dev libgsl-dev \
             liblcms2-dev libopenexr-dev libilmbase-dev \
@@ -101,10 +101,11 @@ jobs:
             -DWITH_OPENJPEG=OFF -DWITH_MEDIA=OFF \
             -G Ninja 2>&1 | tail -80
 
-      - name: Build brush engine libs (kritaimage + kritabrush + deps)
+      - name: Build brush engine libs (kritaimage + kritalibbrush + deps)
         run: |
+          set -o pipefail
           cd /opt/krita
-          cmake --build build --target kritaimage kritabrush --parallel 2 2>&1 | tail -300
+          cmake --build build --target kritaimage kritalibbrush --parallel 2 2>&1 | tail -300
           echo "=== Brush engine .so files ==="
           find build -name "libkrita*.so*" 2>/dev/null | head -40
 
@@ -125,7 +126,7 @@ jobs:
           g++ -std=c++17 -shared -fPIC -O2 $INC \
             /opt/bridge/krita_bridge_real.cpp \
             -L$LIBDIR \
-            -lkritabrush -lkritaimage -lkritapigment -lkritaresources -lkritastore \
+            -lkritalibbrush -lkritaimage -lkritapigment -lkritaresources -lkritastore \
             -lkritacommand -lkritaglobal -lkritaversion -lkritaflake -lkritaplugin \
             -lQt5Core -lQt5Gui -lQt5Xml -lz \
             -Wl,-rpath,'$ORIGIN' \
