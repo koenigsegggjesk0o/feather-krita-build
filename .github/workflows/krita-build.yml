@@ -134,10 +134,21 @@ jobs:
           INC="$INC $KRITAINCS"
           # KI18n flags live on the resources target (KisResourceTypes.h is
           # theirs), so merge those too.
-          for t in kritaresources kritalibresources; do
+          for t in kritaresources kritalibresources kritapigment kritalibpigment kritaimage kritalibimage; do
             RESINCS=$(cd $BUILD && ninja -t commands $t 2>/dev/null | grep -m1 -o '\-I[^ ]*' | sort -u | tr '\n' ' ')
             INC="$INC $RESINCS"
           done
+          # Nuclear option: every include dir CMake configured anywhere in
+          # the build graph (covers OpenEXR half.h, FFTW, GSL, ... if any
+          # HAVE_* flag in KoConfig.h turns them on).
+          ALLINCS=$(cd $BUILD && ninja -t commands 2>/dev/null | grep -o '\-I[^ ]*' | sort -u | head -500 | tr '\n' ' ')
+          echo "full-graph include dirs: $(echo $ALLINCS | wc -w)"
+          INC="$INC $ALLINCS"
+          # OpenEXR half.h discovery on disk (HAVE_OPENEXR is on in KoConfig.h).
+          HALFD=$(find /usr/include -name 'half.h' 2>/dev/null | head -5)
+          echo "half.h at: $HALFD"
+          for f in $HALFD; do INC="$INC -I$(dirname "$f")"; done
+          INC="$INC -I/usr/include/OpenEXR -I/usr/include/Imath"
           # Eigen lives in /usr/include/eigen3 on Debian/Ubuntu (nonstandard).
           EIG=$(find /usr/include -maxdepth 2 -type d -name 'eigen3' 2>/dev/null | head -1)
           echo "eigen3 dir: $EIG"
