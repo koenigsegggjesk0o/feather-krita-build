@@ -228,6 +228,11 @@ jobs:
           git clone --depth 1 --branch main \
             "https://x-access-token:${{ secrets.KRITA_SOURCE_TOKEN }}@github.com/koenigsegggjesk0o/krita.git" \
             /tmp/krita-repo
+          # Windows git-bash cannot create Linux symlinks (cp -r preserves
+          # them and then fails). Strip them from the TEMP build checkout
+          # only — the krita repo itself is untouched; the engine build
+          # needs none of the symlinked packaging scaffolding.
+          find /tmp/krita-repo/krita-source -type l -delete
           cp -r /tmp/krita-repo/krita-source "$GITHUB_WORKSPACE/krita"
           cd "$GITHUB_WORKSPACE/krita"
           echo "=== Real Krita source verified ==="
