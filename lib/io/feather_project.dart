@@ -259,13 +259,18 @@ class FeatherProjectDocument {
         'origin': [0.0, 0.0, 0.0],
       },
     });
-    state.strokes.fromJsonString(snapshot, recordUndo: true);
+    // One unified journal entry covers the whole load: the pre-load
+    // strokes JSON AND the pre-load pixels, so undoing a project open
+    // restores both (loop-20; before, undo only restored the strokes).
+    state.captureUndo(withTexture: true);
+    state.strokes.fromJsonString(snapshot, recordUndo: false);
 
     // Restore the canvas pixels: the .feather format stores no bitmap, so
     // the texture is re-rendered from the strokes (loop-14). Before this,
     // opening a project left the PREVIOUS document's pixels on screen.
-    // The whole replay shares ONE undo snapshot (the pre-open state) via
-    // a stroke transaction, and replay dabs push nothing themselves.
+    // The whole replay shares ONE texture-internal transaction so replay
+    // dabs push nothing per dab; the transaction snapshot is dropped
+    // right after (clearHistory) because the journal owns history now.
     final tex = state.texture;
     tex.beginStrokeUndo();
     tex.clear(pushUndo: false);
@@ -281,6 +286,9 @@ class FeatherProjectDocument {
           stroke.thickness > 0 ? stroke.thickness : defaultPx,
     );
     tex.endStrokeUndo();
+    // The journal entry above owns the pre-load state; drop the texture-
+    // internal transaction snapshot so it cannot leak 16 MB per open.
+    tex.clearHistory();
 
     state
       ..mirrorX = mirrorX

@@ -482,3 +482,53 @@ Stage Summary:
 - Loop-17's residual work is now MEASURED: ~30-33% smaller MP4s on painting content, with the fallback still available via Mp4Exporter(enableResiduals: false).
 - Project files now restore the saved orbit-camera pose; the .feather format gained its optional camera block without a version bump.
 - Roadmap: steps 1-7 done + GIF/glTF/PNG/MP4 exports + camera persistence + 57 tests. Loop-19 candidates: undo model unification (TexturePainter vs StrokeManager snapshots), file_picker UX polish, on-device GUI verification, release v0.14 artifacts via CI.
+
+---
+Task ID: 5-loop-18 (addendum, post-push)
+Agent: Z.ai Code (main, autonomous loop)
+Task: public CI validation of the loop-18 tree
+
+Work Log:
+- Full-tree sync pushed to the public builder repo as 827033c (.github excluded per the loop-14 rule).
+- Build Feather-Krita App run 35310778400 SUCCESS at 827033c: the loop-18 tree (exporter flag, camera persistence, bench script) builds and passes CI on Windows + Android targets.
+- Private HEAD: 6b71b74; public CI repo HEAD: 827033c, all green. Health gates: analyze 0 issues, 57/57 tests, ffmpeg decode 6/6 bench files clean.
+- No release this loop (v0.13 remains latest; the exporter default behavior is unchanged — residuals were already on). Loop-19 candidates: release v0.14 artifacts (camera persistence is user-visible), undo model unification, file_picker UX polish, on-device GUI verification.
+
+Stage Summary:
+- Loop-18 validated end to end: measured CAVLC savings (~30-33%), exporter flag plumbed and tested, camera pose persisted in project files, public CI green at 827033c.
+
+---
+Task ID: 5-loop-19
+Agent: Z.ai Code (main, autonomous loop)
+Task: release v0.14 artifacts (camera persistence is user-visible; loop-18 deferred item)
+
+Work Log:
+- Entry gates: flutter analyze 0 issues; flutter test 57/57 (all green, incl. the two external ffmpeg decode gates); public builder run 35310778400 SUCCESS at 827033c (the loop-18 tree).
+- RELEASE v0.14-camera-persistence published (id 391241060): https://github.com/koenigsegggjesk0o/krita/releases/tag/v0.14-camera-persistence
+- scripts/release_v14.py added (adapted from v13; release notes cover camera persistence, snapTo no-animation open, additive format extension, and the loop-18 30-33% MP4 size win).
+- Assets uploaded from CI run 35310778400: feather-krita-windows.zip 12107672 bytes, feather-krita-android.apk 50248437 bytes.
+- Private HEAD: 1e9204e + this loop; public CI repo HEAD: 827033c, all green.
+
+Stage Summary:
+- v0.14 ships the loop-18 camera persistence to end users (Windows + Android installers). Loop-20 candidates: undo model unification (TexturePainter vs StrokeManager snapshots), file_picker UX polish, on-device GUI verification, CAVLC 8x8 (i8x8DCT) if ever needed.
+
+---
+Task ID: 5-loop-20
+Agent: Z.ai Code (main, autonomous loop)
+Task: undo model unification — one journal drives strokes AND texture in lockstep
+
+Work Log:
+- Entry gates: analyze 0 issues, 57/57 tests, public builder green at 827033c.
+- ROOT CAUSE (the divergence bug): EditorState.undo() only called StrokeManager.undo(), so undoing a painted stroke removed the 3D stroke but LEFT THE PIXELS on the canvas (texture diverged from history). The two systems also had different depths (move/liquify/mirror/delete push strokes-only entries), so a naive "undo both" would pop the wrong texture snapshot.
+- UNIFIED JOURNAL (lib/state/editor_state.dart): one atomic _UndoEntry per operation {strokes JSON, texture snapshot?}. texture != null only for pixel-affecting ops (paint strokes, project loads, new document); strokes-only ops (move/rotate/scale/liquify/delete/mirror/split) record JSON only, so their undo/redo never touches (nor allocates) the 16 MB pixel buffer.
+  - StrokeManager gains onBeforeMutate hook fired in _pushUndo; when hooked (EditorState), the manager skips its own stacks (no double bookkeeping). Direct manager users keep the classic behavior (engine tests unchanged).
+  - Paint flow: canvas calls state.beginPaintStroke() (captures pre-stroke strokes+pixels) → endPaintStroke(stroke) commits ONE entry + addStroke(recordUndo:false); discardPaintStroke() for empty taps. undo()/redo() swap both states atomically; pending transactions are cancelled before undo/redo.
+  - applyTo (project load): captureUndo(withTexture:true) + fromJsonString(recordUndo:false) — undoing an open now restores the PRE-LOAD PIXELS too (new). Replay's texture-internal transaction snapshot is dropped via clearHistory (frees the 16 MB that previously leaked per open).
+  - newDocument: fully undoable now (was strokes-only + texture stayed cleared = diverged).
+- BUG FIX BONUS: fixed a real 16 MB-per-project-open leak (texture-internal replay snapshot never consumed by the old app-level undo).
+- TESTS: new test/undo_journal_test.dart (7 tests): paint undo restores strokes AND pixels, redo round-trip, strokes-only move undo leaves pixels byte-identical and doesn't consume the paint entry, journal cap at 30, project-load undo restores pre-load pixels, newDocument undoable, discarded-stroke transaction leaves nothing. project_test's canUndo assertion moved to EditorState (journal-backed). 64/64 green serial (x2); analyze 0 issues.
+- FLAKY-SUITE ROOT CAUSE (separate from the journal): default parallel `flutter test` spawns 7 file VMs on this 4 GB box → memory pressure → random gui tests die "did not complete" (reproduced twice; serial runs pass consistently x3). Public builder build-app.yml now runs `flutter test --concurrency=1` before the APK build (ffmpeg gates auto-skip when absent; ubuntu runners have them).
+- Version 0.15.0+1; README test count 64.
+
+Stage Summary:
+- Undo is now single-source-of-truth: every operation is one journal entry, pixels and strokes revert atomically, project loads and document resets are fully undoable, and a real per-open memory leak is gone. Loop-21 candidates: verify the loop-20 CI run (build+test on ubuntu runner), file_picker UX polish, on-device GUI verification, CAVLC 8x8 if ever needed.

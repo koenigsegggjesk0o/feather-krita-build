@@ -107,8 +107,8 @@ void main() {
       expect(loaded.guideSurface.type, GuideSurfaceType.cylinder);
       expect(loaded.strokes.strokeCount, 1);
       expect(loaded.strokes.strokes.first.name, 'restored');
-      expect(loaded.strokes.canUndo, isTrue,
-          reason: 'project load must be undoable');
+      expect(loaded.canUndo, isTrue,
+          reason: 'project load must be undoable (unified journal, loop-20)');
 
       // Undoing the load brings the previous document back.
       loaded.undo();

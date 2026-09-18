@@ -83,6 +83,12 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
+      # Regression suite added in loop-20. Serial because the GUI tests
+      # allocate several 2048x2048 texture buffers each; parallel file
+      # VMs on memory-limited runners can OOM (flaky "did not complete").
+      - name: Run regression suite (serial)
+        run: flutter test --concurrency=1
+
       - name: Build Android APK (release, debug-signed for direct install)
         run: flutter build apk --release
 

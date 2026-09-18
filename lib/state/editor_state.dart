@@ -71,6 +71,10 @@ class EditorState extends ChangeNotifier {
         presets = presets ?? <BrushPreset>[] {
     _strokes.addListener(_forward);
     _camera.addListener(_forward);
+    // Unified undo journal (loop-20): StrokeManager mutations record
+    // their pre-op state here instead of the manager's private stacks,
+    // so strokes AND texture undo/redo in lockstep.
+    _strokes.onBeforeMutate = _captureStrokeMutation;
     _tryLoadBrushEngine();
     _applyBrushToEngine();
   }
@@ -82,6 +86,86 @@ class EditorState extends ChangeNotifier {
   final List<BrushPreset> presets;
 
   KritaBrushEngine? _brushEngine;
+
+  // ----- Unified undo journal (loop-20) -----------------------------------
+
+  /// Max unified undo steps. Paint-stroke entries carry a full texture
+  /// snapshot (16 MB at the default 2048x2048), matching the old
+  /// TexturePainter budget; strokes-only entries are just JSON.
+  static const int maxUndoSteps = 30;
+
+  final List<_UndoEntry> _undoJournal = <_UndoEntry>[];
+  final List<_UndoEntry> _redoJournal = <_UndoEntry>[];
+
+  /// Pending pre-stroke state between [beginPaintStroke] and
+  /// [endPaintStroke] (canvas pointer-down .. pointer-up).
+  String? _pendingStrokeJson;
+  Uint8List? _pendingTexture;
+
+  /// Journal hook for StrokeManager-driven mutations (move / rotate /
+  /// scale / liquify / delete / mirror / split). These never touch the
+  /// texture, so the entry records strokes-only state.
+  void _captureStrokeMutation() {
+    _pushJournal(_UndoEntry(strokes: _strokes.toJsonString()));
+  }
+
+  void _pushJournal(_UndoEntry entry) {
+    _undoJournal.add(entry);
+    if (_undoJournal.length > maxUndoSteps) _undoJournal.removeAt(0);
+    _redoJournal.clear();
+  }
+
+  /// Captures an explicit unified undo entry. Used by callers that
+  /// perform a texture-affecting operation outside the paint-stroke
+  /// flow (project load, new document).
+  void captureUndo({bool withTexture = false}) {
+    _pushJournal(_UndoEntry(
+      strokes: _strokes.toJsonString(),
+      texture: withTexture ? texture.snapshot() : null,
+    ));
+  }
+
+  /// Opens a paint-stroke undo transaction (canvas pointer-down). The
+  /// pre-stroke strokes+texture state is held pending; [endPaintStroke]
+  /// commits it as ONE journal entry, or [discardPaintStroke] drops it.
+  /// Replaces the old TexturePainter-internal stroke transaction so the
+  /// pixels and the stroke list can never diverge across undo (loop-20).
+  void beginPaintStroke() {
+    _pendingStrokeJson ??= _strokes.toJsonString();
+    _pendingTexture ??= texture.snapshot();
+  }
+
+  /// Commits the pending paint-stroke transaction: records ONE journal
+  /// entry covering the whole stroke, then adds [stroke] to the document
+  /// (without a second manager-side entry).
+  void endPaintStroke(Stroke stroke) {
+    final strokesJson = _pendingStrokeJson;
+    final textureSnapshot = _pendingTexture;
+    _pendingStrokeJson = null;
+    _pendingTexture = null;
+    if (strokesJson == null) {
+      // No matching begin (defensive) — fall back to manager-side
+      // history so the stroke add is still undoable.
+      _strokes.addStroke(stroke, recordUndo: true);
+      return;
+    }
+    _pushJournal(_UndoEntry(strokes: strokesJson, texture: textureSnapshot));
+    _strokes.addStroke(stroke, recordUndo: false);
+  }
+
+  /// Drops the pending paint-stroke transaction (pointer released
+  /// without a drawable hit — nothing to undo).
+  void discardPaintStroke() {
+    _pendingStrokeJson = null;
+    _pendingTexture = null;
+  }
+
+  /// Cancels an in-flight paint transaction before an undo/redo: its
+  /// pending snapshot belongs to an operation that never committed.
+  void _cancelPendingStroke() {
+    _pendingStrokeJson = null;
+    _pendingTexture = null;
+  }
 
   // ----- Session UI state -------------------------------------------------
 
@@ -117,8 +201,8 @@ class EditorState extends ChangeNotifier {
   int get brushColor => _brushColor;
   String get brushPresetName => _brushPresetName;
 
-  bool get canUndo => _strokes.canUndo;
-  bool get canRedo => _strokes.canRedo;
+  bool get canUndo => _undoJournal.isNotEmpty;
+  bool get canRedo => _redoJournal.isNotEmpty;
 
   // ----- Notification forwarding -----------------------------------------
 
@@ -307,8 +391,38 @@ class EditorState extends ChangeNotifier {
 
   // ----- Document operations --------------------------------------------
 
-  void undo() => _strokes.undo();
-  void redo() => _strokes.redo();
+  /// Reverts the last unified journal entry: strokes always, and the
+  /// texture too when the entry recorded pixels (paint strokes, project
+  /// loads, document resets). Before loop-20 this only reverted the
+  /// stroke list, leaving stale painted pixels on the canvas.
+  void undo() {
+    _cancelPendingStroke();
+    if (_undoJournal.isEmpty) return;
+    final entry = _undoJournal.removeLast();
+    _redoJournal.add(_UndoEntry(
+      strokes: _strokes.toJsonString(),
+      texture: entry.texture != null ? texture.snapshot() : null,
+    ));
+    final restoreTex = entry.texture;
+    if (restoreTex != null) texture.restore(restoreTex);
+    _strokes.fromJsonString(entry.strokes, recordUndo: false);
+    notifyListeners();
+  }
+
+  /// Redoes a previously undone journal entry (see [undo]).
+  void redo() {
+    _cancelPendingStroke();
+    if (_redoJournal.isEmpty) return;
+    final entry = _redoJournal.removeLast();
+    _undoJournal.add(_UndoEntry(
+      strokes: _strokes.toJsonString(),
+      texture: entry.texture != null ? texture.snapshot() : null,
+    ));
+    final restoreTex = entry.texture;
+    if (restoreTex != null) texture.restore(restoreTex);
+    _strokes.fromJsonString(entry.strokes, recordUndo: false);
+    notifyListeners();
+  }
 
   /// Dab source for stroke replay (GIF export, project-open texture
   /// restore). Strokes always replay with the pure-Dart synthetic dab at
@@ -319,10 +433,13 @@ class EditorState extends ChangeNotifier {
     return syntheticDab(sizePx, stroke.color);
   }
 
-  /// Clears the document and texture for a fresh canvas.
+  /// Clears the document and texture for a fresh canvas. Fully undoable
+  /// since loop-20: the journal entry carries both the stroke list and
+  /// the pre-reset pixels.
   void newDocument() {
-    _strokes.clearAll();
-    texture.clear();
+    captureUndo(withTexture: true);
+    _strokes.clearAll(recordUndo: false);
+    texture.clear(pushUndo: false);
     fileName = 'Untitled.feather';
     notifyListeners();
   }
@@ -337,8 +454,20 @@ class EditorState extends ChangeNotifier {
   void dispose() {
     _strokes.removeListener(_forward);
     _camera.removeListener(_forward);
+    _strokes.onBeforeMutate = null;
     _brushEngine?.dispose();
     _brushEngine = null;
     super.dispose();
   }
+}
+
+/// One unified undo step (loop-20): the pre-operation state of the
+/// [StrokeManager] as JSON plus — for operations that modify canvas
+/// pixels — a full [TexturePainter] snapshot. A null [texture] means the
+/// operation never touched pixels, so undo/redo skips the (16 MB at the
+/// default size) pixel restore entirely.
+class _UndoEntry {
+  _UndoEntry({required this.strokes, this.texture});
+  final String strokes;
+  final Uint8List? texture;
 }

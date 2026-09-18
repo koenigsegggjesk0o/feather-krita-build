@@ -128,6 +128,14 @@ class StrokeManager extends ChangeNotifier {
   int _nextId = 1;
   int _activeBrushIndex = 0;
 
+  /// Fired at the start of every recordable mutation ([_pushUndo]). The
+  /// unified undo journal ([EditorState], loop-20) hooks this to capture
+  /// the pre-operation state; when set, the manager skips its own
+  /// internal undo/redo stacks to avoid double bookkeeping. Direct
+  /// [StrokeManager] users (engine tests) that never set the hook keep
+  /// the classic manager-owned history.
+  void Function()? onBeforeMutate;
+
   /// The active mirror configuration. Mutating it directly does not push
   /// an undo entry; call [setMirror] to record history.
   MirrorConfig get mirror => _mirror;
@@ -584,6 +592,13 @@ class StrokeManager extends ChangeNotifier {
   // ----- Undo / Redo -----------------------------------------------------
 
   void _pushUndo() {
+    final hook = onBeforeMutate;
+    if (hook != null) {
+      // Unified journal owns history (loop-20): the hook captured the
+      // pre-op state; the internal stacks stay out of the way.
+      hook();
+      return;
+    }
     _undoStack.add(_serialize());
     if (_undoStack.length > maxUndoLevels) {
       _undoStack.removeAt(0);

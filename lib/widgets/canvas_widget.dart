@@ -210,9 +210,12 @@ class CanvasWidgetState extends State<CanvasWidget>
       time: 0,
       uv: hit.uv.clone(),
     ));
-    // One undo snapshot for the whole stroke (loop-14): per-dab snapshots
-    // were full-texture copies (16 MB each) and could OOM-kill the app.
-    widget.state.texture.beginStrokeUndo();
+    // One unified journal entry for the whole stroke (loop-20): the
+    // pre-stroke strokes+texture state is held pending and committed by
+    // endPaintStroke when the stroke is added. (Loop-14 history: per-dab
+    // snapshots were full-texture copies, 16 MB each, and could OOM-kill
+    // the app.)
+    widget.state.beginPaintStroke();
     _stampDab(hit.uv);
     HapticFeedback.selectionClick();
   }
@@ -260,12 +263,15 @@ class CanvasWidgetState extends State<CanvasWidget>
         points: _livePoints.map((p) => p.copy()).toList(),
         name: isErase ? 'Eraser' : widget.state.brushPresetName,
       );
-      widget.state.strokes.addStroke(stroke);
+      // Commits ONE journal entry (pre-stroke strokes + pixels) and adds
+      // the stroke — texture and stroke list now undo in lockstep.
+      widget.state.endPaintStroke(stroke);
+    } else {
+      widget.state.discardPaintStroke();
     }
     _livePoints.clear();
     _lastUV = null;
     _lastWorld = null;
-    widget.state.texture.endStrokeUndo();
     setState(() {});
   }
 
