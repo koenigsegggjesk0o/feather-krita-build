@@ -56,6 +56,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   double _pressureCurve = 0.5;
   double _tiltSensitivity = 0.5;
   bool _palmRejection = true;
+  double _smoothing = 0.0; // loop-25 brush stabilizer.
 
   bool _loaded = false;
 
@@ -77,7 +78,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _pressureCurve = _prefs.getDouble('stylus.pressureCurve') ?? 0.5;
       _tiltSensitivity = _prefs.getDouble('stylus.tiltSensitivity') ?? 0.5;
       _palmRejection = _prefs.getBool('stylus.palmRejection') ?? true;
+      _smoothing = _prefs.getDouble('stylus.smoothing') ?? 0.0;
       _loaded = true;
+      // Reflect the persisted smoothing into the live editor state so
+      // the very first stroke after launch is already stabilized.
+      widget.state.setBrushSmoothing(_smoothing);
     });
     _applyGuideSurface();
   }
@@ -174,6 +179,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           pressureCurve: _pressureCurve,
                           tiltSensitivity: _tiltSensitivity,
                           palmRejection: _palmRejection,
+                          smoothing: _smoothing,
                           onChanged: (k, v) {
                             setState(() {
                               if (k == 'stylus.pressureCurve') {
@@ -184,6 +190,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               }
                               if (k == 'stylus.palmRejection') {
                                 _palmRejection = v as bool;
+                              }
+                              if (k == 'stylus.smoothing') {
+                                _smoothing = v as double;
+                                widget.state.setBrushSmoothing(v);
                               }
                             });
                             _save(k, v);
@@ -488,12 +498,14 @@ class _StylusCard extends StatelessWidget {
     required this.pressureCurve,
     required this.tiltSensitivity,
     required this.palmRejection,
+    required this.smoothing,
     required this.onChanged,
   });
 
   final double pressureCurve;
   final double tiltSensitivity;
   final bool palmRejection;
+  final double smoothing;
   final void Function(String key, Object value) onChanged;
 
   @override
@@ -524,6 +536,19 @@ class _StylusCard extends StatelessWidget {
             icon: Icons.rounded_corner,
             accent: AppTheme.toolSelect,
             onChanged: (v) => onChanged('stylus.tiltSensitivity', v),
+            valueFormatter: (v) => '${(v * 100).round()}%',
+          ),
+          const SizedBox(height: 6),
+          // Loop-25: brush stabilizer (moving-average smoothing).
+          GlassSlider(
+            value: smoothing,
+            min: 0,
+            max: 1,
+            divisions: 100,
+            label: 'Stroke smoothing',
+            icon: Icons.waves_rounded,
+            accent: AppTheme.toolLiquify,
+            onChanged: (v) => onChanged('stylus.smoothing', v),
             valueFormatter: (v) => '${(v * 100).round()}%',
           ),
           _Row(

@@ -38,6 +38,7 @@ import 'package:feather_krita/engine/guide_surface.dart';
 import 'package:feather_krita/engine/stroke_manager.dart';
 import 'package:feather_krita/models/stroke.dart';
 import 'package:feather_krita/ffi/krita_bindings.dart';
+import 'package:feather_krita/utils/stroke_smoother.dart';
 
 /// The 3D canvas viewport.
 class CanvasWidget extends StatefulWidget {
@@ -256,11 +257,17 @@ class CanvasWidgetState extends State<CanvasWidget>
     _drawing = false;
     if (_livePoints.isNotEmpty) {
       final isErase = widget.state.activeTool == Tool.erase;
+      // Loop-25: stabilize the captured path before commit. Live dabbing
+      // used the raw pointer stream (so the user sees no input lag while
+      // drawing); only the recorded stroke geometry is smoothed. A
+      // strength of 0 returns a deep copy unchanged (cheap no-op).
+      final smoothed = StrokeSmoother.smooth(_livePoints,
+          strength: widget.state.brushSmoothing);
       final stroke = Stroke(
         brushType: isErase ? BrushType.eraser : _brushTypeForTool(),
         color: widget.state.brushColor,
         thickness: widget.state.brushSize,
-        points: _livePoints.map((p) => p.copy()).toList(),
+        points: smoothed,
         name: isErase ? 'Eraser' : widget.state.brushPresetName,
       );
       // Commits ONE journal entry (pre-stroke strokes + pixels) and adds

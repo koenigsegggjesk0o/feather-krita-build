@@ -184,6 +184,7 @@ class EditorState extends ChangeNotifier {
   double _brushOpacity = 1.0;
   double _brushSpacing = 0.10;
   double _brushSmudge = 0.0;
+  double _brushSmoothing = 0.0; // loop-25: 0 = off, 1 = max stabilizer.
   int _brushColor = 0xFF1A1A1A;
   String _brushPresetName = 'Basic Round';
 
@@ -198,6 +199,7 @@ class EditorState extends ChangeNotifier {
   double get brushOpacity => _brushOpacity;
   double get brushSpacing => _brushSpacing;
   double get brushSmudge => _brushSmudge;
+  double get brushSmoothing => _brushSmoothing;
   int get brushColor => _brushColor;
   String get brushPresetName => _brushPresetName;
 
@@ -328,6 +330,18 @@ class EditorState extends ChangeNotifier {
     if (_brushSmudge == v) return;
     _brushSmudge = v;
     _brushEngine?.smudge = v;
+    notifyListeners();
+  }
+
+  /// Sets the brush-smoothing (stabilizer) strength in [0, 1]. Loop-25.
+  /// 0 disables smoothing (raw stroke path); 1 applies the maximum
+  /// symmetric moving-average window. The value is read by
+  /// [CanvasWidget] when a stroke commits, so live dabbing is unaffected
+  /// — only the recorded stroke geometry is smoothed.
+  void setBrushSmoothing(double value) {
+    final v = value.clamp(0.0, 1.0);
+    if (_brushSmoothing == v) return;
+    _brushSmoothing = v;
     notifyListeners();
   }
 

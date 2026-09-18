@@ -116,6 +116,20 @@ class BrushSettingsPanel extends StatelessWidget {
                 onChanged: state.setBrushSmudge,
                 valueFormatter: (v) => '${(v * 100).round()}%',
               ),
+                      const SizedBox(height: 12),
+
+                      // Smoothing / stabilizer (loop-25).
+                      GlassSlider(
+                        value: state.brushSmoothing,
+                        min: 0,
+                        max: 1,
+                        divisions: 100,
+                        label: 'Smoothing',
+                        icon: Icons.waves_rounded,
+                        accent: AppTheme.toolSelect,
+                onChanged: state.setBrushSmoothing,
+                valueFormatter: (v) => '${(v * 100).round()}%',
+              ),
               const SizedBox(height: 16),
 
               // Colour swatch + picker.

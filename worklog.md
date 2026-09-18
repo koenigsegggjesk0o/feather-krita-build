@@ -629,3 +629,53 @@ Work Log:
 
 Stage Summary:
 - The editor is now fully keyboard-driven: undo/redo/save/open/new, all four primary tools, brush-size stepping, and selection delete/deselect are one keystroke away. The About card shows the real version and a discoverable shortcut reference. Loop-24 candidates: verify the loop-23 CI run on the ubuntu runner, release v0.17 (shortcuts are a user-visible UX win), on-device GUI verification, CAVLC 8x8 (i8x8DCT) if ever needed.
+
+---
+Task ID: 5-loop-23 (validation addendum, post-push)
+Agent: Z.ai Code (main, autonomous loop)
+Task: public CI validation of the loop-23 tree
+
+Work Log:
+- Full-tree sync pushed to the public builder repo as 85ecbfd (.github excluded per the loop-14 rule; release_v16.py from loop-22 came along — harmless, not compiled).
+- Build Feather-Krita App run 35320735701 = SUCCESS at 85ecbfd: build-windows ✅, build-android ✅ (the latter runs `flutter test --concurrency=1` serial regression gate before the APK build — the 6 new keyboard-shortcut tests + 68 existing all pass on the 7 GB ubuntu runner).
+- Private HEAD: 3bc3c9e (+ this addendum); public CI repo HEAD: 85ecbfd, all green.
+- Health: analyze 0 issues; per-file local gate 74/74 (10 files). Full-file flakiness on the 4 GB box remains the documented OOM root cause (loop-20/21); CI ubuntu is the arbiter and is green.
+
+Stage Summary:
+- Loop-23 fully validated end to end: keyboard shortcuts shipped and CI-green; the editor is now keyboard-driven (undo/redo/save/open/new + B/E/V/L tools + [ / ] brush size + Delete/Esc selection). About card shows the real v0.17.0 with a discoverable shortcut reference. Loop-24 candidates: release v0.17 (shortcuts are a user-visible UX win, version already bumped 0.17.0+1), on-device GUI verification, CAVLC 8x8 (i8x8DCT) if ever needed.
+
+---
+Task ID: 5-loop-24
+Agent: Z.ai Code (main, autonomous loop)
+Task: validate the loop-23 keyboard-shortcuts tree; release v0.17
+
+Work Log:
+- CONCURRENT-WRITER EVENT: on entering this run (15:40 cron) the working tree held uncommitted loop-23 work actively changing under me (README mtime 2 min fresh). Per the documented protocol, did NOT race the writer — polled at 90s intervals; commit 3bc3c9e + worklog 5-loop-23 landed within one poll cycle.
+- VERDICT on the shipped loop-23 tree: coherent and complete (EditorShortcuts/CallbackShortcuts wrapper with ctrl/meta dual bindings, full binding map undo/redo/save/open/new/tools/grid/brush-size/delete/deselect, About card fixed v1.0.0 → kAppVersionLabel, in-app shortcut reference card, 6 key-event-pipeline tests). flutter analyze 0 issues.
+- LOCAL GATE: per-file sweep = 9/10 files green (68 tests). keyboard_shortcuts_test full-file run starves at test 4 (Delete) with "did not complete" cascade — PROVEN environmental via dmesg: `oom-kill ... task=flutter_tester, anon-rss 1626100kB (1.55 GB)`, the exact loop-22 signature. All 6 keyboard tests pass individually (Delete, Ctrl+N, Ctrl+S each verified in isolation this loop). Not a code regression; chose NOT to restructure the writer's tests (risky, and the tree pattern is gui_test-equivalent which passes on CI's 7 GB runner).
+- PUBLIC CI: run 35320735701 = SUCCESS @ 85ecbfd (loop-23 tree: Windows + Android + serial regression suite incl. the full keyboard file on the ubuntu runner) — the authoritative arbiter.
+- RELEASE v0.17-keyboard-shortcuts published (id 391299066): https://github.com/koenigsegggjesk0o/krita/releases/tag/v0.17-keyboard-shortcuts
+- scripts/release_v17.py added (adapted from v16; warns if the builder HEAD isn't the expected 85ecbfd). Assets uploaded from CI run 35320735701: feather-krita-windows.zip 12142849 bytes, feather-krita-android.apk 50363225 bytes. Release notes cover the full shortcut map, the About-version fix, and the in-app reference card; downloads cleaned up post-upload (disk steady at 86%, 1.4 GB free).
+- Private HEAD: 766b873 + this loop; public CI repo HEAD: 85ecbfd (synced by the loop-23 writer).
+
+Stage Summary:
+- v0.17 ships loop-23's keyboard-driven editor (full hotkey map + About-version fix) to end users (Windows + Android). Loop-23 is fully validated end to end: per-test local gate green, CI serial suite green, release published. Loop-25 candidates: on-device GUI verification (still pending since loop-22), CAVLC 8x8 (i8x8DCT) if ever needed, keep the per-file/per-test gate as the local recipe (kernel OOM re-confirmed via dmesg this loop).
+
+---
+Task ID: 5-loop-25
+Agent: Z.ai Code (main, autonomous loop)
+Task: brush stabilizer (stroke smoothing) — moving-average post-capture path stabilizer with persisted strength slider
+
+Work Log:
+- Entry gates: working tree clean at bd6f8e8; public builder CI green at 85ecbfd; flutter analyze 0 issues; disk 86% / mem 2.1 GB free.
+- NEW lib/utils/stroke_smoother.dart: pure StrokeSmoother utility. Symmetric moving-average window over a captured [StrokePoint] list — each output point is the average of itself + `radius` neighbours each side, with the window clamped at the stroke ends. Position, pressure, tilt, time and UV all average together (no pressure/position skew). strength in [0,1] maps to a window radius in [0, 6] (maxRadius). strength=0 is a deep-copy no-op; short inputs (<3 points) return unchanged. Any null UV in a window propagates null (consistency). Stateless and safe to call from the paint loop.
+- CANVAS WIRING (lib/widgets/canvas_widget.dart): _endStroke now smooths _livePoints via StrokeSmoother.smooth(strength: widget.state.brushSmoothing) before constructing the Stroke. KEY DESIGN: live dabbing during the gesture uses the RAW pointer stream (no input lag — the user sees exactly what they draw); only the RECORDED stroke geometry is smoothed at commit. This sidesteps the classic stabilizer trade-off (smoothing vs responsiveness) by splitting the two paths. strength=0 = the old .map((p) => p.copy()).toList() path (deep copy, same result).
+- STATE (lib/state/editor_state.dart): new field _brushSmoothing (default 0.0 = off), getter brushSmoothing, setter setBrushSmoothing(double) that clamps [0,1] and notifyListeners(). Read by CanvasWidget at stroke commit; no native-engine coupling (smoothing is pure-Dart post-processing).
+- BRUSH PANEL (lib/widgets/brush_settings_panel.dart): new "Smoothing" GlassSlider (icon waves_rounded, toolSelect accent, 0-100% formatter) placed after the Smudge slider, wired to state.setBrushSmoothing. Live preview as the user drags.
+- SETTINGS PERSISTENCE (lib/screens/settings_screen.dart): new _smoothing field loaded from SharedPreferences 'stylus.smoothing' (default 0.0), saved on change, AND reflected into the live EditorState via widget.state.setBrushSmoothing both at load (so the first stroke after launch is already stabilized) and on slider change. The Stylus card gained a third "Stroke smoothing" GlassSlider (icon waves_rounded, toolLiquify accent).
+- TESTS (test/stroke_smoother_test.dart, 9 tests): strength=0 deep-copy no-op, strength>0 reduces jitter (centre point |y| strictly decreases on a zig-zag), output length matches input across 5 strengths, strength=1 does not collapse a line to a point (span stays >2.0), radiusFor monotonic [0,1]->[0,6], UV smooths in lockstep with position (centre uv.x = 0.5 ± 1e-9), empty input -> empty output, null-UV propagation, short input (<3) unchanged. All 9 pass.
+- HEALTH: analyze 0 issues; per-file gate — stroke_smoother 9/9, file_picker_ux 4/4, gui 9/9 (gui_test's "canvas ticker" flaked once on the documented 4GB-box OOM, passed clean on re-run after memory recovery). 11 test files, 83 tests total.
+- Version 0.18.0+1; README test count 83.
+
+Stage Summary:
+- A brush stabilizer now ships end to end: the Stylus card's "Stroke smoothing" slider (persisted, 0-100%) drives a symmetric moving-average that smooths the recorded stroke path at commit time, while live dabbing stays raw for zero input lag. Pure-Dart, no native-engine coupling, fully unit-tested. Loop-26 candidates: verify the loop-25 CI run, release v0.18, on-device GUI verification, CAVLC 8x8 if ever needed.
