@@ -138,6 +138,11 @@ jobs:
             RESINCS=$(cd $BUILD && ninja -t commands $t 2>/dev/null | grep -m1 -o '\-I[^ ]*' | sort -u | tr '\n' ' ')
             INC="$INC $RESINCS"
           done
+          # Eigen lives in /usr/include/eigen3 on Debian/Ubuntu (nonstandard).
+          EIG=$(find /usr/include -maxdepth 2 -type d -name 'eigen3' 2>/dev/null | head -1)
+          echo "eigen3 dir: $EIG"
+          INC="$INC -I/usr/include/eigen3"
+          [ -n "$EIG" ] && INC="$INC -I$EIG"
           # Decisive fallback: locate klocalizedstring.h on disk wherever it is.
           KLOC=$(find /usr/include /usr/local/include -name 'klocalizedstring.h' 2>/dev/null | head -3)
           echo "klocalizedstring.h found at: $KLOC"
