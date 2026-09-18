@@ -266,12 +266,12 @@ jobs:
           test -f 'C:/vcpkg2/vcpkg.exe' || { echo 'FATAL: vcpkg bootstrap failed'; exit 1; }
           echo 'vcpkg2 bootstrapped'
 
-      - name: vcpkg engine deps (gettext zlib bzip2 lcms2 eigen3 exiv2 freetype harfbuzz fontconfig libunibreak boost)
+      - name: vcpkg engine deps (gettext zlib bzip2 lcms eigen3 exiv2 freetype harfbuzz fontconfig libunibreak boost)
         run: |
           # NOTE: call our vcpkg.exe explicitly — the image's C:\vcpkg lacks
           # many ports and msvc-dev-cmd overrides VCPKG_ROOT to the VS copy.
           'C:/vcpkg2/vcpkg.exe' install --triplet x64-windows \
-            gettext zlib bzip2 lcms2 eigen3 exiv2 \
+            gettext zlib bzip2 lcms eigen3 exiv2 \
             freetype harfbuzz fontconfig libunibreak \
             boost-multi-array boost-icl boost-rational boost-operators
           test -d 'C:/vcpkg2/installed/x64-windows/lib' || { echo 'FATAL: vcpkg install failed'; exit 1; }
