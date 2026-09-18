@@ -279,10 +279,14 @@ jobs:
           # NOTE: call our vcpkg.exe explicitly — the image's C:\vcpkg lacks
           # many ports and msvc-dev-cmd overrides VCPKG_ROOT to the VS copy.
           'C:/vcpkg2/vcpkg.exe' install --triplet x64-windows \
-            gettext zlib bzip2 lcms eigen3 exiv2 \
+            'gettext[tools]' zlib bzip2 lcms eigen3 exiv2 \
             freetype harfbuzz fontconfig libunibreak \
             boost-multi-array boost-icl boost-rational boost-utility boost-integer
           test -d 'C:/vcpkg2/installed/x64-windows/lib' || { echo 'FATAL: vcpkg install failed'; exit 1; }
+          # ki18n's KF5I18nMacros find_package(Gettext) needs msgfmt/msgmerge
+          # executables from the gettext[tools] feature on PATH:
+          test -f 'C:/vcpkg2/installed/x64-windows/tools/gettext/msgfmt.exe' \
+            || { echo 'FATAL: msgfmt.exe missing (gettext[tools] not installed?)'; exit 1; }
 
       - name: Build ECM (extra-cmake-modules)
         run: |
@@ -294,6 +298,7 @@ jobs:
 
       - name: Build KF5 frameworks (kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews)
         run: |
+          export PATH="C:/vcpkg2/installed/x64-windows/tools/gettext:$PATH"
           TCF='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake'
           PREFIX="$KF5DIR;$QTDIR;C:/vcpkg2/installed/x64-windows"
           for fw in kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews; do
@@ -313,6 +318,7 @@ jobs:
 
       - name: Configure Krita (minimal engine build, Qt5, MSVC, unmodified source)
         run: |
+          export PATH="C:/vcpkg2/installed/x64-windows/tools/gettext:$PATH"
           cmake -S "$GITHUB_WORKSPACE/krita" -B "$GITHUB_WORKSPACE/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF -DENABLE_PYTHON=OFF \
@@ -337,6 +343,7 @@ jobs:
       - name: Build real bridge (krita_bridge_real.dll) + smoke test (MSVC)
         run: |
           export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
+          export PATH="C:/vcpkg2/installed/x64-windows/tools/gettext:$PATH"
           WS="$GITHUB_WORKSPACE"
           BUILD="$WS/build"
           QT="$QTDIR"
