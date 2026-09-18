@@ -57,8 +57,8 @@ void main(List<String> args) {
   final engine = KritaBrushEngine();
 
   // --- Full-pressure dab: exact color passthrough, opaque center.
-  engine.setSize(64);
-  engine.setColor(0xFF2040A0);
+  engine.size = 64;
+  engine.color = const BrushColor(0x20, 0x40, 0xA0);
   final dab = engine.generateDab(
       const BrushInput(x: 0, y: 0, pressure: 1.0));
   _check(dab.width >= 60 && dab.width <= 68, 'dab sized from set_size(64) '
