@@ -31,17 +31,13 @@ jobs:
 
       - name: Clone bridge sources (app repo, feather-krita-flutter)
         run: |
-          git clone --depth 1 --branch feather-krita-flutter --no-checkout \
+          git clone --depth 1 --branch feather-krita-flutter \
             "https://x-access-token:${{ secrets.KRITA_SOURCE_TOKEN }}@github.com/koenigsegggjesk0o/krita.git" \
             /tmp/fkr-app
-          cd /tmp/fkr-app
-          git sparse-checkout init --cone
-          git sparse-checkout set native/krita_bridge
-          git checkout
           mkdir -p /opt/bridge
-          cp native/krita_bridge/krita_bridge.h        /opt/bridge/
-          cp native/krita_bridge/krita_bridge_real.cpp /opt/bridge/
-          cp native/krita_bridge/smoke_test_real.cpp   /opt/bridge/
+          cp /tmp/fkr-app/native/krita_bridge/krita_bridge.h        /opt/bridge/
+          cp /tmp/fkr-app/native/krita_bridge/krita_bridge_real.cpp /opt/bridge/
+          cp /tmp/fkr-app/native/krita_bridge/smoke_test_real.cpp   /opt/bridge/
           echo "=== Bridge sources ==="
           ls -la /opt/bridge/
           grep -c "extern \"C\"" /opt/bridge/krita_bridge.h
