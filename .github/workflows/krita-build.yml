@@ -252,11 +252,19 @@ jobs:
       - name: Install Qt 5.15.2 (win64_msvc2019_64) via aqtinstall
         run: |
           python -m pip install --quiet aqtinstall
-          # NOTE: qtsvg ships INSIDE the 5.15 base package (no -m needed;
-          # aqt rejects it as a separate module for 5.15).
-          aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 -O 'C:/Qt'
+          # qtsvg ships INSIDE the 5.15 base package. Trim the download to
+          # the archives Krita's configure actually needs (Qt5 REQUIRED
+          # components are all in qtbase; qmlmodules needs qtdeclarative)
+          # — smaller download, less exposure to flaky mirrors. Retry x3
+          # against transient Bad7zFile mirror corruption.
+          for i in 1 2 3; do
+            rm -rf 'C:/Qt'
+            aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 -O 'C:/Qt' \
+              --archives qtbase qtdeclarative qttools qtsvg qttranslations && break
+            echo "aqt attempt $i failed; retrying in 15s"; sleep 15
+          done
           test -f "$QTDIR/bin/Qt5Core.dll" || { echo 'FATAL: Qt5Core.dll missing'; exit 1; }
-          test -f "$QTDIR/bin/Qt5Svg.dll" || { echo 'FATAL: Qt5Svg.dll missing from base install'; exit 1; }
+          test -f "$QTDIR/bin/Qt5Svg.dll" || { echo 'FATAL: Qt5Svg.dll missing'; exit 1; }
           echo "Qt installed: $QTDIR"
 
       - name: Bootstrap fresh vcpkg (runner's C:\vcpkg has a pruned ports tree — lcms2 missing)
