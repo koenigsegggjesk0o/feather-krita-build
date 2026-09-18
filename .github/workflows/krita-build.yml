@@ -370,6 +370,12 @@ jobs:
       - name: Configure Krita (minimal engine build, Qt5, MSVC, unmodified source)
         run: |
           export PATH="C:/vcpkg2/installed/x64-windows/tools/gettext/bin:$PATH"
+          # Krita's custom FindLibExiv2/Find modules get their versions via
+          # pkg-config first; the runner has no pkg-config and vcpkg's .pc
+          # files are not on PKG_CONFIG_PATH by default.
+          choco install pkgconfiglite -y --no-progress >/dev/null 2>&1 || true
+          export PKG_CONFIG_PATH='C:/vcpkg2/installed/x64-windows/lib/pkgconfig;C:/vcpkg2/installed/x64-windows/share/pkgconfig'
+          pkg-config --modversion exiv2 || { echo 'FATAL: pkg-config cannot find exiv2 .pc'; exit 1; }
           cmake -S "$GITHUB_WORKSPACE/krita" -B "$GITHUB_WORKSPACE/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF -DENABLE_PYTHON=OFF \
