@@ -346,3 +346,37 @@ Stage Summary:
 - The suite-stability mystery from loop-13 is SOLVED and it was a REAL app bug, not a sandbox quirk: per-dab 16 MB undo snapshots could OOM-kill the app on any low-memory device during fast strokes. Undo now costs one snapshot per stroke (~40x less memory per stroke).
 - Opening a .feather project now re-renders the canvas from the strokes — the last visible gap in the save/open loop.
 - Roadmap: steps 1-7 done + regression-gated (42 tests); remaining deferred: MP4 exporter, on-device/e2e GUI verification, camera state in project files, file_picker UX polish, undo model unification (stroke history vs texture snapshots are still separate stacks — texture undo is engine-level only today).
+
+Addendum (5-loop-14, post-push):
+- Full-tree sync to the public builder repo pushed as 1139566. GOTCHA caught during sync: blind rsync --delete pulled the private repo's stale step2-* workflow files over the public repo's CI configs and deleted android-bridge.yml — the public repo's workflows are CI-specific and must never be mirrored; .github/ was restored to HEAD before commit (both public workflows verified intact: build-app.yml + android-bridge.yml, branches: [main]).
+- Build Feather-Krita App run 35284999134 SUCCESS at 1139566.
+- Artifacts verified before release: Windows zip = feather_krita.exe + krita_bridge.dll (66048 B); APK ships libkrita_bridge.so for arm64-v8a / armeabi-v7a / x86_64.
+- RELEASE v0.11-memory-fix published (id 391115481) with both installers: https://github.com/koenigsegggjesk0o/krita/releases/tag/v0.11-memory-fix
+- Release-script note: GitHub artifact zip downloads 302-redirect and urllib mishandles the auth header on the hop ("Server failed to authenticate") — curl -L works; release_v11.py reuses the curl-downloaded artifacts.
+- Private HEAD: 44085e1 (+ worklog addendum). Public CI repo HEAD: 1139566, all green. Health gates: analyze 0 issues, 42/42 tests x3.
+
+---
+Task ID: 5-loop-15
+Agent: Z.ai Code (main, autonomous loop)
+Task: MP4 (H.264) export — pure-Dart encoder + muxer, ffmpeg-verified end to end
+
+Work Log:
+- Entry gates: analyze 0 issues, 42/42 tests, public builder green at 1139566. Private step2-qt-bridge unchanged (billing failure, no new runs).
+- MP4 EXPORT (was a stub returning "coming in a future build"): three new pure-Dart files, no platform plugins, identical behavior on Windows/Android.
+  - lib/io/mp4_muxer.dart: minimal ISO-BMFF writer (ftyp/mdat/moov, avc1+avcC sample description, AVCC 4-byte NAL length prefixes, stts/stsc/stsz/stco). Timescale 90000; per-sample deltas distribute the rounding remainder so total duration is exact. GOTCHAS fixed during bring-up: stsd/dref/stts/stsc/stsz/stco are fullBoxes — every one initially shipped without its 4-byte version/flags header, which ffmpeg tolerated until the first child box parse (ffprobe "error reading header"); stco offsets anchor at ftyp+mdat-header.
+  - lib/io/h264_encoder.dart: H.264 Baseline, IDR-only. Each macroblock is either I_16x16 (V/H/DC prediction, zero residuals → 3-6 bits) or I_PCM (384 B lossless at 4:2:0), chosen per-block by comparing predicted reconstruction against source. This hybrid needs only TWO coeff_token codewords (the all-zero tokens for nC<2 and nC≥8) — deliberately sidestepping the full CAVLC tables. RGBA→YUV420 (BT.601 limited), MB-aligned padding + frame_cropping in SPS, SPS VUI timing info for frame-rate signaling, deblocking disabled (PPS control flag + slice idc=1) so reconstruction == encoded pixels.
+  - lib/io/mp4_exporter.dart: reuses buildReplayPlan + TexturePainter, composites the (possibly translucent) texture over an opaque background per frame, feeds H264IdrEncoder, muxes.
+- DEBUGGING LOG (worth keeping — three days of spec folklore resolved by experiment):
+  1. mb_type order for I_16x16 is V=1, H=2, DC=3 (spec Table 7-3 names I_16x16_0/1/2_0_0). Cross-checked via x264's cavlc_mb_header_i whose pred_mode16x16_fix table is the identity over {V,H,DC,P} — my ffmpeg-table reading initially inverted V/DC twice.
+  2. intra_chroma_pred_mode IS written for I_16x16 macroblocks (a standalone ue after mb_type; 0=DC, 1=H, 2=V) — NOT derived from the luma mode as some folklore says. ffmpeg's decode_mb calls the chroma-mode parse for both I_4x4 and I_16x16 (h264_cavlc.c ~line 802). Chroma prediction is now an independent per-MB choice with its own error metric.
+  3. nC for the all-zero luma-DC block: ffmpeg's pred_non_zero_count fills unavailable neighbours with 0x40 (64) into the nnz cache, computes i = nA+nB, then (i<64 ? (i+1)>>1 : i) and finally nC = i & 31 — so flat/unavailable combos → 0 (band 0, '1') while ANY PCM neighbour (16) → band 3 ('000011'). Verified in isolation with a 1×1/1×3/3×1 controlled-matrix harness (scripts/h264_matrix.py + variants); the band-3-for-unavailable detour I tried first broke MB(1,0).
+- Verification: ffmpeg 7.1.5 decodes the 12-frame 512×512 stroke-replay MP4 with ZERO errors; ffprobe reports h264/Constrained Baseline/512×512/12 frames/20.0fps/0.6s; per-pixel decode confirms red, blue and yellow strokes render (~15-20k pixels each in the final frame). File size 663 KB for 12 frames — flat regions cost ~4 bits, brush edges go PCM.
+- Tests: test/mp4_exporter_test.dart +7 (encoder flat/PCM mode selection incl. the corner-DC-is-128 rule, SPS/PPS fields, muxer box structure + sample counts, exporter size scaling, and an ffmpeg decode gate that runs when ffprobe exists and auto-skips otherwise). 49/49 total, twice.
+- GUI: export sheet MP4 card now exports for real (12 + quality/8 frames) via the same ExportRunner path as GIF.
+- Version 0.12.0+1; README updated (MP4 in feature line + test count); scripts/out/ gitignored.
+- CAVLC residual compression deliberately deferred (the I_16x16+PCM hybrid ships correct and播放-compatible; tables already pulled into scripts/ for the next iteration).
+
+Stage Summary:
+- MP4 export is REAL: the export sheet's MP4 card produces a playable H.264 MP4 on every platform, verified against ffmpeg end-to-end.
+- The encoder is intentionally simple (flat + PCM hybrid); file sizes are acceptable for painting content and the design leaves a clean upgrade path to full CAVLC.
+- Roadmap: steps 1-7 done + MP4 export added and regression-gated (49 tests). Remaining deferred: CAVLC residuals for MP4 size, on-device/e2e GUI verification, camera state in project files, file_picker UX polish, undo model unification.

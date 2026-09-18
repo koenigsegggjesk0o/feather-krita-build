@@ -31,6 +31,7 @@ import 'package:feather_krita/ffi/krita_bindings.dart';
 import 'package:feather_krita/io/app_dirs.dart';
 import 'package:feather_krita/io/feather_project.dart';
 import 'package:feather_krita/io/gif_exporter.dart';
+import 'package:feather_krita/io/mp4_exporter.dart';
 import 'package:feather_krita/io/gltf_exporter.dart';
 import 'package:feather_krita/models/brush_preset.dart';
 import 'package:feather_krita/models/export_format.dart';
@@ -226,8 +227,19 @@ class _MainScreenState extends State<MainScreen> {
           File(path).writeAsBytesSync(gif);
           break;
         case ExportFormat.mp4:
-          return 'error: ${exportInfo(format).label} export is coming in a '
-              'future build.';
+          onProgress(0.2);
+          final mp4 = Mp4Exporter(
+            frameCount: 12 + quality ~/ 8,
+          ).export(
+            strokes: _state.strokes.strokes,
+            dabFor: _replayDab,
+            brushSizePx: _state.brushSize,
+            brushOpacity: _state.brushOpacity,
+            sourceTextureSize: _state.texture.width,
+            onProgress: (p) => onProgress(0.2 + p * 0.8),
+          );
+          File(path).writeAsBytesSync(mp4);
+          break;
       }
       onProgress(1.0);
       return path;

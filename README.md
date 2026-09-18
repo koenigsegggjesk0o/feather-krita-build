@@ -4,7 +4,7 @@ A 3D painting app: draw on parametric guide surfaces (spheres, cylinders,
 tori, custom tubes) with a real Krita-compatible brush engine, sculpt with
 liquify tools, preview in an orbit-camera 3D viewport, 
 and export to PNG /
-JPEG / GIF (animated stroke replay) / OBJ / glTF / `.feather` project files
+JPEG / GIF / MP4 (animated stroke replay) / OBJ / glTF / `.feather` project files
 (save + open, full undoable document restore).
 
 Built with Flutter (Dart) plus a native C++ brush engine (`krita_bridge`)
@@ -18,7 +18,7 @@ accessed through `dart:ffi`.
 | FFI bindings | `lib/ffi/krita_bindings.dart` | Struct-safe Dart bindings matching `krita_bridge.h` byte-for-byte; dynamic-library loader per platform. |
 | 3D engine | `lib/engine/` | `TexturePainter` (2048² RGBA8 texture, 14 blend modes, undo/redo), `GuideSurface` (parametric meshes + raycast), `StrokeManager` (mirror, liquify, 50-level history), `CameraController` (damped orbit). |
 | UI | `lib/screens/`, `lib/widgets/` | Glassmorphism editor: 8 tools, brush settings, color picker, joystick, stroke list. |
-| Tests | `test/` | 42 tests: native dab contract, preset loading, texture compositing (+ per-stroke undo coalescing), mirror, raycast, PNG export round-trip, project save/load round-trip (+ texture re-render), GIF replay frames, glTF structure, preset-library seeding, camera damping, plus 9 GUI wiring tests (incl. ticker-muting). |
+| Tests | `test/` | 49 tests: native dab contract, preset loading, texture compositing (+ per-stroke undo coalescing), mirror, raycast, PNG export round-trip, project save/load round-trip (+ texture re-render), GIF replay frames, glTF structure, preset-library seeding, camera damping, MP4/H.264 export (encoder modes, muxer structure, ffmpeg decode gate), plus 9 GUI wiring tests (incl. ticker-muting). |
 
 ## Platform status
 
@@ -32,7 +32,7 @@ accessed through `dart:ffi`.
 
 ```bash
 flutter pub get
-flutter test          # 42-test regression suite (loads the real native bridge)
+flutter test          # 49-test regression suite (loads the real native bridge)
 flutter analyze       # must report zero issues
 flutter build windows # or: flutter build apk / flutter build linux
 ```
