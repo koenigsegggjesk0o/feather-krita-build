@@ -280,7 +280,7 @@ jobs:
           for i in 1 2 3; do
             rm -rf 'C:/Qt'
             aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 -O 'C:/Qt' \
-              --archives qtbase qtdeclarative qttools qtsvg qttranslations && break
+              --archives qtbase qtdeclarative qtquickcontrols2 qttools qtsvg qttranslations && break
             echo "aqt attempt $i failed; retrying in 15s"; sleep 15
           done
           test -f "$QTDIR/bin/Qt5Core.dll" || { echo 'FATAL: Qt5Core.dll missing'; exit 1; }
@@ -336,6 +336,25 @@ jobs:
             cmake --install "C:/kf5-build/build-$fw"
           done
           test -f "$KF5DIR/lib/cmake/KF5I18n/KF5I18nConfig.cmake" || { echo 'FATAL: KF5I18n not installed'; exit 1; }
+
+      - name: Install immer + zug + xsimd + lager (Krita 6 configure requires them; same sources as the Linux job)
+        run: |
+          export PATH="C:/vcpkg2/installed/x64-windows/tools/gettext/bin:$PATH"
+          P="$KF5DIR"
+          mkdir -p C:/kf5-src C:/kf5-build
+          [ -d C:/kf5-src/immer ] || git clone --depth 1 https://github.com/arximboldi/immer.git C:/kf5-src/immer
+          cmake -S C:/kf5-src/immer -B C:/kf5-build/build-immer -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$P" -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DBUILD_DOCS=OFF -DBUILD_BENCHMARKS=OFF
+          cmake --build C:/kf5-build/build-immer && cmake --install C:/kf5-build/build-immer
+          [ -d C:/kf5-src/zug ] || git clone --depth 1 https://github.com/arximboldi/zug.git C:/kf5-src/zug
+          cmake -S C:/kf5-src/zug -B C:/kf5-build/build-zug -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$P" -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DBUILD_DOCS=OFF
+          cmake --build C:/kf5-build/build-zug && cmake --install C:/kf5-build/build-zug
+          [ -d C:/kf5-src/xsimd ] || git clone --depth 1 --branch 13.0.0 https://github.com/xtensor-stack/xsimd.git C:/kf5-src/xsimd
+          cmake -S C:/kf5-src/xsimd -B C:/kf5-build/build-xsimd -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$P" -DBUILD_TESTING=OFF
+          cmake --build C:/kf5-build/build-xsimd && cmake --install C:/kf5-build/build-xsimd
+          [ -d C:/kf5-src/lager ] || git clone --depth 1 https://github.com/arximboldi/lager.git C:/kf5-src/lager
+          cmake -S C:/kf5-src/lager -B C:/kf5-build/build-lager -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$P" -Dlager_BUILD_TESTS=OFF -Dlager_BUILD_FAILURE_TESTS=OFF -Dlager_BUILD_EXAMPLES=OFF -Dlager_BUILD_DEBUGGER_EXAMPLES=OFF -Dlager_BUILD_DOCS=OFF -Dlager_EMBED_RESOURCES_PATH=OFF
+          cmake --build C:/kf5-build/build-lager && cmake --install C:/kf5-build/build-lager
+          test -f "$KF5DIR/share/cmake/Immer/ImmerConfig.cmake" -o -f "$KF5DIR/lib/cmake/Immer/ImmerConfig.cmake" -o -f "$KF5DIR/share/immer/ImmerConfig.cmake" || { echo 'FATAL: Immer config not found after install'; find "$KF5DIR" -name 'ImmerConfig.cmake'; exit 1; }
 
       - name: Configure Krita (minimal engine build, Qt5, MSVC, unmodified source)
         run: |
