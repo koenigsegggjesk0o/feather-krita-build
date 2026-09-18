@@ -933,3 +933,21 @@ Stage Summary:
   4. Clean up the diagnostic step in build-app.yml (remove verbose ldd -v / readelf now that the root cause is fixed; keep the dart smoke as the gate).
   5. Self-contained Linux bundle: use patchelf --set-rpath '$ORIGIN' on all libkrita*.so so the shipped zip works WITHOUT LD_LIBRARY_PATH (currently relies on the Flutter wrapper script setting it).
   6. flutter analyze once the SDK finishes downloading.
+
+---
+Task ID: 5-loop-32 (addendum: release v0.20 tagged)
+Agent: Z.ai Code (main, autonomous loop)
+Task: lock in the Linux real-engine milestone with a tagged release (roadmap item a)
+
+Work Log:
+- RELEASE v0.20-real-engine-linux created on the app repo (release ID 391577499, https://github.com/koenigsegggjesk0o/krita/releases/tag/v0.20-real-engine-linux).
+- 3 assets uploaded from the all-green run 35360652133:
+  * feather-krita-linux-real-engine.zip (47 MB) — REAL Krita v6.0.4 engine, 8/8 FFI smoke verified
+  * feather-krita-windows.zip (12 MB) — fallback bridge (Windows real engine = loop-33+)
+  * feather-krita-android.apk (50 MB) — fallback bridge (Android real engine = loop-33+)
+- flutter analyze: GREEN (73 info-level deprecation warnings from Flutter 3.47.4 vs CI 3.35.3; 0 errors, 0 warnings). Dart code healthy.
+- Cron job updated: deleted outdated 393463 (referenced superseded step2-qt-bridge.yml), created 395817 (every 30 min, Asia/Jakarta) with current-state instructions (builder repo krita-build.yml + build-app.yml, real-engine roadmap, NEVER modify Krita source).
+- Cumulative releases: v0.13 → v0.20 (8 releases). This is the FIRST release with the REAL Krita engine (Linux).
+
+Stage Summary:
+- Loop-32 COMPLETE: real Krita engine wired end-to-end on Linux CI (8/8 smoke green), release v0.20 tagged, cron updated for 10-hour autonomous continuation. Next loops (33+): Windows MSVC real engine build, Android NDK, patchelf self-contained bundle, full Krita menu/tab features + Feather-3D engine.
