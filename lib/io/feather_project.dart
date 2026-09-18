@@ -14,11 +14,19 @@
 //                    nextId, mirror) — a superset of StrokeManager's own
 //                    serialization, so [FeatherProjectDocument.applyTo] can
 //                    rebuild stroke history through StrokeManager.fromJsonString.
+//   camera         — OPTIONAL loop-18 extension: {yaw, pitch, distance,
+//                    target:[x,y,z]} orbit-camera pose (radians / world
+//                    units). Written by fromEditor since loop-18; older app
+//                    builds ignore the unknown key, and documents without it
+//                    leave the camera untouched on load. Format version stays
+//                    2 because the extension is purely additive.
 //
 // Parsing is tolerant: missing optional fields fall back to sane defaults
 // so v1 documents keep loading after the v2 writer ships.
 
 import 'dart:convert';
+
+import 'package:vector_math/vector_math_64.dart' show Vector3;
 
 import 'package:feather_krita/engine/guide_surface.dart';
 import 'package:feather_krita/engine/stroke_replay.dart';
@@ -44,6 +52,12 @@ class FeatherProjectDocument {
     this.mirrorX = false,
     this.mirrorY = false,
     this.mirrorZ = false,
+    this.cameraYaw,
+    this.cameraPitch,
+    this.cameraDistance,
+    this.cameraTargetX,
+    this.cameraTargetY,
+    this.cameraTargetZ,
     List<Stroke>? strokes,
   }) : strokes = strokes ?? <Stroke>[];
 
@@ -59,6 +73,25 @@ class FeatherProjectDocument {
   final bool mirrorX;
   final bool mirrorY;
   final bool mirrorZ;
+
+  /// Optional orbit-camera pose (loop-18). Null when the document has no
+  /// camera block; [applyTo] leaves the live camera untouched then.
+  final double? cameraYaw;
+  final double? cameraPitch;
+  final double? cameraDistance;
+  final double? cameraTargetX;
+  final double? cameraTargetY;
+  final double? cameraTargetZ;
+
+  /// True when all six camera fields were present in the document.
+  bool get hasCamera =>
+      cameraYaw != null &&
+      cameraPitch != null &&
+      cameraDistance != null &&
+      cameraTargetX != null &&
+      cameraTargetY != null &&
+      cameraTargetZ != null;
+
   final List<Stroke> strokes;
 
   /// The guide surface type for [guideSurfaceName].
@@ -82,6 +115,7 @@ class FeatherProjectDocument {
     }
     final texture = decoded['texture'];
     final brush = decoded['brush'];
+    final cam = decoded['camera'];
     final strokesJson = decoded['strokes'];
     final strokeList = strokesJson is Map<String, dynamic>
         ? (strokesJson['strokes'] as List? ?? [])
@@ -117,6 +151,23 @@ class FeatherProjectDocument {
       mirrorZ: brush is Map<String, dynamic>
           ? brush['mirrorZ'] as bool? ?? false
           : false,
+      cameraYaw:
+          cam is Map<String, dynamic> ? (cam['yaw'] as num?)?.toDouble() : null,
+      cameraPitch: cam is Map<String, dynamic>
+          ? (cam['pitch'] as num?)?.toDouble()
+          : null,
+      cameraDistance: cam is Map<String, dynamic>
+          ? (cam['distance'] as num?)?.toDouble()
+          : null,
+      cameraTargetX: cam is Map<String, dynamic>
+          ? _camTargetAt(cam, 0)
+          : null,
+      cameraTargetY: cam is Map<String, dynamic>
+          ? _camTargetAt(cam, 1)
+          : null,
+      cameraTargetZ: cam is Map<String, dynamic>
+          ? _camTargetAt(cam, 2)
+          : null,
       strokes: strokeList
           .whereType<Map<String, dynamic>>()
           .map(Stroke.fromJson)
@@ -138,6 +189,12 @@ class FeatherProjectDocument {
       mirrorX: state.mirrorX,
       mirrorY: state.mirrorY,
       mirrorZ: state.mirrorZ,
+      cameraYaw: state.camera.yaw,
+      cameraPitch: state.camera.pitch,
+      cameraDistance: state.camera.distance,
+      cameraTargetX: state.camera.target.x,
+      cameraTargetY: state.camera.target.y,
+      cameraTargetZ: state.camera.target.z,
       strokes: state.strokes.strokes.map((s) => s.copy()).toList(),
     );
   }
@@ -147,6 +204,13 @@ class FeatherProjectDocument {
     String esc(String s) => s.replaceAll('"', r'\"');
     final nextId = strokes.fold<int>(1, (m, s) => m > s.id ? m : s.id + 1);
     final strokesJson = jsonEncode(strokes.map((s) => s.toJson()).toList());
+    final cameraJson = hasCamera
+        ? '"camera":{"yaw":${_num(cameraYaw!)},'
+            '"pitch":${_num(cameraPitch!)},'
+            '"distance":${_num(cameraDistance!)},'
+            '"target":[${_num(cameraTargetX!)},'
+            '${_num(cameraTargetY!)},${_num(cameraTargetZ!)}]},'
+        : '';
     return '{"version":$version,'
         '"fileName":"${esc(fileName)}",'
         '"texture":{"width":$textureWidth,"height":$textureHeight},'
@@ -156,8 +220,16 @@ class FeatherProjectDocument {
         '"opacity":${brushOpacity.toStringAsFixed(3)},'
         '"color":$brushColor,'
         '"mirrorX":$mirrorX,"mirrorY":$mirrorY,"mirrorZ":$mirrorZ},'
+        '$cameraJson'
         '"strokes":{"strokes":$strokesJson,'
         '"selectedIds":[],"nextId":$nextId}}';
+  }
+
+  /// Compact JSON number: drops the trailing .0 on integral doubles so
+  /// the emitted camera block matches the hand-rolled style above.
+  static String _num(double v) {
+    final i = v.roundToDouble();
+    return v == i ? i.toInt().toString() : v.toStringAsFixed(6);
   }
 
   /// Restores this document into [state].
@@ -213,7 +285,30 @@ class FeatherProjectDocument {
     state
       ..mirrorX = mirrorX
       ..mirrorY = mirrorY
-      ..mirrorZ = mirrorZ
-      ..notify();
+      ..mirrorZ = mirrorZ;
+
+    // Restore the saved orbit-camera pose (loop-18). snapTo jumps both
+    // the damped and target values so opening a project doesn't play a
+    // fly-in animation. Documents saved before loop-18 have no camera
+    // block and leave the live camera as-is.
+    if (hasCamera) {
+      state.camera.snapTo(
+        target: Vector3(cameraTargetX!, cameraTargetY!, cameraTargetZ!),
+        yaw: cameraYaw!,
+        pitch: cameraPitch!,
+        distance: cameraDistance!,
+      );
+    }
+
+    state.notify();
   }
+}
+
+/// Reads [index] of the camera target array in a parsed camera block,
+/// returning null when the array is missing or too short.
+double? _camTargetAt(Map<String, dynamic> cam, int index) {
+  final t = cam['target'];
+  if (t is! List || t.length <= index) return null;
+  final v = t[index];
+  return v is num ? v.toDouble() : null;
 }

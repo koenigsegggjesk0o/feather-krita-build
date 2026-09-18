@@ -161,4 +161,84 @@ void main() {
       expect(guideSurfaceTypeFromName('Unknown!'), GuideSurfaceType.sphere);
     });
   });
+
+  group('FeatherProjectDocument camera pose (loop-18)', () {
+    test('round-trips the camera pose through JSON', () {
+      final state = EditorState(fileName: 'Cam.feather');
+      state.camera
+        ..yaw = 1.25
+        ..pitch = -0.62
+        ..distance = 9.75
+        ..target = Vector3(0.3, -0.4, 0.55);
+      state.camera.tick(10); // settle damping so current == target
+
+      final doc = FeatherProjectDocument.fromEditor(state);
+      expect(doc.hasCamera, isTrue);
+
+      final parsed = FeatherProjectDocument.parse(doc.toJsonString());
+      expect(parsed.hasCamera, isTrue);
+      expect(parsed.cameraYaw, closeTo(1.25, 1e-6));
+      expect(parsed.cameraPitch, closeTo(-0.62, 1e-6));
+      expect(parsed.cameraDistance, closeTo(9.75, 1e-6));
+      expect(parsed.cameraTargetX, closeTo(0.3, 1e-6));
+      expect(parsed.cameraTargetY, closeTo(-0.4, 1e-6));
+      expect(parsed.cameraTargetZ, closeTo(0.55, 1e-6));
+    });
+
+    test('applyTo restores the camera pose instantly', () {
+      final state = EditorState(fileName: 'Src.feather');
+      state.camera
+        ..yaw = 0.8
+        ..pitch = 0.45
+        ..distance = 12.0
+        ..target = Vector3(0.1, 0.2, -0.3);
+
+      final doc = FeatherProjectDocument.fromEditor(state);
+
+      final loaded = EditorState(fileName: 'Other.feather');
+      loaded.camera
+        ..yaw = -2.0
+        ..pitch = -1.0
+        ..distance = 3.0
+        ..target = Vector3.zero();
+
+      doc.applyTo(loaded);
+      expect(loaded.camera.yaw, closeTo(0.8, 1e-6));
+      expect(loaded.camera.pitch, closeTo(0.45, 1e-6));
+      expect(loaded.camera.distance, closeTo(12.0, 1e-6));
+      expect(loaded.camera.target.x, closeTo(0.1, 1e-6));
+      expect(loaded.camera.target.y, closeTo(0.2, 1e-6));
+      expect(loaded.camera.target.z, closeTo(-0.3, 1e-6));
+      // snapTo must leave nothing for the damping animation to do.
+      expect(loaded.camera.isAnimating, isFalse);
+      // And the first rendered pose already matches the saved one.
+      expect(loaded.camera.currentYaw, closeTo(0.8, 1e-6));
+      expect(loaded.camera.currentDistance, closeTo(12.0, 1e-6));
+    });
+
+    test('documents without a camera block leave the camera untouched', () {
+      const legacyJson = '{"version":2,'
+          '"fileName":"NoCam.feather",'
+          '"texture":{"width":2048,"height":2048},'
+          '"guideSurface":"Sphere",'
+          '"brush":{"preset":"Basic Round","size":32.00,'
+          '"opacity":1.000,"color":4278877482,"mirrorX":false,'
+          '"mirrorY":false,"mirrorZ":false},'
+          '"strokes":{"strokes":[],"selectedIds":[],"nextId":1}}';
+
+      final parsed = FeatherProjectDocument.parse(legacyJson);
+      expect(parsed.hasCamera, isFalse);
+
+      final loaded = EditorState(fileName: 'X.feather');
+      loaded.camera
+        ..yaw = -1.1
+        ..pitch = 0.3
+        ..distance = 5.5;
+
+      parsed.applyTo(loaded);
+      expect(loaded.camera.yaw, closeTo(-1.1, 1e-9));
+      expect(loaded.camera.pitch, closeTo(0.3, 1e-9));
+      expect(loaded.camera.distance, closeTo(5.5, 1e-9));
+    });
+  });
 }

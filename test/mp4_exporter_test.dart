@@ -238,6 +238,50 @@ void main() {
 
       expect(mdatSize(big), greaterThan(mdatSize(small)));
     });
+
+    test('enableResiduals:false falls back to flat+PCM (larger mdat)', () {
+      // Soft dab edges are gradient content: the v0.12 fallback codes
+      // every edge macroblock as I_PCM (~384 bytes), while the CAVLC
+      // path codes the same gradient as a handful of quantized levels.
+      // The exporter must forward the flag to the encoder (loop-18).
+      Uint8List exportWith({required bool residuals}) {
+        return Mp4Exporter(
+          width: 192,
+          height: 192,
+          frameCount: 6,
+          fps: 20,
+          enableResiduals: residuals,
+        ).export(
+          strokes: [
+            for (var i = 0; i < 8; i++)
+              _stroke(i + 1, 0.1 + 0.05 * i, 0.15 + 0.03 * i, 0.85 - 0.04 * i,
+                  0.85 - 0.06 * i,
+                  color: 0xFFCC1A1A + i * 0x001122,
+                  type: i == 7 ? BrushType.eraser : BrushType.basic),
+          ],
+          dabFor: (stroke, pressure, sizePx) =>
+              syntheticDab(sizePx * pressure, stroke.color),
+          brushSizePx: 60,
+          brushOpacity: 0.9,
+          sourceTextureSize: 2048,
+        );
+      }
+
+      int mdatSize(Uint8List d) {
+        final i = _findBox(d, 'mdat', 0, d.length);
+        return (d[i] << 24) | (d[i + 1] << 16) | (d[i + 2] << 8) | d[i + 3];
+      }
+
+      final withResiduals = exportWith(residuals: true);
+      final flatPcm = exportWith(residuals: false);
+      expect(mdatSize(flatPcm), greaterThan(mdatSize(withResiduals)),
+          reason: 'PCM escape must cost more than CAVLC residuals on '
+              'gradient-heavy stroke content');
+      // Both outputs remain structurally valid MP4s.
+      for (final bytes in [withResiduals, flatPcm]) {
+        expect(String.fromCharCodes(bytes.sublist(4, 8)), 'ftyp');
+      }
+    });
   });
 
 
@@ -293,6 +337,38 @@ void main() {
       final decode = Process.runSync('ffmpeg', [
         '-v', 'error', '-i', path, '-f', 'null', '-',
       ]);
+      expect(decode.stderr, isEmpty, reason: 'decode errors: ${decode.stderr}');
+    });
+
+    test('ffmpeg decodes the flat+PCM fallback export', () {
+      if (!hasFfmpeg) return;
+      final bytes = Mp4Exporter(
+        width: 128,
+        height: 128,
+        frameCount: 4,
+        fps: 20,
+        enableResiduals: false,
+      ).export(
+        strokes: [
+          _stroke(1, 0.15, 0.2, 0.85, 0.4),
+          _stroke(2, 0.7, 0.6, 0.25, 0.8,
+              color: 0xFF1A4DE6, type: BrushType.eraser),
+        ],
+        dabFor: (stroke, pressure, sizePx) =>
+            syntheticDab(sizePx * pressure, stroke.color),
+        brushSizePx: 50,
+        brushOpacity: 0.9,
+        sourceTextureSize: 2048,
+      );
+      final tmp = Directory.systemTemp.createTempSync('fkr_mp4_pcm');
+      final path = '${tmp.path}/out_pcm.mp4';
+      File(path).writeAsBytesSync(bytes);
+      addTearDown(() => tmp.deleteSync(recursive: true));
+
+      final decode = Process.runSync('ffmpeg', [
+        '-v', 'error', '-i', path, '-f', 'null', '-',
+      ]);
+      expect(decode.exitCode, 0, reason: decode.stderr);
       expect(decode.stderr, isEmpty, reason: 'decode errors: ${decode.stderr}');
     });
   });

@@ -209,6 +209,39 @@ class CameraController extends ChangeNotifier {
 
   // ----- Animation -------------------------------------------------------
 
+  /// Instantly moves the camera to the given pose: both the damped
+  /// (current) values and the gesture targets jump to [yaw]/[pitch]/
+  /// [distance]/[target], so the next frame renders from the new pose
+  /// with no damping animation. Used by project-file restore (loop-18):
+  /// opening a saved document must not play a fly-in animation.
+  ///
+  /// Values are clamped to the controller's pitch/distance limits like
+  /// the corresponding setters. Only supplied values are changed.
+  void snapTo({
+    Vector3? target,
+    double? yaw,
+    double? pitch,
+    double? distance,
+  }) {
+    if (target != null) {
+      _target = target.clone();
+      _currentTarget = target.clone();
+    }
+    if (yaw != null) {
+      _yawTarget = yaw;
+      _yawCurrent = yaw;
+    }
+    if (pitch != null) {
+      _pitchTarget = pitch.clamp(_minPitch, _maxPitch);
+      _pitchCurrent = _pitchTarget;
+    }
+    if (distance != null) {
+      _distanceTarget = distance.clamp(_minDistance, _maxDistance);
+      _distanceCurrent = _distanceTarget;
+    }
+    notifyListeners();
+  }
+
   /// Advances the damping animation by one frame. Returns `true` if the
   /// camera state changed (i.e. the renderer should redraw).
   ///

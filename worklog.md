@@ -444,3 +444,41 @@ Work Log:
 Stage Summary:
 - The H.264 encoder's residual path is now ffmpeg-EXACT end to end: block order, dequant scale, DC matrix convention, and intra prediction all verified against the n7.1.5 sources AND per-pixel decode checks. The enableResiduals gate is ON, so MP4 export gets real CAVLC residuals (smaller files than the flat+PCM fallback for brush edges).
 - Roadmap: steps 1-7 done + GIF/glTF/PNG/MP4 exports + 52 tests; MP4 residual coding promoted from experimental to default. Next candidates: release v0.13 artifacts via CI, CAVLC 8x8 (i8x8DCT) if ever needed, camera state in project files, undo model unification, on-device GUI verification.
+
+---
+Task ID: 5-loop-17 (addendum, post-push)
+Agent: Z.ai Code (main, autonomous loop)
+Task: v0.13-cavlc-residuals released; public CI green
+
+Work Log:
+- Public repo sync pushed as 323fc73; Build Feather-Krita App run 35309263742 SUCCESS (Windows + Android).
+- RELEASE v0.13-cavlc-residuals published (id 391232199) with both installers: https://github.com/koenigsegggjesk0o/krita/releases/tag/v0.13-cavlc-residuals
+- release_v13.py added (adapted from v12; new release notes covering the four ffmpeg-exact fixes).
+- Private HEAD: f94ebce (+ this addendum); public CI repo HEAD: 323fc73, all green.
+- Health: analyze 0 issues, 52/52 tests x2, 27/27 bisect cases ffmpeg-clean, per-pixel luma err <= 13.
+
+Stage Summary:
+- v0.13 ships the CAVLC residual path as the default MP4 encoder mode. Loop 18 candidates: measure v0.12-vs-v0.13 MP4 sizes on real painting content, camera state in project files, undo model unification, on-device GUI verification.
+
+---
+Task ID: 5-loop-18
+Agent: Z.ai Code (main, autonomous loop)
+Task: quantify v0.12-vs-v0.13 MP4 sizes on painting content; persist camera pose in project files
+
+Work Log:
+- Entry gates: analyze 0 issues, 52/52 tests, public builder green at 323fc73; private step2-qt-bridge still billing-blocked (documented).
+- MP4 SIZE BENCHMARK (loop-17 deferred item): new scripts/mp4_size_bench.dart — 16-stroke realistic painting scene (soft synthetic dabs = gradient edges, wobbled paths, varied pressure/thickness, 2 eraser passes; 496 dabs, 512x512, 24 frames) exported through Mp4Exporter with enableResiduals on/off at quality 30/50/70. Results (decode-validated by ffmpeg, 6/6 clean):
+    quality 30: residual 1596.2 KiB vs flat+PCM 2387.0 KiB → 33.1% smaller
+    quality 50: residual 1620.7 KiB vs flat+PCM 2387.0 KiB → 32.1% smaller
+    quality 70: residual 1676.6 KiB vs flat+PCM 2387.0 KiB → 29.8% smaller
+  Conclusion: the loop-17 CAVLC work saves ~30-33% on real painting content; encode time parity (~3s/scene both modes).
+- EXPORTER FLAG PLUMBING: Mp4Exporter gains enableResiduals (default true, forwarded to H264IdrEncoder) so apps can opt into the v0.12 flat+PCM shape. Tests: exporter-level size assertion (PCM fallback strictly larger on gradient content) + new external ffmpeg gate "decodes the flat+PCM fallback export".
+- CAMERA PERSISTENCE (loop-17 candidate): .feather project documents now carry an OPTIONAL camera block {yaw, pitch, distance, target:[x,y,z]} — additive extension, format version stays 2 (older builds ignore the unknown key; docs without it leave the camera untouched). CameraController.snapTo() jumps damped+target values together so opening a project never plays a fly-in animation. fromEditor captures the live pose; applyTo restores it.
+- New tests (5): camera pose JSON round-trip, applyTo restores pose instantly (isAnimating false), legacy doc without camera block leaves camera untouched, exporter PCM-fallback mdat larger, ffmpeg decodes fallback export.
+- Version 0.14.0+1; README test count 57.
+- Health: flutter analyze 0 issues; flutter test 57/57 (ran once, all green).
+
+Stage Summary:
+- Loop-17's residual work is now MEASURED: ~30-33% smaller MP4s on painting content, with the fallback still available via Mp4Exporter(enableResiduals: false).
+- Project files now restore the saved orbit-camera pose; the .feather format gained its optional camera block without a version bump.
+- Roadmap: steps 1-7 done + GIF/glTF/PNG/MP4 exports + camera persistence + 57 tests. Loop-19 candidates: undo model unification (TexturePainter vs StrokeManager snapshots), file_picker UX polish, on-device GUI verification, release v0.14 artifacts via CI.

@@ -29,6 +29,7 @@ class Mp4Exporter {
     this.fps = 20.0,
     this.quality = 50,
     this.backgroundColor = 0xFF000000,
+    this.enableResiduals = true,
   })  : assert(fps > 0 && fps <= 60),
         assert(quality >= 0 && quality <= 100),
         assert(backgroundColor >> 24 == 0xFF,
@@ -51,6 +52,12 @@ class Mp4Exporter {
   /// Opaque ARGB background composited behind the (possibly translucent)
   /// texture.
   final int backgroundColor;
+
+  /// When true (default) gradient macroblocks are CAVLC residual-coded
+  /// (loop-17). When false the encoder falls back to the v0.12
+  /// flat+PCM mode — larger files, but byte-identical to the pre-0.13
+  /// output shape.
+  final bool enableResiduals;
 
   /// Encodes [strokes] as an MP4 file.
   ///
@@ -93,6 +100,7 @@ class Mp4Exporter {
       height: height,
       fps: fps,
       qp: (42 - quality * 30 ~/ 100).clamp(12, 42),
+      enableResiduals: enableResiduals,
     );
 
     final nals = <Uint8List>[];
