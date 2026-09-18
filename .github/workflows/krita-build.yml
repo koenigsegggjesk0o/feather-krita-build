@@ -289,9 +289,18 @@ jobs:
 
       - name: Bootstrap fresh vcpkg (runner's C:\vcpkg has a pruned ports tree — lcms2 missing)
         run: |
-          git clone --depth 1 --branch 2025.06.13 https://github.com/microsoft/vcpkg.git 'C:/vcpkg2'
-          'C:/vcpkg2/bootstrap-vcpkg.bat' -disableMetrics
-          test -f 'C:/vcpkg2/vcpkg.exe' || { echo 'FATAL: vcpkg bootstrap failed'; exit 1; }
+          # Merge-safe: the Actions cache restores C:/vcpkg2/installed (a
+          # subdir), so the clone target may be non-empty — clone to a temp
+          # dir and merge the repo over it, preserving the cached installed/.
+          if [ ! -x 'C:/vcpkg2/vcpkg.exe' ]; then
+            rm -rf 'C:/vcpkg2-tmp'
+            git clone --depth 1 --branch 2025.06.13 https://github.com/microsoft/vcpkg.git 'C:/vcpkg2-tmp'
+            mkdir -p 'C:/vcpkg2'
+            cp -a 'C:/vcpkg2-tmp/.' 'C:/vcpkg2/'
+            rm -rf 'C:/vcpkg2-tmp'
+            'C:/vcpkg2/bootstrap-vcpkg.bat' -disableMetrics
+          fi
+          test -x 'C:/vcpkg2/vcpkg.exe' || { echo 'FATAL: vcpkg bootstrap failed'; exit 1; }
           echo 'vcpkg2 bootstrapped'
 
       - name: vcpkg engine deps (gettext zlib bzip2 lcms eigen3 exiv2 freetype harfbuzz fontconfig libunibreak boost)
