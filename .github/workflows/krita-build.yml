@@ -281,7 +281,7 @@ jobs:
           'C:/vcpkg2/vcpkg.exe' install --triplet x64-windows \
             gettext zlib bzip2 lcms eigen3 exiv2 \
             freetype harfbuzz fontconfig libunibreak \
-            boost-multi-array boost-icl boost-rational
+            boost-multi-array boost-icl boost-rational boost-utility boost-integer
           test -d 'C:/vcpkg2/installed/x64-windows/lib' || { echo 'FATAL: vcpkg install failed'; exit 1; }
 
       - name: Build ECM (extra-cmake-modules)
