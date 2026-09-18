@@ -9,6 +9,7 @@ on:
       - 'windows/**'
       - 'android/**'
       - 'assets/**'
+      - 'tool/**'
       - 'pubspec.yaml'
       - 'native/krita_bridge/**'
       - '.github/workflows/build-app.yml'
@@ -123,10 +124,10 @@ jobs:
       - name: Install Krita runtime deps (best effort, ldd audit + FFI smoke gate)
         run: |
           sudo apt-get install -y \
-            libqt5core5a libqt5gui5 libqt5widgets5 libqt5xml5 libqt5svg5 \
-            libkf5i18n5 libkf5configcore5 libkf5archive5 libkf5guiaddons5 \
+            libqt5core5a libqt5gui5 libqt5widgets5 libqt5xml5 libqt5svg5 libqt5sql5 libqt5printsupport5 \
+            libkf5i18n5 libkf5configcore5 libkf5configgui5 libkf5archive5 libkf5guiaddons5 libkf5widgetsaddons5 libkf5coreaddons5 libkf5itemviews5 \
             libgsl27 libgslcblas0 liblcms2-2 libimath-3-1-29 libopenexr-3-1-30 \
-            libexiv2-27 libjson-c5 || \
+            libexiv2-27 libjson-c5 libquazip1-qt5-1 || \
             echo "WARNING: some Krita runtime packages missing - ldd audit will report"
 
       - name: Setup Flutter
@@ -177,6 +178,8 @@ jobs:
           ls $BUNDLE/lib | head -20
 
       - name: Dart FFI end-to-end smoke (real engine)
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/linux/x64/release/bundle/lib
         run: |
           dart run tool/ffi_real_smoke.dart "$(pwd)/build/linux/x64/release/bundle"
 
