@@ -125,13 +125,30 @@ jobs:
           for d in /usr/include/x86_64-linux-gnu/KF5/*/; do INC="$INC -I$d"; done
           INC="$INC -I/usr/include/x86_64-linux-gnu/KF5 -I/usr/include/KF5"
           # Bulletproof: reuse the exact include flags CMake configured for
-          # libs/brush (KI18n, boost, Qt5, lager, build-dir generated headers).
+          # libs/brush (boost, Qt5, lager, build-dir generated headers).
           KRITAINCS=$(cd $BUILD && ninja -t commands kritalibbrush 2>/dev/null | grep 'KisBrushModel' | grep -m1 -o '\-I[^ ]*' | sort -u | tr '\n' ' ')
           if [ -z "$KRITAINCS" ]; then
             KRITAINCS=$(cd $BUILD && ninja -t commands kritalibbrush 2>/dev/null | grep -m1 -o '\-I[^ ]*' | sort -u | tr '\n' ' ')
           fi
           echo "Krita include dirs extracted: $(echo $KRITAINCS | wc -w)"
           INC="$INC $KRITAINCS"
+          # KI18n flags live on the resources target (KisResourceTypes.h is
+          # theirs), so merge those too.
+          for t in kritaresources kritalibresources; do
+            RESINCS=$(cd $BUILD && ninja -t commands $t 2>/dev/null | grep -m1 -o '\-I[^ ]*' | sort -u | tr '\n' ' ')
+            INC="$INC $RESINCS"
+          done
+          # Decisive fallback: locate klocalizedstring.h on disk wherever it is.
+          KLOC=$(find /usr/include /usr/local/include -name 'klocalizedstring.h' 2>/dev/null | head -3)
+          echo "klocalizedstring.h found at: $KLOC"
+          for f in $KLOC; do INC="$INC -I$(dirname "$f")"; done
+          # All KF5 module roots (both common layouts).
+          for root in /usr/include/x86_64-linux-gnu/KF5 /usr/include/KF5; do
+            if [ -d "$root" ]; then
+              INC="$INC -I$root"
+              for d in "$root"/*/; do INC="$INC -I$d"; done
+            fi
+          done
           echo "=== Compiling libkrita_bridge_real.so (thin glue over real Krita classes) ==="
           g++ -std=c++17 -shared -fPIC -O2 $INC \
             /opt/bridge/krita_bridge_real.cpp \
