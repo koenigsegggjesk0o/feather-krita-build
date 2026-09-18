@@ -99,6 +99,7 @@ jobs:
             -DWITH_KDE=ON -DWITH_XCF=OFF -DWITH_SOPRANO=OFF -DWITH_HDR=OFF \
             -DWITH_WEBP=OFF -DWITH_JXL=OFF -DWITH_OCIO=OFF \
             -DWITH_OPENJPEG=OFF -DWITH_MEDIA=OFF \
+            -DCMAKE_DISABLE_FIND_PACKAGE_LibMyPaint=TRUE 
             -G Ninja 2>&1 | tail -80
 
       - name: Build brush engine libs (kritaimage + kritalibbrush + deps)
@@ -379,6 +380,7 @@ jobs:
             -DWITH_KDE=ON -DWITH_XCF=OFF -DWITH_SOPRANO=OFF -DWITH_HDR=OFF \
             -DWITH_WEBP=OFF -DWITH_JXL=OFF -DWITH_OCIO=OFF \
             -DWITH_OPENJPEG=OFF -DWITH_MEDIA=OFF \
+            -DCMAKE_DISABLE_FIND_PACKAGE_LibMyPaint=TRUE 
             -DCMAKE_PREFIX_PATH="$KF5DIR;$QTDIR;C:/vcpkg2/installed/x64-windows" \
             -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake' \
             -DVCPKG_TARGET_TRIPLET=x64-windows 2>&1 | tail -100
