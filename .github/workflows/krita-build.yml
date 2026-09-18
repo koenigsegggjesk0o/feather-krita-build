@@ -109,12 +109,22 @@ jobs:
           echo "=== Brush engine .so files ==="
           find build -name "libkrita*.so*" 2>/dev/null | head -40
 
+      - name: Collect .so (stripped, real files)
+        if: always()
+        run: |
+          mkdir -p artifact/lib artifact/bin
+          find /opt/krita/build -name "libkrita*.so*" 2>/dev/null | while read f; do
+            cp -L "$f" "artifact/lib/$(basename "$f")"
+          done
+          strip --strip-unneeded artifact/lib/libkrita*.so* 2>/dev/null || true
+          ls artifact/lib/ | wc -l
+          du -sh artifact/lib
+
       - name: Build real bridge (libkrita_bridge_real.so) + smoke test
         run: |
+          set -o pipefail
           KRITA=/opt/krita
           BUILD=$KRITA/build
-          LIBDIR=$(dirname "$(find $BUILD -name 'libkritaimage.so*' | head -1)")
-          echo "LIBDIR=$LIBDIR"
           mkdir -p artifact/lib artifact/bin
           INC=""
           for d in $(find $KRITA/libs -maxdepth 2 -type d) $(find $BUILD/libs -maxdepth 2 -type d) $BUILD; do
@@ -122,79 +132,44 @@ jobs:
           done
           QT5=/usr/include/x86_64-linux-gnu/qt5
           INC="$INC -I$QT5 -I$QT5/QtCore -I$QT5/QtGui -I$QT5/QtXml"
-          for d in /usr/include/x86_64-linux-gnu/KF5/*/; do INC="$INC -I$d"; done
-          INC="$INC -I/usr/include/x86_64-linux-gnu/KF5 -I/usr/include/KF5"
           # Bulletproof: reuse the exact include flags CMake configured for
           # libs/brush (boost, Qt5, lager, build-dir generated headers).
-          KRITAINCS=$(cd $BUILD && ninja -t commands kritalibbrush 2>/dev/null | grep 'KisBrushModel' | grep -m1 -o '\-I[^ ]*' | sort -u | tr '\n' ' ')
+          KRITAINCS=$(cd $BUILD && ninja -t commands kritalibbrush 2>/dev/null | grep 'KisBrushModel' | grep -m1 -o '\-I[^ ]*' | sort -u | head -80 | tr '\n' ' ')
           if [ -z "$KRITAINCS" ]; then
-            KRITAINCS=$(cd $BUILD && ninja -t commands kritalibbrush 2>/dev/null | grep -m1 -o '\-I[^ ]*' | sort -u | tr '\n' ' ')
+            KRITAINCS=$(cd $BUILD && ninja -t commands kritalibbrush 2>/dev/null | grep -m1 -o '\-I[^ ]*' | sort -u | head -80 | tr '\n' ' ')
           fi
           echo "Krita include dirs extracted: $(echo $KRITAINCS | wc -w)"
           INC="$INC $KRITAINCS"
-          # KI18n flags live on the resources target (KisResourceTypes.h is
-          # theirs), so merge those too.
-          for t in kritaresources kritalibresources kritapigment kritalibpigment kritaimage kritalibimage; do
-            RESINCS=$(cd $BUILD && ninja -t commands $t 2>/dev/null | grep -m1 -o '\-I[^ ]*' | sort -u | tr '\n' ' ')
-            INC="$INC $RESINCS"
-          done
-          # Nuclear option: every include dir CMake configured anywhere in
-          # the build graph (covers OpenEXR half.h, FFTW, GSL, ... if any
-          # HAVE_* flag in KoConfig.h turns them on).
+          # Nuclear option: every include dir CMake configured anywhere.
           ALLINCS=$(cd $BUILD && ninja -t commands 2>/dev/null | grep -o '\-I[^ ]*' | sort -u | head -500 | tr '\n' ' ')
           echo "full-graph include dirs: $(echo $ALLINCS | wc -w)"
           INC="$INC $ALLINCS"
-          # OpenEXR half.h discovery on disk (HAVE_OPENEXR is on in KoConfig.h).
+          # OpenEXR half.h (HAVE_OPENEXR is on in the generated KoConfig.h).
           HALFD=$(find /usr/include -name 'half.h' 2>/dev/null | head -5)
-          echo "half.h at: $HALFD"
           for f in $HALFD; do INC="$INC -I$(dirname "$f")"; done
-          INC="$INC -I/usr/include/OpenEXR -I/usr/include/Imath"
-          # Eigen lives in /usr/include/eigen3 on Debian/Ubuntu (nonstandard).
-          EIG=$(find /usr/include -maxdepth 2 -type d -name 'eigen3' 2>/dev/null | head -1)
-          echo "eigen3 dir: $EIG"
-          INC="$INC -I/usr/include/eigen3"
-          [ -n "$EIG" ] && INC="$INC -I$EIG"
+          INC="$INC -I/usr/include/OpenEXR -I/usr/include/Imath -I/usr/include/eigen3"
           # Decisive fallback: locate klocalizedstring.h on disk wherever it is.
           KLOC=$(find /usr/include /usr/local/include -name 'klocalizedstring.h' 2>/dev/null | head -3)
-          echo "klocalizedstring.h found at: $KLOC"
           for f in $KLOC; do INC="$INC -I$(dirname "$f")"; done
-          # All KF5 module roots (both common layouts).
-          for root in /usr/include/x86_64-linux-gnu/KF5 /usr/include/KF5; do
-            if [ -d "$root" ]; then
-              INC="$INC -I$root"
-              for d in "$root"/*/; do INC="$INC -I$d"; done
-            fi
-          done
           echo "=== Compiling libkrita_bridge_real.so (thin glue over real Krita classes) ==="
           g++ -std=c++17 -shared -fPIC -O2 -fno-operator-names $INC \
             /opt/bridge/krita_bridge_real.cpp \
-            -L$LIBDIR \
+            -Lartifact/lib \
             -lkritalibbrush -lkritaimage -lkritapigment -lkritaresources -lkritastore \
             -lkritacommand -lkritaglobal -lkritaversion -lkritaflake -lkritaplugin \
-            -lQt5Core -lQt5Gui -lQt5Xml -lz \
+            -lKF5I18n -lQt5Core -lQt5Gui -lQt5Xml -lz \
             -Wl,-rpath,'$ORIGIN' \
             -o artifact/lib/libkrita_bridge_real.so
-          echo "=== Compiling smoke test ==="
-          g++ -std=c++17 -O2 -fno-operator-names $INC \
+          echo "=== Compiling smoke test (link also verifies the bridge's full symbol closure) ==="
+          g++ -std=c++17 -O2 $INC \
             /opt/bridge/smoke_test_real.cpp \
             -Lartifact/lib -lkrita_bridge_real \
+            -lkritalibbrush -lkritaimage -lkritapigment -lkritaresources \
+            -lkritaglobal -lkritaversion -lKF5I18n -lQt5Core -lQt5Gui -lQt5Xml -lz \
             -Wl,-rpath,'$ORIGIN/../lib' \
             -o artifact/bin/smoke_test_real
-          echo "=== Running REAL-engine smoke test ==="
-          LD_LIBRARY_PATH=$LIBDIR:artifact/lib ./artifact/bin/smoke_test_real
-
-      - name: Collect .so (stripped, real files) + bridge
-        if: always()
-        run: |
-          mkdir -p artifact/lib artifact/bin
-          # Real stripped files for every SONAME variant (deref symlinks).
-          find /opt/krita/build -name "libkrita*.so*" 2>/dev/null | while read f; do
-            cp -L "$f" "artifact/lib/$(basename "$f")"
-          done
-          strip --strip-unneeded artifact/lib/libkrita*.so* 2>/dev/null || true
-          # Bridge + smoke already placed under artifact/ by the build step.
-          ls -lh artifact/lib/ | head -50
-          du -sh artifact/
+          echo "=== Running REAL-engine smoke test (rpath only) ==="
+          ./artifact/bin/smoke_test_real
 
       - name: Upload brush engine libs
         if: always()
