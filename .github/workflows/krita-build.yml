@@ -121,7 +121,9 @@ jobs:
             INC="$INC -I$d"
           done
           QT5=/usr/include/x86_64-linux-gnu/qt5
-          INC="$INC -I$QT5 -I$QT5/QtCore -I$QT5/QtGui -I$QT5/QtXml -I/usr/include/KF5 -I/usr/include/KF5/KCoreAddons"
+          INC="$INC -I$QT5 -I$QT5/QtCore -I$QT5/QtGui -I$QT5/QtXml"
+          for d in /usr/include/x86_64-linux-gnu/KF5/*/; do INC="$INC -I$d"; done
+          INC="$INC -I/usr/include/x86_64-linux-gnu/KF5 -I/usr/include/KF5"
           echo "=== Compiling libkrita_bridge_real.so (thin glue over real Krita classes) ==="
           g++ -std=c++17 -shared -fPIC -O2 $INC \
             /opt/bridge/krita_bridge_real.cpp \
