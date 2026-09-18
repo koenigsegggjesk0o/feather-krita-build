@@ -252,8 +252,11 @@ jobs:
       - name: Install Qt 5.15.2 (win64_msvc2019_64) via aqtinstall
         run: |
           python -m pip install --quiet aqtinstall
-          aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 -m qtsvg -O 'C:/Qt'
+          # NOTE: qtsvg ships INSIDE the 5.15 base package (no -m needed;
+          # aqt rejects it as a separate module for 5.15).
+          aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 -O 'C:/Qt'
           test -f "$QTDIR/bin/Qt5Core.dll" || { echo 'FATAL: Qt5Core.dll missing'; exit 1; }
+          test -f "$QTDIR/bin/Qt5Svg.dll" || { echo 'FATAL: Qt5Svg.dll missing from base install'; exit 1; }
           echo "Qt installed: $QTDIR"
 
       - name: vcpkg engine deps (gettext zlib bzip2 lcms2 eigen3 exiv2 freetype harfbuzz fontconfig libunibreak boost)
