@@ -259,13 +259,22 @@ jobs:
           test -f "$QTDIR/bin/Qt5Svg.dll" || { echo 'FATAL: Qt5Svg.dll missing from base install'; exit 1; }
           echo "Qt installed: $QTDIR"
 
+      - name: Bootstrap fresh vcpkg (runner's C:\vcpkg has a pruned ports tree — lcms2 missing)
+        run: |
+          git clone --depth 1 --branch 2025.06.13 https://github.com/microsoft/vcpkg.git 'C:/vcpkg2'
+          'C:/vcpkg2/bootstrap-vcpkg.bat' -disableMetrics
+          test -f 'C:/vcpkg2/vcpkg.exe' || { echo 'FATAL: vcpkg bootstrap failed'; exit 1; }
+          echo 'vcpkg2 bootstrapped'
+
       - name: vcpkg engine deps (gettext zlib bzip2 lcms2 eigen3 exiv2 freetype harfbuzz fontconfig libunibreak boost)
         run: |
-          vcpkg install --triplet x64-windows \
+          # NOTE: call our vcpkg.exe explicitly — the image's C:\vcpkg lacks
+          # many ports and msvc-dev-cmd overrides VCPKG_ROOT to the VS copy.
+          'C:/vcpkg2/vcpkg.exe' install --triplet x64-windows \
             gettext zlib bzip2 lcms2 eigen3 exiv2 \
             freetype harfbuzz fontconfig libunibreak \
             boost-multi-array boost-icl boost-rational boost-operators
-          test -d "$VCPKG_ROOT/installed/x64-windows/lib" || { echo 'FATAL: vcpkg install failed'; exit 1; }
+          test -d 'C:/vcpkg2/installed/x64-windows/lib' || { echo 'FATAL: vcpkg install failed'; exit 1; }
 
       - name: Build ECM (extra-cmake-modules)
         run: |
@@ -277,8 +286,8 @@ jobs:
 
       - name: Build KF5 frameworks (kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews)
         run: |
-          TCF='C:/vcpkg/scripts/buildsystems/vcpkg.cmake'
-          PREFIX="$KF5DIR;$QTDIR;C:/vcpkg/installed/x64-windows"
+          TCF='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake'
+          PREFIX="$KF5DIR;$QTDIR;C:/vcpkg2/installed/x64-windows"
           for fw in kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews; do
             echo "=== KF5 framework: $fw ==="
             git clone --depth 1 --branch "$KFTAG" "https://invent.kde.org/frameworks/$fw.git" "/tmp/KF5-$fw"
@@ -305,8 +314,8 @@ jobs:
             -DWITH_KDE=ON -DWITH_XCF=OFF -DWITH_SOPRANO=OFF -DWITH_HDR=OFF \
             -DWITH_WEBP=OFF -DWITH_JXL=OFF -DWITH_OCIO=OFF \
             -DWITH_OPENJPEG=OFF -DWITH_MEDIA=OFF \
-            -DCMAKE_PREFIX_PATH="$KF5DIR;$QTDIR;C:/vcpkg/installed/x64-windows" \
-            -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg/scripts/buildsystems/vcpkg.cmake' \
+            -DCMAKE_PREFIX_PATH="$KF5DIR;$QTDIR;C:/vcpkg2/installed/x64-windows" \
+            -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake' \
             -DVCPKG_TARGET_TRIPLET=x64-windows 2>&1 | tail -100
 
       - name: Build brush engine libs (kritaimage + kritalibbrush + deps)
@@ -324,7 +333,7 @@ jobs:
           BUILD="$WS/build"
           QT="$QTDIR"
           KF5="$KF5DIR"
-          VP='C:/vcpkg/installed/x64-windows'
+          VP='C:/vcpkg2/installed/x64-windows'
           mkdir -p artifact/lib artifact/bin
           # ---- include dirs: reuse the exact flags CMake configured for kritalibbrush
           LINE=$(cd "$BUILD" && ninja -t commands kritalibbrush | grep 'KisBrushModel' | head -1)
