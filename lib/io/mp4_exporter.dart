@@ -27,8 +27,10 @@ class Mp4Exporter {
     this.height = 512,
     this.frameCount = 24,
     this.fps = 20.0,
+    this.quality = 50,
     this.backgroundColor = 0xFF000000,
   })  : assert(fps > 0 && fps <= 60),
+        assert(quality >= 0 && quality <= 100),
         assert(backgroundColor >> 24 == 0xFF,
             'MP4 frames need an opaque background');
 
@@ -41,6 +43,10 @@ class Mp4Exporter {
 
   /// Playback frame rate.
   final double fps;
+
+  /// Encoder quality 0..100. Maps to the H.264 quantization parameter
+  /// QP = 42 - quality*30/100 (quality 50 → QP 27, 100 → QP 12).
+  final int quality;
 
   /// Opaque ARGB background composited behind the (possibly translucent)
   /// texture.
@@ -86,6 +92,7 @@ class Mp4Exporter {
       width: width,
       height: height,
       fps: fps,
+      qp: (42 - quality * 30 ~/ 100).clamp(12, 42),
     );
 
     final nals = <Uint8List>[];

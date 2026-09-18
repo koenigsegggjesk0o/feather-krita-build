@@ -380,3 +380,35 @@ Stage Summary:
 - MP4 export is REAL: the export sheet's MP4 card produces a playable H.264 MP4 on every platform, verified against ffmpeg end-to-end.
 - The encoder is intentionally simple (flat + PCM hybrid); file sizes are acceptable for painting content and the design leaves a clean upgrade path to full CAVLC.
 - Roadmap: steps 1-7 done + MP4 export added and regression-gated (49 tests). Remaining deferred: CAVLC residuals for MP4 size, on-device/e2e GUI verification, camera state in project files, file_picker UX polish, undo model unification.
+
+---
+Task ID: 5-loop-15 (addendum, post-push)
+Agent: Z.ai Code (main, autonomous loop)
+Task: v0.12-mp4-export released; public CI green
+
+Work Log:
+- Public repo sync pushed (53d5ef4, .github/ excluded from the mirror as established in loop-14 — the stray step2-qt-bridge.yml in that repo did not trigger).
+- Build Feather-Krita App run 35291745222 SUCCESS at 53d5ef4.
+- Artifacts verified before release: Windows zip = feather_krita.exe + krita_bridge.dll (66048 B); APK ships libkrita_bridge.so for arm64-v8a / armeabi-v7a / x86_64.
+- RELEASE v0.12-mp4-export published (id 391144069) with both installers: https://github.com/koenigsegggjesk0o/krita/releases/tag/v0.12-mp4-export
+- release_v12.py added: fetches the latest successful builder run's artifacts via curl -L (302 handling), re-extracts the GitHub wrapper zip, uploads. One gotcha: missing `import urllib.request` (module was imported implicitly by usage in v11 via from-import) — fixed on first run.
+- Private HEAD: d1eb3f8 (+ worklog addendum). Public CI repo HEAD: 53d5ef4, all green. Health gates: analyze 0 issues, 49/49 tests x2.
+
+---
+Task ID: 5-loop-16
+Agent: Z.ai Code (main, autonomous loop)
+Task: CAVLC residual coding for the H.264 MP4 encoder (loop-15's deferred upgrade)
+
+Work Log:
+- Entry gates: analyze 0 issues, 51/51 tests, public builder green at 53d5ef4. Private step2-qt-bridge unchanged (billing-blocked as documented).
+- BUILT: the full CAVLC residual pipeline for H264IdrEncoder (lib/io/h264_encoder.dart + new lib/io/h264_cavlc_tables.dart): forward transform (exact rational inverse of ffmpeg's IDCT: W = 64*P^-1*R*P^-T, 20*P^-1 hard-coded), quantization mirroring ffmpeg's dequant4_coeff (level = round(256*T/(25*qmul))), I_16x16 luma-DC Hadamard path (H' two-pass + (z*qmul+128)>>8), chroma DC 2x2 path (H2 + z*qmul>>7), CAVLC encoding of luma DC / 15 luma AC / chroma DC 2x2 / chroma AC with the full suffixLength state machine, escapes, total_zeros and run_before tables, and per-block nC state (ffmpeg pred_non_zero_count semantics incl. the 0x40 unavailable rule and intra-MB pending reads). Tables transcribed from ffmpeg h264_cavlc.c and mechanically diffed byte-identical.
+- VERIFIED against ffmpeg with a bisect harness (scripts/cavlc_bisect.dart, 15+ controlled cases) plus a mini CAVLC decoder (scripts/cavlc_roundtrip.dart) and a literal ffmpeg decode_residual translation (scripts/cavlc_literal.dart): single-MB luma-only / chroma / strong-ramp / 2-MB / high-QP / pure-chroma cases ALL decode cleanly; the multi-MB gray diagonal gradient still desyncs ffmpeg ("negative number of zero coeffs"), real stroke-replay content also hits it (MB 9,4 of mp4_smoke_512).
+- BUGS FOUND AND FIXED along the way: (1) mb_type multipliers for I_16x16 with CBP: correct formula is 1 + pred + 4*cbpChroma + 12*cbpLuma (was 12*/4* inverted - hit mb_type 31 > PCM boundary); (2) the loop-level suffix machine must NOT force suffix=2 after the first level (decoder keeps suffix=1 when |level| <= 3); (3) intra-MB nC must read the CURRENT MB's just-coded block counts (nnzPending), not the committed per-MB array; (4) chroma residual order is DC(Cb),DC(Cr),AC Cb x4,AC Cr x4 - not per-plane interleaved.
+- REMAINING BUG (deferred to loop 17): multi-MB desync under ffmpeg despite (a) full round-trip agreement with a mirror decoder and (b) a literal ffmpeg translation parsing the identical stream bit-exactly to the encoder trace. Suspicion: an nC/cache detail or a decoder-version nuance not yet visible. All evidence captured in scripts/cavlc_*.dart harnesses.
+- SHIPPED SAFE: the residual path is gated behind H264IdrEncoder.enableResiduals (default FALSE); the MP4 exporter keeps the v0.12-validated flat+PCM behavior. Gating regression tests added ("CAVLC residual path is gated off by default", "engages when explicitly enabled"). All CAVLC machinery + harnesses stay in the tree for loop 17.
+- Health: flutter analyze 0 issues; flutter test 51/51 PASS (49 + 2 new gating tests, ran twice). Version stays 0.12.0+1 (no user-visible change this loop).
+
+Stage Summary:
+- The CAVLC residual encoder is ~90% built and validated against single-MB ffmpeg cases; four real bitstream bugs were found and fixed via a bisect harness. The last multi-MB desync is isolated to a reproducible case (32x32 gray diagonal gradient) with all evidence tooling in place.
+- The exporter output remains ffmpeg-validated (flat+PCM); no broken MP4s can ship.
+- Roadmap: steps 1-7 done + GIF/glTF/PNG/MP4 exports + 51 tests. Deferred: finish CAVLC multi-MB desync (loop 17 primary), camera state in project files, file_picker UX polish, undo model unification, on-device GUI verification.

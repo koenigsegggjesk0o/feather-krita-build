@@ -35,6 +35,22 @@ Stroke _stroke(int id, double x0, double y0, double x1, double y1,
       id: id, color: color, thickness: 50, brushType: type, points: points);
 }
 
+
+Uint8List _diagonalGradient(int w, int h) {
+  final f = Uint8List(w * h * 4);
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      final v = 128 + ((40 * (x + y)) ~/ (w + h));
+      final i = (y * w + x) * 4;
+      f[i] = v;
+      f[i + 1] = v;
+      f[i + 2] = v;
+      f[i + 3] = 0xFF;
+    }
+  }
+  return f;
+}
+
 Uint8List _encodeSampleVideo(int frames) {
   return Mp4Exporter(
     width: 128,
@@ -200,6 +216,24 @@ void main() {
     });
   });
 
+
+      test('CAVLC residual path is gated off by default', () {
+        // A diagonal gradient cannot be flat-coded: with the default
+        // flags every macroblock must fall back to I_PCM.
+        final enc = H264IdrEncoder(width: 16, height: 16);
+        enc.loadRgba(_diagonalGradient(16, 16));
+        enc.encodeIdr();
+        expect(enc.lastResidualMacroblocks, 0);
+        expect(enc.lastPcmMacroblocks + enc.lastFlatMacroblocks, 1);
+      });
+
+      test('CAVLC residual path engages when explicitly enabled', () {
+        final enc =
+            H264IdrEncoder(width: 16, height: 16, enableResiduals: true);
+        enc.loadRgba(_diagonalGradient(16, 16));
+        enc.encodeIdr();
+        expect(enc.lastResidualMacroblocks, 1);
+      });
   group('external ffmpeg verification', () {
     final hasFfmpeg = () {
       try {
