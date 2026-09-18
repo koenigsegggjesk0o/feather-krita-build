@@ -235,7 +235,7 @@ jobs:
             C:/kf5
             C:/kf5-src
             C:/kf5-build
-          key: winengine-deps-v5
+          key: winengine-deps-v6
           restore-keys: winengine-deps-
 
       - name: Restore krita build tree (ninja incremental)
@@ -312,7 +312,7 @@ jobs:
           'C:/vcpkg2/vcpkg.exe' install --triplet x64-windows \
             'gettext[tools]' zlib bzip2 lcms eigen3 exiv2 tiff fribidi \
             freetype harfbuzz fontconfig libunibreak \
-            boost-multi-array boost-icl boost-rational boost-utility boost-integer
+            boost-multi-array boost-icl boost-rational boost-utility boost-integer boost-accumulators boost-circular-buffer
           test -d 'C:/vcpkg2/installed/x64-windows/lib' || { echo 'FATAL: vcpkg install failed'; exit 1; }
           # ki18n's KF5I18nMacros find_package(Gettext) needs msgfmt/msgmerge
           # executables from the gettext[tools] feature on PATH:
@@ -465,7 +465,7 @@ jobs:
             C:/kf5
             C:/kf5-src
             C:/kf5-build
-          key: winengine-deps-v5
+          key: winengine-deps-v6
 
       - name: Save krita build tree cache
         if: always()
