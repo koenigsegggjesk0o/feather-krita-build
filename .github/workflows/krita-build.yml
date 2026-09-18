@@ -235,7 +235,7 @@ jobs:
             C:/kf5
             C:/kf5-src
             C:/kf5-build
-          key: winengine-deps-v4
+          key: winengine-deps-v5
           restore-keys: winengine-deps-
 
       - name: Restore krita build tree (ninja incremental)
@@ -310,7 +310,7 @@ jobs:
           # NOTE: call our vcpkg.exe explicitly — the image's C:\vcpkg lacks
           # many ports and msvc-dev-cmd overrides VCPKG_ROOT to the VS copy.
           'C:/vcpkg2/vcpkg.exe' install --triplet x64-windows \
-            'gettext[tools]' zlib bzip2 lcms eigen3 exiv2 tiff fribidi quazip \
+            'gettext[tools]' zlib bzip2 lcms eigen3 exiv2 tiff fribidi \
             freetype harfbuzz fontconfig libunibreak \
             boost-multi-array boost-icl boost-rational boost-utility boost-integer
           test -d 'C:/vcpkg2/installed/x64-windows/lib' || { echo 'FATAL: vcpkg install failed'; exit 1; }
@@ -366,6 +366,19 @@ jobs:
           cmake -S C:/kf5-src/lager -B C:/kf5-build/build-lager -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$P" -DBUILD_TESTING=OFF -Dlager_BUILD_TESTS=OFF -Dlager_BUILD_FAILURE_TESTS=OFF -Dlager_BUILD_EXAMPLES=OFF -Dlager_BUILD_DEBUGGER_EXAMPLES=OFF -Dlager_BUILD_DOCS=OFF -Dlager_EMBED_RESOURCES_PATH=OFF
           cmake --build C:/kf5-build/build-lager && cmake --install C:/kf5-build/build-lager
           test -f "$KF5DIR/share/cmake/Immer/ImmerConfig.cmake" -o -f "$KF5DIR/lib/cmake/Immer/ImmerConfig.cmake" -o -f "$KF5DIR/share/immer/ImmerConfig.cmake" || { echo 'FATAL: Immer config not found after install'; find "$KF5DIR" -name 'ImmerConfig.cmake'; exit 1; }
+
+      - name: Build QuaZip v1.4 against aqt Qt (vcpkg quazip would drag a full qtbase build — hours)
+        run: |
+          mkdir -p C:/kf5-src C:/kf5-build
+          [ -d C:/kf5-src/quazip ] || git clone --depth 1 --branch v1.4 https://github.com/stachenov/quazip.git C:/kf5-src/quazip
+          cmake -S C:/kf5-src/quazip -B C:/kf5-build/build-quazip -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$KF5DIR" \
+            -DCMAKE_PREFIX_PATH="$QTDIR;C:/vcpkg2/installed/x64-windows" \
+            -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake' \
+            -DVCPKG_TARGET_TRIPLET=x64-windows \
+            -DQUAZIP_QT_MAJOR_VERSION=5 -DBUILD_TESTING=OFF -DQUAZIP_BUILD_TESTS=OFF
+          cmake --build C:/kf5-build/build-quazip && cmake --install C:/kf5-build/build-quazip
+          test -f "$KF5DIR/lib/cmake/QuaZip-Qt5/QuaZip-Qt5Config.cmake" || { echo 'FATAL: QuaZip-Qt5 config not installed'; exit 1; }
 
       - name: Configure Krita (minimal engine build, Qt5, MSVC, unmodified source)
         run: |
@@ -451,7 +464,7 @@ jobs:
             C:/kf5
             C:/kf5-src
             C:/kf5-build
-          key: winengine-deps-v4
+          key: winengine-deps-v5
 
       - name: Save krita build tree cache
         if: always()
