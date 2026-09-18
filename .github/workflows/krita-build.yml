@@ -124,6 +124,14 @@ jobs:
           INC="$INC -I$QT5 -I$QT5/QtCore -I$QT5/QtGui -I$QT5/QtXml"
           for d in /usr/include/x86_64-linux-gnu/KF5/*/; do INC="$INC -I$d"; done
           INC="$INC -I/usr/include/x86_64-linux-gnu/KF5 -I/usr/include/KF5"
+          # Bulletproof: reuse the exact include flags CMake configured for
+          # libs/brush (KI18n, boost, Qt5, lager, build-dir generated headers).
+          KRITAINCS=$(cd $BUILD && ninja -t commands kritalibbrush 2>/dev/null | grep 'KisBrushModel' | grep -m1 -o '\-I[^ ]*' | sort -u | tr '\n' ' ')
+          if [ -z "$KRITAINCS" ]; then
+            KRITAINCS=$(cd $BUILD && ninja -t commands kritalibbrush 2>/dev/null | grep -m1 -o '\-I[^ ]*' | sort -u | tr '\n' ' ')
+          fi
+          echo "Krita include dirs extracted: $(echo $KRITAINCS | wc -w)"
+          INC="$INC $KRITAINCS"
           echo "=== Compiling libkrita_bridge_real.so (thin glue over real Krita classes) ==="
           g++ -std=c++17 -shared -fPIC -O2 $INC \
             /opt/bridge/krita_bridge_real.cpp \
