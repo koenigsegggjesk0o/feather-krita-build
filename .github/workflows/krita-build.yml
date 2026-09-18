@@ -166,7 +166,7 @@ jobs:
             fi
           done
           echo "=== Compiling libkrita_bridge_real.so (thin glue over real Krita classes) ==="
-          g++ -std=c++17 -shared -fPIC -O2 $INC \
+          g++ -std=c++17 -shared -fPIC -O2 -fno-operator-names $INC \
             /opt/bridge/krita_bridge_real.cpp \
             -L$LIBDIR \
             -lkritalibbrush -lkritaimage -lkritapigment -lkritaresources -lkritastore \
@@ -175,7 +175,7 @@ jobs:
             -Wl,-rpath,'$ORIGIN' \
             -o artifact/lib/libkrita_bridge_real.so
           echo "=== Compiling smoke test ==="
-          g++ -std=c++17 -O2 $INC \
+          g++ -std=c++17 -O2 -fno-operator-names $INC \
             /opt/bridge/smoke_test_real.cpp \
             -Lartifact/lib -lkrita_bridge_real \
             -Wl,-rpath,'$ORIGIN/../lib' \
