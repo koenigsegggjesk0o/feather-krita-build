@@ -223,6 +223,26 @@ jobs:
         with:
           arch: x64
 
+      # Iteration-speed caches (loop-34): vcpkg installed tree + KF5 build
+      # tree are stable across runs (port list / KFTAG pinned); the krita
+      # build tree enables ninja-incremental rebuilds between workflow fixes.
+      # Bump the -vN suffix when the port list / KFTAG / cmake options change.
+      - name: Restore dependency caches (vcpkg installed + KF5)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            C:/vcpkg2/installed
+            C:/kf5
+            C:/kf5-src
+            C:/kf5-build
+          key: winengine-deps-v1
+
+      - name: Restore krita build tree (ninja incremental)
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/build
+          key: winengine-krbuild-v1
+
       - name: Clone krita-source (real Krita v6.0.4, unmodified)
         run: |
           git clone --depth 1 --branch main \
@@ -290,11 +310,12 @@ jobs:
 
       - name: Build ECM (extra-cmake-modules)
         run: |
-          git clone --depth 1 --branch "$KFTAG" https://invent.kde.org/frameworks/extra-cmake-modules.git /tmp/ECM
-          cmake -S /tmp/ECM -B /tmp/build-ecm -G Ninja \
+          mkdir -p C:/kf5-src C:/kf5-build
+          [ -d C:/kf5-src/ECM ] || git clone --depth 1 --branch "$KFTAG" https://invent.kde.org/frameworks/extra-cmake-modules.git C:/kf5-src/ECM
+          cmake -S C:/kf5-src/ECM -B C:/kf5-build/build-ecm -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$KF5DIR" -DBUILD_TESTING=OFF
-          cmake --build /tmp/build-ecm
-          cmake --install /tmp/build-ecm
+          cmake --build C:/kf5-build/build-ecm
+          cmake --install C:/kf5-build/build-ecm
 
       - name: Build KF5 frameworks (kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews)
         run: |
@@ -303,16 +324,16 @@ jobs:
           PREFIX="$KF5DIR;$QTDIR;C:/vcpkg2/installed/x64-windows"
           for fw in kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews; do
             echo "=== KF5 framework: $fw ==="
-            git clone --depth 1 --branch "$KFTAG" "https://invent.kde.org/frameworks/$fw.git" "/tmp/KF5-$fw"
-            cmake -S "/tmp/KF5-$fw" -B "/tmp/build-$fw" -G Ninja \
+            [ -d "C:/kf5-src/KF5-$fw" ] || git clone --depth 1 --branch "$KFTAG" "https://invent.kde.org/frameworks/$fw.git" "C:/kf5-src/KF5-$fw"
+            cmake -S "C:/kf5-src/KF5-$fw" -B "C:/kf5-build/build-$fw" -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX="$KF5DIR" \
               -DCMAKE_PREFIX_PATH="$PREFIX" \
               -DCMAKE_TOOLCHAIN_FILE="$TCF" \
               -DVCPKG_TARGET_TRIPLET=x64-windows \
               -DBUILD_TESTING=OFF -DBUILD_HTML_DOCS=OFF -DBUILD_QTHELP_DOCS=OFF -DBUILD_DESIGNERPLUGIN=OFF
-            cmake --build "/tmp/build-$fw" --parallel
-            cmake --install "/tmp/build-$fw"
+            cmake --build "C:/kf5-build/build-$fw" --parallel
+            cmake --install "C:/kf5-build/build-$fw"
           done
           test -f "$KF5DIR/lib/cmake/KF5I18n/KF5I18nConfig.cmake" || { echo 'FATAL: KF5I18n not installed'; exit 1; }
 
@@ -383,6 +404,24 @@ jobs:
           echo '=== Running REAL-engine smoke test on Windows (MSVC-built engine) ==='
           export PATH="$GITHUB_WORKSPACE/artifact/bin:$QT/bin:$KF5/bin:$VP/bin:$PATH"
           ./artifact/bin/smoke_test_real.exe
+
+      - name: Save dependency caches
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            C:/vcpkg2/installed
+            C:/kf5
+            C:/kf5-src
+            C:/kf5-build
+          key: winengine-deps-v1
+
+      - name: Save krita build tree cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/build
+          key: winengine-krbuild-v1
 
       - name: Upload Windows brush engine
         if: always()
