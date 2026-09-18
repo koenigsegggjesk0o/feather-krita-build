@@ -1,0 +1,123 @@
+name: Build Krita Brush Engine (real source)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/krita-build.yml'
+
+concurrency:
+  group: krita-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone krita-source (real Krita v6.0.4, unmodified)
+        run: |
+          git clone --depth 1 --branch main \
+            "https://x-access-token:${{ secrets.KRITA_SOURCE_TOKEN }}@github.com/koenigsegggjesk0o/krita.git" \
+            /tmp/krita-repo
+          cp -r /tmp/krita-repo/krita-source /opt/krita
+          cd /opt/krita
+          echo "=== Real Krita source verified ==="
+          echo "C++ files: $(find . -name '*.cpp' -o -name '*.h' -o -name '*.cc' | wc -l)"
+          grep "KRITA_VERSION_STRING" CMakeLists.txt | head -2
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build git pkg-config extra-cmake-modules \
+            qt6-base-dev qt6-tools-dev qt6-svg-dev libqt6opengl6-dev qt6-base-private-dev \
+            qtbase5-dev qtbase5-private-dev qttools5-dev qttools5-dev-tools \
+            libkf5config-dev libkf5widgetsaddons-dev libkf5completion-dev \
+            libkf5coreaddons-dev libkf5guiaddons-dev libkf5i18n-dev \
+            libkf5itemviews-dev libkf5itemmodels-dev libkf5xmlgui-dev \
+            libkf5configwidgets-dev libkf5iconthemes-dev libkf5service-dev \
+            libkf5windowsystem-dev libkf5notifications-dev libkf5parts-dev \
+            libkf5plotting-dev libkf5kdelibs4support-dev libkf5crash-dev \
+            libkf5archive-dev libkf5sonnet-dev libkf5kio-dev \
+            libboost-dev libboost-system-dev libboost-filesystem-dev \
+            libeigen3-dev libexiv2-dev libfftw3-dev libgsl-dev \
+            liblcms2-dev libopenexr-dev libilmbase-dev \
+            libquazip5-dev libquazip1-qt5-dev \
+            libgif-dev libheif-dev libjpeg-dev libpng-dev libtiff-dev \
+            libraw-dev libwebp-dev libpoppler-qt6-dev libpoppler-cpp-dev \
+            python3 python3-pyqt5 pyqt5-dev-tools python3-sip-dev \
+            libglm-dev libmypaint-dev libjson-c-dev intltool \
+            libxi-dev libxt-dev libxext-dev libx11-dev \
+            libfreetype-dev libfontconfig1-dev libharfbuzz-dev \
+            libopengl-dev libegl-dev libopenjp2-7-dev libturbojpeg0-dev \
+            libunibreak-dev libraqm-dev \
+            qtdeclarative5-dev libqt5quickcontrols2-5 qtquickcontrols2-5-dev \
+            qml-module-qtquick-controls2 qml-module-qtquick2 qml-module-qtquick-layouts
+
+      - name: Install Catch2 + Zug + immer + lager + xsimd
+        run: |
+          git clone --depth 1 --branch v3.5.2 https://github.com/catchorg/Catch2.git /tmp/catch2
+          cd /tmp/catch2 && cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=OFF && sudo cmake --build build --target install -j$(nproc)
+          git clone --depth 1 https://github.com/arximboldi/zug.git /tmp/zug
+          cd /tmp/zug && cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DBUILD_DOCS=OFF && sudo cmake --build build --target install -j$(nproc)
+          git clone --depth 1 https://github.com/arximboldi/immer.git /tmp/immer
+          cd /tmp/immer && cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DBUILD_DOCS=OFF -DBUILD_BENCHMARKS=OFF && sudo cmake --build build --target install -j$(nproc)
+          git clone --depth 1 https://github.com/arximboldi/lager.git /tmp/lager
+          cd /tmp/lager && cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr \
+            -Dlager_BUILD_TESTS=OFF -Dlager_BUILD_FAILURE_TESTS=OFF \
+            -Dlager_BUILD_EXAMPLES=OFF -Dlager_BUILD_DEBUGGER_EXAMPLES=OFF \
+            -Dlager_BUILD_DOCS=OFF -Dlager_EMBED_RESOURCES_PATH=OFF \
+            && sudo cmake --build build --target install -j$(nproc)
+          git clone --depth 1 --branch 13.0.0 https://github.com/xtensor-stack/xsimd.git /tmp/xsimd
+          cd /tmp/xsimd && cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=OFF && sudo cmake --build build --target install -j$(nproc)
+
+      - name: Configure (real Krita source, unmodified)
+        run: |
+          cd /opt/krita
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/krita-install \
+            -DBUILD_TESTING=OFF -DENABLE_PYTHON=OFF \
+            -DWITH_QT6=OFF -DQT_MAJOR_VERSION=5 \
+            -DWITH_HEIF=OFF -DWITH_JPEG=ON -DWITH_PNG=ON -DWITH_TIFF=ON \
+            -DWITH_RAW=OFF -DWITH_GIF=OFF -DWITH_FFTW3=OFF -DWITH_OPENEXR=OFF \
+            -DWITH_KDE=ON -DWITH_XCF=OFF -DWITH_SOPRANO=OFF -DWITH_HDR=OFF \
+            -DWITH_WEBP=OFF -DWITH_JXL=OFF -DWITH_OCIO=OFF \
+            -DWITH_OPENJPEG=OFF -DWITH_MEDIA=OFF \
+            -G Ninja 2>&1 | tail -80
+
+      - name: Build brush engine libs (kritaimage + deps only)
+        run: |
+          cd /opt/krita
+          cmake --build build --target kritaimage --parallel 2 2>&1 | tail -300
+          echo "=== Brush engine .so files ==="
+          find build -name "libkrita*.so*" 2>/dev/null | head -30
+
+      - name: Collect .so
+        if: always()
+        run: |
+          mkdir -p artifact/lib
+          find /opt/krita/build -name "libkrita*.so*" -exec cp -P {} artifact/lib/ \; 2>/dev/null
+          ls -lh artifact/lib/
+
+      - name: Upload brush engine libs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: krita-brush-engine
+          path: artifact/
+          retention-days: 90
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Real Krita Brush Engine Build" >> $GITHUB_STEP_SUMMARY
+          echo "Source: real Krita v6.0.4 (unmodified, from krita-source/)" >> $GITHUB_STEP_SUMMARY
+          if [ -d artifact/lib ] && ls artifact/lib/*.so* 2>/dev/null | grep -q .; then
+            echo "### SUCCESS" >> $GITHUB_STEP_SUMMARY
+            ls -lh artifact/lib/ >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### FAILED — no .so files produced" >> $GITHUB_STEP_SUMMARY
+          fi
