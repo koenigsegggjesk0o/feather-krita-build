@@ -30,6 +30,7 @@ import 'package:feather_krita/engine/stroke_manager.dart';
 import 'package:feather_krita/ffi/krita_bindings.dart';
 import 'package:feather_krita/io/app_dirs.dart';
 import 'package:feather_krita/io/feather_project.dart';
+import 'package:feather_krita/io/recent_projects.dart';
 import 'package:feather_krita/io/gif_exporter.dart';
 import 'package:feather_krita/io/mp4_exporter.dart';
 import 'package:feather_krita/io/gltf_exporter.dart';
@@ -116,6 +117,7 @@ class _MainScreenState extends State<MainScreen> {
         baseName: _state.fileName.replaceAll(RegExp(r'\.feather$'), ''),
         exporter: _runExport,
         onUpgrade: () => _toast('Pro upgrade is not wired yet — stay tuned!'),
+        onToast: _toast,
         onClose: () => Navigator.of(context).pop(),
       ),
     );
@@ -176,8 +178,9 @@ class _MainScreenState extends State<MainScreen> {
   Future<String> _runExport(
     ExportFormat format,
     int quality,
-    void Function(double progress) onProgress,
-  ) async {
+    void Function(double progress) onProgress, {
+    String? path,
+  }) async {
     try {
       onProgress(0.1);
       final dir = _exportDir();
@@ -186,30 +189,30 @@ class _MainScreenState extends State<MainScreen> {
       final safe = baseName.replaceAll(RegExp(r'[^\w\- ]'), '_');
       final stamp = DateTime.now().millisecondsSinceEpoch;
       final info = exportInfo(format);
-      final path =
+      final outPath = path ??
           '${dir.path}${Platform.pathSeparator}$safe-$stamp.${info.extension}';
 
       switch (format) {
         case ExportFormat.png:
           onProgress(0.4);
-          File(path).writeAsBytesSync(_encodeTexture());
+          File(outPath).writeAsBytesSync(_encodeTexture());
           break;
         case ExportFormat.jpeg:
           onProgress(0.4);
-          File(path).writeAsBytesSync(
+          File(outPath).writeAsBytesSync(
               _encodeTexture(jpegQuality: quality));
           break;
         case ExportFormat.obj:
           onProgress(0.5);
-          File(path).writeAsStringSync(_buildObj());
+          File(outPath).writeAsStringSync(_buildObj());
           break;
         case ExportFormat.featherProject:
           onProgress(0.5);
-          File(path).writeAsStringSync(_buildProjectJson());
+          File(outPath).writeAsStringSync(_buildProjectJson());
           break;
         case ExportFormat.gltf:
           onProgress(0.5);
-          File(path).writeAsStringSync(
+          File(outPath).writeAsStringSync(
               buildGltf(_state.guideSurface.mesh, name: safe));
           break;
         case ExportFormat.gif:
@@ -224,7 +227,7 @@ class _MainScreenState extends State<MainScreen> {
             sourceTextureSize: _state.texture.width,
             onProgress: (p) => onProgress(0.2 + p * 0.8),
           );
-          File(path).writeAsBytesSync(gif);
+          File(outPath).writeAsBytesSync(gif);
           break;
         case ExportFormat.mp4:
           onProgress(0.2);
@@ -238,11 +241,11 @@ class _MainScreenState extends State<MainScreen> {
             sourceTextureSize: _state.texture.width,
             onProgress: (p) => onProgress(0.2 + p * 0.8),
           );
-          File(path).writeAsBytesSync(mp4);
+          File(outPath).writeAsBytesSync(mp4);
           break;
       }
       onProgress(1.0);
-      return path;
+      return outPath;
     } catch (e) {
       return 'error: $e';
     }
@@ -321,6 +324,7 @@ class _MainScreenState extends State<MainScreen> {
     try {
       final doc = FeatherProjectDocument.parse(File(path).readAsStringSync());
       doc.applyTo(_state);
+      recordRecentProject(path);
       if (mounted) setState(() {});
       _toast('Opened ${doc.fileName} — ${doc.strokes.length} strokes.');
     } catch (e) {

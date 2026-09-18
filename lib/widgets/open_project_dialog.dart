@@ -8,6 +8,18 @@
 // restore. The file picker is wrapped in a try/catch: on platforms where
 // the plugin is unavailable the manual path field keeps the dialog fully
 // functional (and deterministic under widget tests).
+//
+// Loop-21 UX polish:
+//   - Up to 10 quick-pick candidates (was 5), each showing file size +
+//     relative modified time so the user can tell a 5-minute-old 2 MB
+//     autosave from a 3-week-old 80 KB sketch.
+//   - Per-row delete button (forwards to [onDelete]) so stale exports
+//     can be cleared without leaving the dialog.
+//   - A persisted "Recent projects" section (from recent_projects.dart)
+//     is shown above "Recent exports" when the user has opened files
+//     that aren't in the exports directory (e.g. files copied in from
+//     email/cloud storage). Selecting any row fills the path field; a
+//     dedicated "Open" tap on it loads the project.
 
 import 'dart:io';
 
@@ -16,6 +28,8 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 
 import 'package:feather_krita/theme/app_theme.dart';
+import 'package:feather_krita/io/file_meta.dart';
+import 'package:feather_krita/io/recent_projects.dart';
 
 /// A dialog that returns the path of the .feather file to open
 /// (via `Navigator.pop(context, path)`), or null when cancelled.
@@ -32,14 +46,15 @@ class OpenProjectDialog extends StatefulWidget {
 
 class _OpenProjectDialogState extends State<OpenProjectDialog> {
   late final TextEditingController _path;
-  List<FileSystemEntity> _candidates = const [];
+  List<FileMeta> _candidates = const [];
+  List<FileMeta> _recents = const [];
   String? _hint;
 
   @override
   void initState() {
     super.initState();
     _path = TextEditingController();
-    _refreshCandidates();
+    _refreshAll();
   }
 
   @override
@@ -48,23 +63,46 @@ class _OpenProjectDialogState extends State<OpenProjectDialog> {
     super.dispose();
   }
 
+  void _refreshAll() {
+    _refreshCandidates();
+    _refreshRecents();
+  }
+
   void _refreshCandidates() {
     final dir = widget.initialDir;
     if (dir == null || dir.isEmpty) return;
     try {
       final d = Directory(dir);
       if (!d.existsSync()) return;
-      setState(() {
-        _candidates = d
-            .listSync()
-            .where((e) =>
-                e is File &&
-                (e.path.endsWith('.feather') || e.path.endsWith('.json')))
-            .toList()
-          ..sort((a, b) => b.statSync().modified.compareTo(a.statSync().modified));
-      });
+      final metas = <FileMeta>[];
+      for (final e in d.listSync()) {
+        if (e is File &&
+            (e.path.endsWith('.feather') || e.path.endsWith('.json'))) {
+          metas.add(FileMeta.fromPath(e.path));
+        }
+      }
+      metas.sort((a, b) => b.modified.compareTo(a.modified));
+      setState(() => _candidates = metas.take(10).toList(growable: false));
     } catch (_) {
       // Non-fatal: the path field remains usable.
+    }
+  }
+
+  void _refreshRecents() {
+    try {
+      final paths = loadRecentProjects();
+      // Only show recents that aren't already in the candidates list
+      // (otherwise we'd duplicate entries the user can see above).
+      final candidatePaths = _candidates.map((c) => c.path).toSet();
+      final extras = paths
+          .where((p) => !candidatePaths.contains(p))
+          .map(FileMeta.fromPath)
+          .where((m) => m.exists)
+          .take(5)
+          .toList(growable: false);
+      setState(() => _recents = extras);
+    } catch (_) {
+      setState(() => _recents = const []);
     }
   }
 
@@ -99,13 +137,24 @@ class _OpenProjectDialogState extends State<OpenProjectDialog> {
     Navigator.of(context).pop(p);
   }
 
+  void _deleteCandidate(FileMeta meta) async {
+    try {
+      final f = File(meta.path);
+      if (f.existsSync()) f.deleteSync();
+      forgetRecentProject(meta.path);
+    } catch (_) {
+      // Non-fatal: the row just stays.
+    }
+    _refreshAll();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.all(24),
       child: GlassContainer(
-        width: 480,
+        width: 520,
         padding: const EdgeInsets.all(20),
         color: AppTheme.darkGlass.withOpacity(0.7),
         child: Column(
@@ -183,6 +232,32 @@ class _OpenProjectDialogState extends State<OpenProjectDialog> {
                     const TextStyle(color: AppTheme.toolErase, fontSize: 11),
               ),
             ],
+            if (_recents.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'Recent projects',
+                style: TextStyle(
+                    color: AppTheme.textTertiary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final c in _recents)
+                        _CandidateTile(
+                          meta: c,
+                          onTap: () => _path.text = c.path,
+                          onDelete: () => _deleteCandidate(c),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             if (_candidates.isNotEmpty) ...[
               const SizedBox(height: 12),
               const Text(
@@ -198,10 +273,11 @@ class _OpenProjectDialogState extends State<OpenProjectDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      for (final c in _candidates.take(5))
+                      for (final c in _candidates)
                         _CandidateTile(
-                          path: c.path,
+                          meta: c,
                           onTap: () => _path.text = c.path,
+                          onDelete: () => _deleteCandidate(c),
                         ),
                     ],
                   ),
@@ -234,14 +310,22 @@ class _OpenProjectDialogState extends State<OpenProjectDialog> {
 }
 
 class _CandidateTile extends StatelessWidget {
-  const _CandidateTile({required this.path, required this.onTap});
+  const _CandidateTile({
+    required this.meta,
+    required this.onTap,
+    required this.onDelete,
+  });
 
-  final String path;
+  final FileMeta meta;
   final VoidCallback onTap;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
-    final name = path.split(Platform.pathSeparator).last;
+    final name = meta.basename;
+    final sizeStr = meta.exists ? formatFileSize(meta.size) : 'missing';
+    final timeStr =
+        meta.exists ? formatRelativeTime(meta.modified) : '—';
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
@@ -253,14 +337,36 @@ class _CandidateTile extends StatelessWidget {
                 size: 14, color: AppTheme.textTertiary),
             const SizedBox(width: 6),
             Expanded(
-              child: Text(
-                name,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    color: AppTheme.textSecondary,
-                    fontSize: 11,
-                    fontFamily: 'monospace'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    name,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 11,
+                        fontFamily: 'monospace'),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    '$sizeStr · $timeStr',
+                    style: const TextStyle(
+                        color: AppTheme.textTertiary, fontSize: 9),
+                  ),
+                ],
               ),
+            ),
+            IconButton(
+              tooltip: 'Remove',
+              visualDensity: VisualDensity.compact,
+              iconSize: 14,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+              onPressed: onDelete,
+              icon: const Icon(Icons.close_rounded,
+                  size: 14, color: AppTheme.textTertiary),
             ),
           ],
         ),

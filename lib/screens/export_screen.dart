@@ -9,19 +9,29 @@
 // instead of the export button. The actual encoding is delegated to the
 // [exporter] callback supplied by the host screen.
 
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:feather_krita/theme/app_theme.dart';
+import 'package:feather_krita/io/app_dirs.dart';
 import 'package:feather_krita/models/export_format.dart';
 import 'package:feather_krita/widgets/glass_slider.dart';
+import 'package:feather_krita/widgets/save_as_dialog.dart';
 
 /// A callback that performs the actual export. Returns the output path
 /// (or an error message prefixed with `error:`).
+///
+/// Pass a non-null [path] (via the Save-As dialog) to override the
+/// default auto-named output location.
 typedef ExportRunner = Future<String> Function(
   ExportFormat format,
   int quality,
-  void Function(double progress) onProgress,
-);
+  void Function(double progress) onProgress, {
+  String? path,
+});
 
 /// The export dialog.
 class ExportScreen extends StatefulWidget {
@@ -32,6 +42,7 @@ class ExportScreen extends StatefulWidget {
     required this.onUpgrade,
     required this.onClose,
     this.baseName = 'Untitled',
+    this.onToast,
   });
 
   final bool isPro;
@@ -39,6 +50,12 @@ class ExportScreen extends StatefulWidget {
   final VoidCallback onUpgrade;
   final VoidCallback onClose;
   final String baseName;
+
+  /// Optional toast channel (host screen's ScaffoldMessenger). When
+  /// provided, copy-path/show-in-folder confirmations route through it
+  /// so the snackbar lands on the host's Scaffold (where the user
+  /// expects it) instead of the dialog's overlay context.
+  final void Function(String message)? onToast;
 
   @override
   State<ExportScreen> createState() => _ExportScreenState();
@@ -60,7 +77,7 @@ class _ExportScreenState extends State<ExportScreen> {
 
   bool get _locked => _selected != null && exportInfo(_selected!).isProOnly && !widget.isPro;
 
-  Future<void> _run() async {
+  Future<void> _run({String? path}) async {
     if (_selected == null) return;
     setState(() {
       _busy = true;
@@ -69,20 +86,114 @@ class _ExportScreenState extends State<ExportScreen> {
       _error = null;
     });
     try {
-      final path = await widget.exporter(
+      final out = await widget.exporter(
         _selected!,
         _quality,
         (p) => setState(() => _progress = p),
+        path: path,
       );
-      if (path.startsWith('error:')) {
-        setState(() => _error = path.substring(6).trim());
+      if (out.startsWith('error:')) {
+        setState(() => _error = out.substring(6).trim());
       } else {
-        setState(() => _resultPath = path);
+        setState(() => _resultPath = out);
       }
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
       setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _saveAs() async {
+    if (_selected == null) return;
+    final info = exportInfo(_selected!);
+    final chosen = await showDialog<String>(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (_) => SaveAsDialog(
+        format: _selected!,
+        baseName: widget.baseName,
+        initialDir: _defaultDir(),
+      ),
+    );
+    if (chosen == null || chosen.isEmpty) return;
+    // Validate the extension one more time (the dialog does too, but a
+    // user-edited path could still slip through).
+    if (!chosen.toLowerCase().endsWith('.${info.extension}')) {
+      setState(() => _error = 'File name must end with .${info.extension}.');
+      return;
+    }
+    await _run(path: chosen);
+  }
+
+  /// Best-effort default directory for the Save-As dialog pre-fill.
+  /// Defaults to the canonical exports directory; falls back to the
+  /// system temp directory if that can't be resolved (never throws).
+  String _defaultDir() {
+    try {
+      return exportsDir().path;
+    } catch (_) {
+      try {
+        return Directory.systemTemp.absolute.path;
+      } catch (_) {
+        return '';
+      }
+    }
+  }
+
+  Future<void> _copyPath() async {
+    final p = _resultPath;
+    if (p == null) return;
+    // Fire-and-forget the clipboard write so the confirmation is
+    // immediate even on platforms where the channel is slow.
+    unawaited(Clipboard.setData(ClipboardData(text: p))
+        .catchError((Object _) {}));
+    if (!mounted) return;
+    final toast = widget.onToast;
+    if (toast != null) {
+      toast('Path copied to clipboard');
+    } else {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        content: const Text('Path copied to clipboard',
+            style: TextStyle(color: Colors.white)),
+        backgroundColor: const Color(0xCC1A1A2E),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ));
+    }
+  }
+
+  Future<void> _showInFolder() async {
+    final p = _resultPath;
+    if (p == null) return;
+    final dir = File(p).parent.path;
+    var opened = false;
+    try {
+      if (Platform.isMacOS) {
+        await Process.start('open', [dir]);
+        opened = true;
+      } else if (Platform.isWindows) {
+        await Process.start('explorer', [dir]);
+        opened = true;
+      } else if (Platform.isLinux) {
+        await Process.start('xdg-open', [dir]);
+        opened = true;
+      }
+    } catch (_) {
+      // Non-fatal: fall through to the toast.
+    }
+    if (!mounted) return;
+    final toast = widget.onToast;
+    final msg = opened ? 'Opened folder' : 'Folder: $dir';
+    if (toast != null) {
+      toast(msg);
+    } else {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        content: Text(msg, style: const TextStyle(color: Colors.white)),
+        backgroundColor: const Color(0xCC1A1A2E),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+      ));
     }
   }
 
@@ -137,7 +248,10 @@ class _ExportScreenState extends State<ExportScreen> {
                       locked: _locked,
                       resultPath: _resultPath,
                       error: _error,
-                      onExport: _run,
+                      onExport: () => _run(),
+                      onSaveAs: _saveAs,
+                      onCopyPath: _copyPath,
+                      onShowInFolder: _showInFolder,
                       onUpgrade: widget.onUpgrade,
                       onClose: widget.onClose,
                     ),
@@ -434,6 +548,9 @@ class _ActionArea extends StatelessWidget {
     required this.resultPath,
     required this.error,
     required this.onExport,
+    required this.onSaveAs,
+    required this.onCopyPath,
+    required this.onShowInFolder,
     required this.onUpgrade,
     required this.onClose,
   });
@@ -444,6 +561,9 @@ class _ActionArea extends StatelessWidget {
   final String? resultPath;
   final String? error;
   final VoidCallback onExport;
+  final VoidCallback onSaveAs;
+  final VoidCallback onCopyPath;
+  final VoidCallback onShowInFolder;
   final VoidCallback onUpgrade;
   final VoidCallback onClose;
 
@@ -503,6 +623,14 @@ class _ActionArea extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
+              TextButton(
+                onPressed: onCopyPath,
+                child: const Text('Copy path'),
+              ),
+              TextButton(
+                onPressed: onShowInFolder,
+                child: const Text('Show in folder'),
+              ),
               FilledButton(
                 style: FilledButton.styleFrom(
                     backgroundColor: AppTheme.toolExport),
@@ -567,6 +695,11 @@ class _ActionArea extends StatelessWidget {
         TextButton(
           onPressed: onClose,
           child: const Text('Cancel'),
+        ),
+        const SizedBox(width: 4),
+        TextButton(
+          onPressed: onSaveAs,
+          child: const Text('Save As…'),
         ),
         const SizedBox(width: 8),
         FilledButton.icon(
