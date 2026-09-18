@@ -103,3 +103,87 @@ jobs:
           name: feather-krita-android
           path: feather-krita-android.apk
           retention-days: 30
+
+  build-linux-real-engine:
+    # Linux desktop build bundling the REAL Krita engine (libkrita_bridge.so
+    # renamed from libkrita_bridge_real.so + real libkrita*.so from the
+    # krita-build workflow), verified end-to-end via the app's own Dart FFI
+    # bindings running on the Dart VM.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build + Krita runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libqt5core5a libqt5gui5 libqt5widgets5 libqt5xml5 libqt5svg5 \
+            libkf5i18n5 libkf5configcore5 libkf5archive5 libkf5guiaddons5 \
+            libgsl28 libgslcblas0 liblcms2-2 libimath-3-1-29 libopenexr-3-1-30 \
+            libexiv2-28 libjson-c5 || true
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.3'
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Find latest green krita-build run
+        id: engine_run
+        run: |
+          RID=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/krita-build.yml/runs?status=success&per_page=1" \
+            | python3 -c 'import sys,json;print(json.load(sys.stdin)["workflow_runs"][0]["id"])')
+          echo "run_id=$RID" >> "$GITHUB_OUTPUT"
+          echo "Latest green krita-build run: $RID"
+
+      - name: Download real-engine artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: krita-brush-engine
+          run-id: ${{ steps.engine_run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: krita-engine
+
+      - name: Build Linux app (release)
+        run: flutter build linux --release
+
+      - name: Bundle real engine into app bundle
+        run: |
+          BUNDLE=build/linux/x64/release/bundle
+          mkdir -p $BUNDLE/lib
+          cp krita-engine/lib/libkrita*.so* $BUNDLE/lib/
+          cp krita-engine/lib/libkrita_bridge_real.so $BUNDLE/lib/libkrita_bridge.so
+          # Runtime dependency audit (warn-only; the FFI smoke is the gate).
+          for f in $BUNDLE/lib/libkrita*.so*; do
+            LDD=$(ldd "$f" 2>/dev/null | grep "not found" || true)
+            if [ -n "$LDD" ]; then
+              echo "WARNING unresolved deps for $(basename $f):"
+              echo "$LDD"
+            fi
+          done
+          echo "bundle/lib: $(ls $BUNDLE/lib | wc -l) files"
+          ls $BUNDLE/lib | head -20
+
+      - name: Dart FFI end-to-end smoke (real engine)
+        run: |
+          dart run tool/ffi_real_smoke.dart "$(pwd)/build/linux/x64/release/bundle"
+
+      - name: Package Linux zip
+        run: |
+          cd build/linux/x64/release
+          zip -qr feather-krita-linux-real-engine.zip bundle
+          ls -lh feather-krita-linux-real-engine.zip
+
+      - name: Upload Linux build
+        uses: actions/upload-artifact@v4
+        with:
+          name: feather-krita-linux-real-engine
+          path: build/linux/x64/release/feather-krita-linux-real-engine.zip
+          retention-days: 30
