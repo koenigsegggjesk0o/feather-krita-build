@@ -18,7 +18,7 @@ accessed through `dart:ffi`.
 | FFI bindings | `lib/ffi/krita_bindings.dart` | Struct-safe Dart bindings matching `krita_bridge.h` byte-for-byte; dynamic-library loader per platform. |
 | 3D engine | `lib/engine/` | `TexturePainter` (2048² RGBA8 texture, 14 blend modes, undo/redo), `GuideSurface` (parametric meshes + raycast), `StrokeManager` (mirror, liquify, 50-level history), `CameraController` (damped orbit). |
 | UI | `lib/screens/`, `lib/widgets/` | Glassmorphism editor: 8 tools, brush settings, color picker, joystick, stroke list. |
-| Tests | `test/` | 68 tests: unified undo journal (strokes+texture in lockstep), native dab contract, preset loading, texture compositing (+ per-stroke undo coalescing), mirror, raycast, PNG export round-trip, project save/load round-trip (+ texture re-render), GIF replay frames, glTF structure, preset-library seeding, camera damping, MP4/H.264 export (encoder modes, muxer structure, ffmpeg decode gate), 9 GUI wiring tests (incl. ticker-muting), plus 4 file-picker UX tests (Save As to a custom path, open-dialog size+relative-time, persisted recent-projects, post-export copy-path). |
+| Tests | `test/` | 74 tests: unified undo journal (strokes+texture in lockstep), native dab contract, preset loading, texture compositing (+ per-stroke undo coalescing), mirror, raycast, PNG export round-trip, project save/load round-trip (+ texture re-render), GIF replay frames, glTF structure, preset-library seeding, camera damping, MP4/H.264 export (encoder modes, muxer structure, ffmpeg decode gate), 9 GUI wiring tests (incl. ticker-muting), 4 file-picker UX tests (Save As to a custom path, open-dialog size+relative-time, persisted recent-projects, post-export copy-path), plus 6 keyboard-shortcut tests (Ctrl+Z/Y undo/redo, B/E/V/L tool hotkeys, [ / ] brush size, Delete selection, Ctrl+N new doc, Ctrl+S quick-save). |
 
 ## Platform status
 
@@ -32,7 +32,7 @@ accessed through `dart:ffi`.
 
 ```bash
 flutter pub get
-flutter test          # 64-test regression suite (loads the real native bridge)
+flutter test          # 74-test regression suite (loads the real native bridge)
 flutter analyze       # must report zero issues
 flutter build windows # or: flutter build apk / flutter build linux
 ```

@@ -19,6 +19,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feather_krita/theme/app_theme.dart';
 import 'package:feather_krita/state/editor_state.dart';
 import 'package:feather_krita/engine/guide_surface.dart';
+import 'package:feather_krita/utils/app_version.dart';
 import 'package:feather_krita/widgets/glass_slider.dart';
 
 /// The settings dialog.
@@ -608,23 +609,85 @@ class _AboutCard extends StatelessWidget {
       icon: Icons.info_outline_rounded,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
+        children: [
           Text(
-            'Feather-Krita · v1.0.0',
-            style: TextStyle(
+            'Feather-Krita · $kAppVersionLabel',
+            style: const TextStyle(
                 color: AppTheme.textPrimary,
                 fontSize: 12,
                 fontWeight: FontWeight.w600),
           ),
-          SizedBox(height: 4),
-          Text(
+          const SizedBox(height: 4),
+          const Text(
             '3D drawing app with the Krita brush engine. Inspired by Feather 3D.',
             style: TextStyle(color: AppTheme.textSecondary, fontSize: 11),
           ),
-          SizedBox(height: 6),
-          Text(
+          const SizedBox(height: 8),
+          const Text(
+            'Keyboard shortcuts',
+            style: TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 11,
+                fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          const _ShortcutRow(keys: 'Ctrl+Z / Ctrl+Y', label: 'Undo / Redo'),
+          const _ShortcutRow(keys: 'Ctrl+S', label: 'Quick-save .feather'),
+          const _ShortcutRow(keys: 'Ctrl+O / Ctrl+N', label: 'Open / New'),
+          const _ShortcutRow(keys: 'B / E / V / L', label: 'Brush / Eraser / Select / Liquify'),
+          const _ShortcutRow(keys: 'G', label: 'Toggle grid & mirror planes'),
+          const _ShortcutRow(keys: '[ / ]', label: 'Brush size − / +'),
+          const _ShortcutRow(keys: 'Delete / Esc', label: 'Delete selection / Deselect'),
+          const SizedBox(height: 6),
+          const Text(
             'Licensed under GPL-2.0-or-later. © 2026 Feather-Krita App Contributors.',
             style: TextStyle(color: AppTheme.textTertiary, fontSize: 10),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One row of the keyboard-shortcut reference: a monospace key cap on the
+/// left and a human label on the right.
+class _ShortcutRow extends StatelessWidget {
+  const _ShortcutRow({required this.keys, required this.label});
+
+  final String keys;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 150,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: AppTheme.darkGlass,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: AppTheme.glassBorder),
+            ),
+            child: Text(
+              keys,
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 10,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                  color: AppTheme.textSecondary, fontSize: 10),
+            ),
           ),
         ],
       ),

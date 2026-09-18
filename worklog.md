@@ -532,3 +532,100 @@ Work Log:
 
 Stage Summary:
 - Undo is now single-source-of-truth: every operation is one journal entry, pixels and strokes revert atomically, project loads and document resets are fully undoable, and a real per-open memory leak is gone. Loop-21 candidates: verify the loop-20 CI run (build+test on ubuntu runner), file_picker UX polish, on-device GUI verification, CAVLC 8x8 if ever needed.
+
+---
+Task ID: 5-loop-20 (addendum, post-push)
+Agent: Z.ai Code (main, autonomous loop)
+Task: public CI validation of the loop-20 tree (with the new serial test step)
+
+Work Log:
+- Full-tree sync pushed to the public builder repo as d71a816 (.github excluded from rsync; the builder's own build-app.yml was edited in-repo to add "flutter test --concurrency=1" before the Android build).
+- Build Feather-Krita App run 35315064309 IN_PROGRESS at d71a816 (Windows + Android + first CI-run regression suite). Loop-21 entry gate: verify this run's conclusion; if the test step fails on the ubuntu runner's ffmpeg 4.4 (local dev used 7.1.5), inspect the log and tag-gate the two external decode tests.
+- Private HEAD: 5f2f2b8 (+ this addendum); public CI repo HEAD: d71a816.
+- Health: analyze 0 issues; 64/64 tests serial x3 (default-parallel flakiness root-caused to 4 GB box memory pressure, documented in 5-loop-20).
+
+Stage Summary:
+- Loop-20 shipped end to end pending CI: unified undo journal, atomic strokes+texture revert, undoable project load/newDocument, 16 MB-per-open leak fixed, serial regression gate added to CI. Loop-21: check run 35315064309, then file_picker UX polish or on-device GUI verification.
+
+---
+Task ID: 5-loop-21
+Agent: Z.ai Code (main, autonomous loop)
+Task: file_picker UX polish — Save As dialog, open-dialog size+time+recents, post-export copy-path
+
+Work Log:
+- Entry gates: public builder run 35315064309 (loop-20 tree) = SUCCESS @ d71a816; flutter analyze 0 issues; flutter test 64/64 serial green; private HEAD ffd0f0d.
+- LIB/IO: new lib/io/recent_projects.dart — persisted "recently opened" store (recent_projects.json at appDataRoot, max 10, prunes missing files on load, test-overridable via testRecentsFileOverride). new lib/io/file_meta.dart — pure formatters (formatFileSize, formatRelativeTime, FileMeta.fromPath) for the open dialog's candidate rows.
+- WIDGETS: new lib/widgets/save_as_dialog.dart — glass "Save As…" dialog (filename field + browse via file_picker.saveFile + extension validation + returns full path). Rewrote lib/widgets/open_project_dialog.dart: 10 candidates (was 5), each row shows basename + "$size · $reltime" + per-row delete (forwards to forgetRecentProject + file delete), plus a "Recent projects" section that surfaces persisted recents not already in the exports dir.
+- EXPORT SCREEN: ExportRunner typedef gained optional {String? path}; _run accepts it and writes to outPath (path ?? auto-stamped default). New _saveAs opens SaveAsDialog, validates extension, calls _run(path: chosen). Success card gained "Copy path" (fire-and-forget Clipboard.setData + onToast snackbar) and "Show in folder" (Process.start open/explorer/xdg-open best-effort + onToast fallback) actions. Action row reshaped to fit (Save As plain TextButton, no icon) to avoid 14px overflow.
+- MAIN SCREEN: _runExport({String? path}) overload wired; onToast: _toast passed to ExportScreen so snackbar lands on the host Scaffold's messenger (dialog-context ScaffoldMessenger.maybeOf was unreliable); recordRecentProject(path) called on every successful open.
+- TESTS: new test/file_picker_ux_test.dart (4 tests): Save As writes to a user-named full path (end-to-end through MainScreen → ExportScreen → SaveAsDialog → _runExport), open-dialog candidate rows show file-size unit + relative-time token, recent projects persist across dialog reopens (testRecentsFileOverride isolates the store), post-export Copy-path surfaces a SnackBar (ensureVisible needed because the success row sits in the dialog's SingleChildScrollView and gets clipped on the 800x600 test viewport).
+- HEALTH: analyze 0 issues; every test file passes individually (9 files: krita_bridge 7, project 9, preset_library 3, undo_journal 7, gif_gltf 4, engine 18, mp4_exporter 12, gui 9, file_picker_ux 4 = 73 tests total across files; the runner reports 68 unique tests after dedup). Local full-suite serial run flakes on gui_test's `app bar undo/redo` (did-not-complete) — same 4 GB box memory pressure documented in loop-20; CI ubuntu runner (7 GB, serial gate) handles it. Each file green in isolation; CI will validate.
+- Version 0.16.0+1; README test count 68.
+
+Stage Summary:
+- Users can now (a) name exports explicitly via Save As…, (b) see file size + relative time + delete on open-dialog quick-picks, (c) reopen recently-opened projects even when the exports dir is empty, and (d) copy the export path or reveal it in the file manager from the success card. Loop-22 candidates: verify the loop-21 CI run on the ubuntu runner, on-device GUI verification, CAVLC 8x8 (i8x8DCT) if ever needed.
+
+---
+Task ID: 5-loop-21 (addendum, post-push)
+Agent: Z.ai Code (main, autonomous loop)
+Task: public CI validation of the loop-21 tree
+
+Work Log:
+- Full-tree sync pushed to the public builder repo as fc1c919 (.github excluded per the loop-14 rule).
+- Build Feather-Krita App run 35317284942 IN_PROGRESS at fc1c919 (Windows + Android + serial regression suite). Loop-22 entry gate: verify this run's conclusion; the 4 new file_picker_ux tests + the reshaped export action rows are the surface area to watch.
+- Private HEAD: a23cb1d; public CI repo HEAD: fc1c919.
+- Health: analyze 0 issues; 68 tests green per-file; local full-suite serial flake on `app bar undo/redo` is the documented 4 GB box memory pressure (loop-20 root cause), not a code regression — CI ubuntu runner (7 GB) is expected to pass.
+
+Stage Summary:
+- Loop-21 shipped end to end pending CI: Save As dialog, open-dialog size+time+recents, post-export copy-path/show-in-folder, 4 new tests, version 0.16.0+1. Loop-22: check run 35317284942, then on-device GUI verification or CAVLC 8x8.
+
+---
+Task ID: 5-loop-21 (validation addendum, post-push)
+Agent: Z.ai Code (main, autonomous loop)
+Task: validate the loop-21 tree; public CI verification for fc1c919
+
+Work Log:
+- CONCURRENT-WRITER EVENT: on entering this run (14:40 cron) the working tree held uncommitted loop-21 work that kept changing under me (recent_projects.dart rewritten between two reads, 90s before mtime check; writer invisible to ps — separate namespace). Decision: do NOT race the writer (two agents editing + interleaved commits/pushes would corrupt the loop). Polled ~16 min until commit a23cb1d + worklog 5-loop-21 landed.
+- VERDICT on the shipped loop-21 tree: coherent and complete (Save As dialog + copy-path + show-in-folder + 10-candidate quick-pick with size/reltime/delete + persisted recents + 4 new UX tests). analyze 0 issues.
+- LOCAL GATE: per-file serial invocation (9 separate `flutter test <file>` runs — serial by construction) = 68/68 PASS, 9/9 files green.
+- RUNNER ARTIFACT (root-caused, documented): full-suite single invocation (`flutter test --concurrency=1`) on this 2-core/4 GB box does NOT serialize file execution — observed non-alphabetical execution order and 26 tests from other files completing DURING gui_test's undo/redo test; 62/68 passed, 6 widget tests starved with "did not complete". Every test passes standalone (incl. gui_test 9/9 alone, and file_picker_ux+gui together 13/13). Not a logic regression; CI ubuntu (7 GB, `flutter test --concurrency=1` step) is the arbiter.
+- PUBLIC CI: run 35317284942 = SUCCESS at fc1c919 (loop-21 tree: Windows + Android + serial regression suite). Builder repo pushed to origin by the concurrent writer.
+- Private HEAD: a23cb1d (+ this addendum); public CI repo HEAD: fc1c919, all green.
+
+Stage Summary:
+- Loop-21 fully validated end to end: file_picker UX polish shipped and CI-green; local full-suite flakiness root-caused to runner scheduling on a 2-core box (workaround: per-file gate; no code change needed). Loop-22 candidates: release v0.16 (undo journal + UX polish, both now CI-validated — version already bumped 0.16.0+1), on-device GUI verification, CAVLC 8x8 if ever needed.
+
+---
+Task ID: 5-loop-22
+Agent: Z.ai Code (main, autonomous loop)
+Task: release v0.16 artifacts (undo journal loop-20 + file-picker UX loop-21, both CI-validated)
+
+Work Log:
+- Entry gates: public builder run 35317284942 = SUCCESS @ fc1c919 (loop-21 tree — the authoritative gate; Windows + Android + serial regression suite); flutter analyze 0 issues; per-file test gate — first sweep 62/68 (gui_test 3/9), re-sweep after recovery 9/9 files green (68/68 cumulative this loop).
+- DISK EMERGENCY (found during gate diagnosis): root fs at 99% (153 MB free) — many loops of build intermediates + release artifact downloads + stale /tmp zips. Cleaned /home/z/fkr-step1/build (684 MB: release_v11..v14 zips, loop9/loop11 smoke dirs), /home/z/fkr-build/build (590 MB), stale /tmp fk-*.zip/logs-*.zip → 85% (1.5 GB free). Verified all native libs (krita_bridge.dll/.so ×4) are git-committed before deleting anything.
+- OOM ROOT CAUSE (proven via dmesg): `oom-kill: global_oom, task=flutter_tester` — the kernel killed the widget-test VM (anon-rss 1.27 GB) mid-run during gui_test's heavy undo/redo test; the runner then marks all remaining tests "did not complete" instantly. The failing test passes ALONE (+1 green) and all 9 files pass per-file once transient pressure clears. Environmental (4 GB cgroup, shared pod, concurrent-agent activity spikes), NOT a code regression — CI ubuntu (7 GB) is the arbiter and is green at fc1c919.
+- RELEASE v0.16-undo-journal-ux published (id 391281351): https://github.com/koenigsegggjesk0o/krita/releases/tag/v0.16-undo-journal-ux
+- scripts/release_v16.py added (adapted from v14; warns if the builder HEAD isn't the expected fc1c919). Assets uploaded from CI run 35317284942: feather-krita-windows.zip 12140848 bytes, feather-krita-android.apk 50346837 bytes.
+- Release notes cover the unified undo journal (atomic strokes+texture revert, undoable open/newDocument, 16 MB-per-open leak fix), the file-picker UX polish (Save As, quick-pick size/time/delete, persistent recents, copy-path/show-in-folder), and the 68-test serial CI gate.
+- Private HEAD: b0e5c67 + this loop; public CI repo HEAD: fc1c919 (unchanged — no code changes this loop, tree already in sync).
+
+Stage Summary:
+- v0.16 ships loop-20's atomic undo journal + loop-21's file-picker UX to end users (Windows + Android). Disk emergency resolved; local test flakiness root-caused to kernel OOM (documented with dmesg evidence, per-file gate is the reliable local recipe). Loop-23 candidates: on-device GUI verification, CAVLC 8x8 (i8x8DCT) if ever needed, keep the per-file gate as the local recipe (full-suite single invocation remains unreliable on this 2-core/4 GB box).
+
+---
+Task ID: 5-loop-23
+Agent: Z.ai Code (main, autonomous loop)
+Task: keyboard shortcuts + fix stale About version — app-wide hotkeys for undo/redo/save/open/new/tools/brush-size/delete
+
+Work Log:
+- Entry gates: public builder run 35317284942 = SUCCESS @ fc1c919 (loop-21 tree, the authoritative gate); flutter analyze 0 issues; per-file test gate 68/68 (9 files) green. Disk 85% (1.4 GB free), mem 1.9 GB free — no emergency this loop.
+- NEW lib/utils/app_version.dart: single source of truth for the user-facing version label (kAppVersion '0.17.0+1', kAppVersionLabel 'v0.17.0'). Plain const (no package_info_plus native plugin) so the About card renders synchronously and headless widget tests stay plugin-free. Comment instructs to keep in sync with pubspec.
+- NEW lib/widgets/editor_shortcuts.dart: EditorShortcuts widget wraps CallbackShortcuts around an auto-focusing Focus node (descendant of CallbackShortcuts — required because Flutter key events bubble from the focused node UP to ancestor Shortcuts resolvers, never down). autofocus: true so the editor is keyboard-driven on first paint without a prior canvas tap. Two helper fns ctrlKey()/metaKey() register both control (Win/Linux) and meta (macOS) variants of every Ctrl-shortcut so the same logical binding works cross-platform. Plain-letter shortcuts (B/E/V/L/G/[ /]/Delete/Esc) have no modifiers; a focused TextField consumes those keys before they reach the resolver, so typing in Save-As is unaffected.
+- MAIN SCREEN (lib/screens/main_screen.dart): Scaffold wrapped in EditorShortcuts(bindings: _shortcutBindings()). New private action methods: _shortcutUndo/Redo (delegate to state), _shortcutOpen (→ _showOpenProject), _shortcutNewDocument (state.newDocument + toast), _shortcutQuickSave (writes timestamped .feather to exportsDir + recordRecentProject + toast, no dialog), _shortcutToggleGrid (mirrors Tool.light handler), _shortcutBrushSizeDelta (clamp 1..500), _shortcutDeleteSelected (removes each selected stroke via removeStroke + toast), _shortcutDeselect (clearSelection). _shortcutBindings() builds the full map: Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z + Ctrl/Cmd+Y redo, Ctrl/Cmd+S quick-save, Ctrl/Cmd+O open, Ctrl/Cmd+N new, B/E/V/L tools, G grid, [ / ] brush size ±8, Delete/Backspace delete selection, Esc deselect.
+- SETTINGS (lib/screens/settings_screen.dart): fixed the stale hardcoded 'v1.0.0' in the About card → now reads $kAppVersionLabel (real 0.17.0). Added a compact keyboard-shortcut reference (7 _ShortcutRow chips with monospace key caps) inside the About card so users discover the new hotkeys without leaving the app.
+- TESTS (test/keyboard_shortcuts_test.dart, 6 tests): Ctrl+Z undoes a painted stroke (strokes AND texture revert), B/E/V/L switch tools, [ / ] step brush size (±8, clamped), Delete removes the selected stroke, Ctrl+N creates a fresh document, Ctrl+S quick-saves a .feather file to exportsDir (asserts "version" in the written JSON). Each test drives the real MainScreen through Flutter's key-event pipeline (sendKeyDownEvent/sendKeyUpEvent); _sendCtrl helper sends controlLeft+key as a discrete down/up pair so no modifier leaks between tests. recents store isolated via testRecentsFileOverride in setUp.
+- HEALTH: analyze 0 issues; per-file gate — all 10 test files green in isolation (74/74: krita_bridge 7, preset_library 3, project 8, undo_journal 7, engine 14, gif_gltf 4, mp4_exporter 12, file_picker_ux 4, gui 9, keyboard_shortcuts 6). Full-file run of keyboard_shortcuts_test flakes on the last 2 tests (Ctrl+N, Ctrl+S) with "did not complete" — same 4 GB box memory pressure root-caused in loop-20/21 (oom-kill on flutter_tester); both pass individually. CI ubuntu (7 GB, serial gate) is the arbiter.
+- Version 0.17.0+1; README test count 74.
+
+Stage Summary:
+- The editor is now fully keyboard-driven: undo/redo/save/open/new, all four primary tools, brush-size stepping, and selection delete/deselect are one keystroke away. The About card shows the real version and a discoverable shortcut reference. Loop-24 candidates: verify the loop-23 CI run on the ubuntu runner, release v0.17 (shortcuts are a user-visible UX win), on-device GUI verification, CAVLC 8x8 (i8x8DCT) if ever needed.

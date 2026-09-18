@@ -42,6 +42,7 @@ import 'package:feather_krita/screens/export_screen.dart';
 import 'package:feather_krita/screens/settings_screen.dart';
 import 'package:feather_krita/widgets/brush_settings_panel.dart';
 import 'package:feather_krita/widgets/canvas_widget.dart';
+import 'package:feather_krita/widgets/editor_shortcuts.dart';
 import 'package:feather_krita/widgets/glass_app_bar.dart';
 import 'package:feather_krita/widgets/glass_bottom_bar.dart';
 import 'package:feather_krita/widgets/joystick_widget.dart';
@@ -103,6 +104,109 @@ class _MainScreenState extends State<MainScreen> {
         break;
     }
     _state.setActiveTool(tool);
+  }
+
+  // ----- Keyboard shortcut actions (loop-23) ----------------------------
+  //
+  // Invoked by the [EditorShortcuts] bindings map. Each method is a tiny,
+  // side-effect-bearing wrapper around the real [EditorState] / filesystem
+  // operations so the wiring stays in [build] and the behaviour stays here
+  // (and is unit-testable through the live state).
+
+  void _shortcutUndo() => _state.undo();
+
+  void _shortcutRedo() => _state.redo();
+
+  Future<void> _shortcutOpen() => _showOpenProject();
+
+  void _shortcutNewDocument() {
+    _state.newDocument();
+    if (mounted) setState(() {});
+    _toast('New document (Ctrl+N).');
+  }
+
+  /// Quick-save: write the current document as a timestamped `.feather`
+  /// file in the exports directory, no dialog. Mirrors the export runner's
+  // `.feather` path but skips the sheet so a keystroke is enough to save.
+  void _shortcutQuickSave() {
+    try {
+      final dir = _exportDir();
+      final base = _state.fileName.replaceAll(RegExp(r'\.feather$'), '');
+      final safe = base.replaceAll(RegExp(r'[^\w\- ]'), '_');
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final path = '${dir.path}${Platform.pathSeparator}$safe-$stamp.feather';
+      File(path).writeAsStringSync(_buildProjectJson());
+      recordRecentProject(path);
+      _toast('Saved $path');
+    } catch (e) {
+      _toast('Save failed: $e');
+    }
+  }
+
+  void _shortcutToggleGrid() {
+    _state.showGrid = !_state.showGrid;
+    _state.showMirrorPlanes = _state.showGrid;
+    _state.notify();
+  }
+
+  void _shortcutBrushSizeDelta(double delta) {
+    _state.setBrushSize((_state.brushSize + delta).clamp(1.0, 500.0));
+  }
+
+  void _shortcutDeleteSelected() {
+    final strokes = _state.strokes;
+    final ids = strokes.selectedStrokes.map((s) => s.id).toList();
+    if (ids.isEmpty) {
+      _toast('No stroke selected.');
+      return;
+    }
+    for (final id in ids) {
+      strokes.removeStroke(id);
+    }
+    strokes.notify();
+    if (mounted) setState(() {});
+    _toast('Deleted ${ids.length} stroke(s).');
+  }
+
+  void _shortcutDeselect() {
+    _state.strokes.clearSelection();
+  }
+
+  /// The full shortcut → callback map. Built once per build; cheap because
+  /// the closures capture only `this`.
+  Map<ShortcutActivator, VoidCallback> _shortcutBindings() {
+    return <ShortcutActivator, VoidCallback>{
+      // Undo / redo (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y).
+      ctrlKey(LogicalKeyboardKey.keyZ): _shortcutUndo,
+      metaKey(LogicalKeyboardKey.keyZ): _shortcutUndo,
+      ctrlKey(LogicalKeyboardKey.keyZ, shift: true): _shortcutRedo,
+      metaKey(LogicalKeyboardKey.keyZ, shift: true): _shortcutRedo,
+      ctrlKey(LogicalKeyboardKey.keyY): _shortcutRedo,
+      metaKey(LogicalKeyboardKey.keyY): _shortcutRedo,
+      // Document ops.
+      ctrlKey(LogicalKeyboardKey.keyS): _shortcutQuickSave,
+      metaKey(LogicalKeyboardKey.keyS): _shortcutQuickSave,
+      ctrlKey(LogicalKeyboardKey.keyO): _shortcutOpen,
+      metaKey(LogicalKeyboardKey.keyO): _shortcutOpen,
+      ctrlKey(LogicalKeyboardKey.keyN): _shortcutNewDocument,
+      metaKey(LogicalKeyboardKey.keyN): _shortcutNewDocument,
+      // Tool hotkeys (plain letters; a focused text field consumes these).
+      const SingleActivator(LogicalKeyboardKey.keyB): () => _onTool(Tool.draw),
+      const SingleActivator(LogicalKeyboardKey.keyE): () => _onTool(Tool.erase),
+      const SingleActivator(LogicalKeyboardKey.keyV): () => _onTool(Tool.select),
+      const SingleActivator(LogicalKeyboardKey.keyL): () => _onTool(Tool.liquify),
+      const SingleActivator(LogicalKeyboardKey.keyG): _shortcutToggleGrid,
+      // Brush size [ / ].
+      const SingleActivator(LogicalKeyboardKey.bracketLeft): () =>
+          _shortcutBrushSizeDelta(-8),
+      const SingleActivator(LogicalKeyboardKey.bracketRight): () =>
+          _shortcutBrushSizeDelta(8),
+      // Selection.
+      const SingleActivator(LogicalKeyboardKey.delete): _shortcutDeleteSelected,
+      const SingleActivator(LogicalKeyboardKey.backspace):
+          _shortcutDeleteSelected,
+      const SingleActivator(LogicalKeyboardKey.escape): _shortcutDeselect,
+    };
   }
 
   // ----- Dialogs ----------------------------------------------------------
@@ -385,9 +489,11 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppTheme.canvasBackground,
-      body: SafeArea(
+    return EditorShortcuts(
+      bindings: _shortcutBindings(),
+      child: Scaffold(
+        backgroundColor: AppTheme.canvasBackground,
+        body: SafeArea(
         child: ListenableBuilder(
           listenable: _state,
           builder: (context, _) {
@@ -466,6 +572,7 @@ class _MainScreenState extends State<MainScreen> {
               ],
             );
           },
+        ),
         ),
       ),
     );
