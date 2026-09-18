@@ -127,6 +127,7 @@ jobs:
             -L$LIBDIR \
             -lkritabrush -lkritaimage -lkritapigment -lkritaresources -lkritastore \
             -lkritacommand -lkritaglobal -lkritaversion -lkritaflake -lkritaplugin \
+            -lQt5Core -lQt5Gui -lQt5Xml -lz \
             -Wl,-rpath,'$ORIGIN' \
             -o artifact/lib/libkrita_bridge_real.so
           echo "=== Compiling smoke test ==="
