@@ -181,6 +181,15 @@ jobs:
         env:
           LD_LIBRARY_PATH: ${{ github.workspace }}/build/linux/x64/release/bundle/lib
         run: |
+          echo '=== ldd libkrita_bridge.so (with LD_LIBRARY_PATH) ==='
+          ldd build/linux/x64/release/bundle/lib/libkrita_bridge.so 2>&1 | head -50
+          echo '=== ldd -v (version requirements) ==='
+          ldd -v build/linux/x64/release/bundle/lib/libkrita_bridge.so 2>&1 | grep -A2 'not found' | head -30 || true
+          echo '=== python3 ctypes dlopen diagnostic ==='
+          python3 -c "import ctypes; l=ctypes.CDLL('build/linux/x64/release/bundle/lib/libkrita_bridge.so'); print('DLOPEN OK', l)" 2>&1 || true
+          echo '=== readelf DT_NEEDED ==='
+          readelf -d build/linux/x64/release/bundle/lib/libkrita_bridge.so 2>/dev/null | grep NEEDED | head -30
+          echo '=== dart FFI smoke ==='
           dart run tool/ffi_real_smoke.dart "$(pwd)/build/linux/x64/release/bundle"
 
       - name: Package Linux zip
