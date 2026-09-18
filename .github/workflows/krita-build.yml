@@ -29,6 +29,23 @@ jobs:
           echo "C++ files: $(find . -name '*.cpp' -o -name '*.h' -o -name '*.cc' | wc -l)"
           grep "KRITA_VERSION_STRING" CMakeLists.txt | head -2
 
+      - name: Clone bridge sources (app repo, feather-krita-flutter)
+        run: |
+          git clone --depth 1 --branch feather-krita-flutter --no-checkout \
+            "https://x-access-token:${{ secrets.KRITA_SOURCE_TOKEN }}@github.com/koenigsegggjesk0o/krita.git" \
+            /tmp/fkr-app
+          cd /tmp/fkr-app
+          git sparse-checkout init --cone
+          git sparse-checkout set native/krita_bridge
+          git checkout
+          mkdir -p /opt/bridge
+          cp native/krita_bridge/krita_bridge.h        /opt/bridge/
+          cp native/krita_bridge/krita_bridge_real.cpp /opt/bridge/
+          cp native/krita_bridge/smoke_test_real.cpp   /opt/bridge/
+          echo "=== Bridge sources ==="
+          ls -la /opt/bridge/
+          grep -c "extern \"C\"" /opt/bridge/krita_bridge.h
+
       - name: Install deps
         run: |
           sudo apt-get update
@@ -88,19 +105,55 @@ jobs:
             -DWITH_OPENJPEG=OFF -DWITH_MEDIA=OFF \
             -G Ninja 2>&1 | tail -80
 
-      - name: Build brush engine libs (kritaimage + deps only)
+      - name: Build brush engine libs (kritaimage + kritabrush + deps)
         run: |
           cd /opt/krita
-          cmake --build build --target kritaimage --parallel 2 2>&1 | tail -300
+          cmake --build build --target kritaimage kritabrush --parallel 2 2>&1 | tail -300
           echo "=== Brush engine .so files ==="
-          find build -name "libkrita*.so*" 2>/dev/null | head -30
+          find build -name "libkrita*.so*" 2>/dev/null | head -40
 
-      - name: Collect .so
+      - name: Build real bridge (libkrita_bridge_real.so) + smoke test
+        run: |
+          KRITA=/opt/krita
+          BUILD=$KRITA/build
+          LIBDIR=$(dirname "$(find $BUILD -name 'libkritaimage.so*' | head -1)")
+          echo "LIBDIR=$LIBDIR"
+          mkdir -p artifact/lib artifact/bin
+          INC=""
+          for d in $(find $KRITA/libs -maxdepth 2 -type d) $(find $BUILD/libs -maxdepth 2 -type d) $BUILD; do
+            INC="$INC -I$d"
+          done
+          QT5=/usr/include/x86_64-linux-gnu/qt5
+          INC="$INC -I$QT5 -I$QT5/QtCore -I$QT5/QtGui -I$QT5/QtXml -I/usr/include/KF5 -I/usr/include/KF5/KCoreAddons"
+          echo "=== Compiling libkrita_bridge_real.so (thin glue over real Krita classes) ==="
+          g++ -std=c++17 -shared -fPIC -O2 $INC \
+            /opt/bridge/krita_bridge_real.cpp \
+            -L$LIBDIR \
+            -lkritabrush -lkritaimage -lkritapigment -lkritaresources -lkritastore \
+            -lkritacommand -lkritaglobal -lkritaversion -lkritaflake -lkritaplugin \
+            -Wl,-rpath,'$ORIGIN' \
+            -o artifact/lib/libkrita_bridge_real.so
+          echo "=== Compiling smoke test ==="
+          g++ -std=c++17 -O2 $INC \
+            /opt/bridge/smoke_test_real.cpp \
+            -Lartifact/lib -lkrita_bridge_real \
+            -Wl,-rpath,'$ORIGIN/../lib' \
+            -o artifact/bin/smoke_test_real
+          echo "=== Running REAL-engine smoke test ==="
+          LD_LIBRARY_PATH=$LIBDIR:artifact/lib ./artifact/bin/smoke_test_real
+
+      - name: Collect .so (stripped, real files) + bridge
         if: always()
         run: |
-          mkdir -p artifact/lib
-          find /opt/krita/build -name "libkrita*.so*" -exec cp -P {} artifact/lib/ \; 2>/dev/null
-          ls -lh artifact/lib/
+          mkdir -p artifact/lib artifact/bin
+          # Real stripped files for every SONAME variant (deref symlinks).
+          find /opt/krita/build -name "libkrita*.so*" 2>/dev/null | while read f; do
+            cp -L "$f" "artifact/lib/$(basename "$f")"
+          done
+          strip --strip-unneeded artifact/lib/libkrita*.so* 2>/dev/null || true
+          # Bridge + smoke already placed under artifact/ by the build step.
+          ls -lh artifact/lib/ | head -50
+          du -sh artifact/
 
       - name: Upload brush engine libs
         if: always()
@@ -115,7 +168,10 @@ jobs:
         run: |
           echo "## Real Krita Brush Engine Build" >> $GITHUB_STEP_SUMMARY
           echo "Source: real Krita v6.0.4 (unmodified, from krita-source/)" >> $GITHUB_STEP_SUMMARY
-          if [ -d artifact/lib ] && ls artifact/lib/*.so* 2>/dev/null | grep -q .; then
+          if [ -f artifact/lib/libkrita_bridge_real.so ]; then
+            echo "### Bridge: libkrita_bridge_real.so built against real libkrita* libs" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ -d artifact/lib ] && ls artifact/lib/libkrita*.so* 2>/dev/null | grep -q .; then
             echo "### SUCCESS" >> $GITHUB_STEP_SUMMARY
             ls -lh artifact/lib/ >> $GITHUB_STEP_SUMMARY
           else
