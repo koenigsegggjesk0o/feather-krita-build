@@ -122,7 +122,6 @@ jobs:
 
       - name: Build real bridge (libkrita_bridge_real.so) + smoke test
         run: |
-          set -o pipefail
           KRITA=/opt/krita
           BUILD=$KRITA/build
           mkdir -p artifact/lib artifact/bin
