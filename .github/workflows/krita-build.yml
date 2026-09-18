@@ -192,3 +192,182 @@ jobs:
           else
             echo "### FAILED — no .so files produced" >> $GITHUB_STEP_SUMMARY
           fi
+
+  # ---------------------------------------------------------------------
+  # Windows (MSVC x64) build of the SAME real engine, loop-34 (roadmap b).
+  # Unmodified krita-source -> kritaimage + kritalibbrush via MSVC/Ninja,
+  # thin krita_bridge_real.cpp glue as krita_bridge_real.dll, C++ smoke.
+  # Dependencies: Qt 5.15.2 (aqtinstall), KF5 v5.116.0 built from official
+  # KDE sources (ECM + the 7 frameworks Krita's CMakeLists REQUIRES:
+  # kconfig kwidgetsaddons kcompletion kcoreaddons kguiaddons ki18n
+  # kitemviews, plus karchive for KoStore), vcpkg for gettext/zlib/bzip2/
+  # lcms2/eigen3/exiv2/freetype/harfbuzz/fontconfig/libunibreak/boost.
+  # Krita source tree is NEVER modified — dependency provisioning only.
+  # ---------------------------------------------------------------------
+  build-windows-engine:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      QTDIR: C:/Qt/5.15.2/msvc2019_64
+      KF5DIR: C:/kf5
+      KFTAG: v5.116.0
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Clone krita-source (real Krita v6.0.4, unmodified)
+        run: |
+          git clone --depth 1 --branch main \
+            "https://x-access-token:${{ secrets.KRITA_SOURCE_TOKEN }}@github.com/koenigsegggjesk0o/krita.git" \
+            /tmp/krita-repo
+          cp -r /tmp/krita-repo/krita-source "$GITHUB_WORKSPACE/krita"
+          cd "$GITHUB_WORKSPACE/krita"
+          echo "=== Real Krita source verified ==="
+          grep "KRITA_VERSION_STRING" CMakeLists.txt | head -2
+
+      - name: Clone bridge sources (app repo, feather-krita-flutter)
+        run: |
+          git clone --depth 1 --branch feather-krita-flutter \
+            "https://x-access-token:${{ secrets.KRITA_SOURCE_TOKEN }}@github.com/koenigsegggjesk0o/krita.git" \
+            /tmp/fkr-app
+          mkdir -p "$GITHUB_WORKSPACE/bridge"
+          cp /tmp/fkr-app/native/krita_bridge/krita_bridge.h        "$GITHUB_WORKSPACE/bridge/"
+          cp /tmp/fkr-app/native/krita_bridge/krita_bridge_real.cpp "$GITHUB_WORKSPACE/bridge/"
+          cp /tmp/fkr-app/native/krita_bridge/smoke_test_real.cpp   "$GITHUB_WORKSPACE/bridge/"
+          ls -la "$GITHUB_WORKSPACE/bridge/"
+
+      - name: Install Qt 5.15.2 (win64_msvc2019_64) via aqtinstall
+        run: |
+          python -m pip install --quiet aqtinstall
+          aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 -m qtsvg -O 'C:/Qt'
+          test -f "$QTDIR/bin/Qt5Core.dll" || { echo 'FATAL: Qt5Core.dll missing'; exit 1; }
+          echo "Qt installed: $QTDIR"
+
+      - name: vcpkg engine deps (gettext zlib bzip2 lcms2 eigen3 exiv2 freetype harfbuzz fontconfig libunibreak boost)
+        run: |
+          vcpkg install --triplet x64-windows \
+            gettext zlib bzip2 lcms2 eigen3 exiv2 \
+            freetype harfbuzz fontconfig libunibreak \
+            boost-multi-array boost-icl boost-rational boost-operators
+          test -d "$VCPKG_ROOT/installed/x64-windows/lib" || { echo 'FATAL: vcpkg install failed'; exit 1; }
+
+      - name: Build ECM (extra-cmake-modules)
+        run: |
+          git clone --depth 1 --branch "$KFTAG" https://invent.kde.org/frameworks/extra-cmake-modules.git /tmp/ECM
+          cmake -S /tmp/ECM -B /tmp/build-ecm -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$KF5DIR" -DBUILD_TESTING=OFF
+          cmake --build /tmp/build-ecm
+          cmake --install /tmp/build-ecm
+
+      - name: Build KF5 frameworks (kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews)
+        run: |
+          TCF='C:/vcpkg/scripts/buildsystems/vcpkg.cmake'
+          PREFIX="$KF5DIR;$QTDIR;C:/vcpkg/installed/x64-windows"
+          for fw in kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews; do
+            echo "=== KF5 framework: $fw ==="
+            git clone --depth 1 --branch "$KFTAG" "https://invent.kde.org/frameworks/$fw.git" "/tmp/KF5-$fw"
+            cmake -S "/tmp/KF5-$fw" -B "/tmp/build-$fw" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX="$KF5DIR" \
+              -DCMAKE_PREFIX_PATH="$PREFIX" \
+              -DCMAKE_TOOLCHAIN_FILE="$TCF" \
+              -DVCPKG_TARGET_TRIPLET=x64-windows \
+              -DBUILD_TESTING=OFF -DBUILD_HTML_DOCS=OFF -DBUILD_QTHELP_DOCS=OFF -DBUILD_DESIGNERPLUGIN=OFF
+            cmake --build "/tmp/build-$fw" --parallel
+            cmake --install "/tmp/build-$fw"
+          done
+          test -f "$KF5DIR/lib/cmake/KF5I18n/KF5I18nConfig.cmake" || { echo 'FATAL: KF5I18n not installed'; exit 1; }
+
+      - name: Configure Krita (minimal engine build, Qt5, MSVC, unmodified source)
+        run: |
+          cmake -S "$GITHUB_WORKSPACE/krita" -B "$GITHUB_WORKSPACE/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF -DENABLE_PYTHON=OFF \
+            -DWITH_QT6=OFF \
+            -DWITH_HEIF=OFF -DWITH_JPEG=OFF -DWITH_PNG=OFF -DWITH_TIFF=OFF \
+            -DWITH_RAW=OFF -DWITH_GIF=OFF -DWITH_FFTW3=OFF -DWITH_OPENEXR=OFF \
+            -DWITH_KDE=ON -DWITH_XCF=OFF -DWITH_SOPRANO=OFF -DWITH_HDR=OFF \
+            -DWITH_WEBP=OFF -DWITH_JXL=OFF -DWITH_OCIO=OFF \
+            -DWITH_OPENJPEG=OFF -DWITH_MEDIA=OFF \
+            -DCMAKE_PREFIX_PATH="$KF5DIR;$QTDIR;C:/vcpkg/installed/x64-windows" \
+            -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg/scripts/buildsystems/vcpkg.cmake' \
+            -DVCPKG_TARGET_TRIPLET=x64-windows 2>&1 | tail -100
+
+      - name: Build brush engine libs (kritaimage + kritalibbrush + deps)
+        run: |
+          set -o pipefail
+          cd "$GITHUB_WORKSPACE/build"
+          cmake --build . --target kritaimage kritalibbrush --parallel 4 2>&1 | tail -200
+          echo "=== Brush engine DLLs ==="
+          find . -name "krita*.dll" -o -name "krita*.lib" | head -40
+
+      - name: Build real bridge (krita_bridge_real.dll) + smoke test (MSVC)
+        run: |
+          export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
+          WS="$GITHUB_WORKSPACE"
+          BUILD="$WS/build"
+          QT="$QTDIR"
+          KF5="$KF5DIR"
+          VP='C:/vcpkg/installed/x64-windows'
+          mkdir -p artifact/lib artifact/bin
+          # ---- include dirs: reuse the exact flags CMake configured for kritalibbrush
+          LINE=$(cd "$BUILD" && ninja -t commands kritalibbrush | grep 'KisBrushModel' | head -1)
+          [ -z "$LINE" ] && LINE=$(cd "$BUILD" && ninja -t commands kritalibbrush | head -1)
+          INCS=$(printf '%s' "$LINE" | grep -oE '(/|-)I"[^"]+"|(/|-)I[^ ]+' | sed -E 's#^(/|-)I"?([^"]+)"?$#\2#' | sort -u | head -200 | sed 's#^#/I"#; s#$#"#' | tr '\n' ' ')
+          echo "extracted include dirs: $(printf '%s' "$INCS" | wc -w)"
+          # ---- import libs: locate every krita*.lib produced by the build
+          LIBPATHS=$(find "$BUILD" -name 'krita*.lib' -exec dirname {} \; | sort -u | head -10 | sed 's#^#/LIBPATH:"#; s#$#"#' | tr '\n' ' ')
+          echo "import lib dirs: $LIBPATHS"
+          # ---- bridge DLL
+          cl /nologo /std:c++17 /EHsc /O2 /MD /Zc:__cplusplus /permissive- \
+            $INCS \
+            /I"$QT/include" /I"$QT/include/QtCore" /I"$QT/include/QtGui" /I"$QT/include/QtXml" \
+            /I"$KF5/include" /I"$VP/include" \
+            "$WS/bridge/krita_bridge_real.cpp" \
+            /LD /Fe:artifact/bin/krita_bridge_real.dll /IMPLIB:artifact/lib/krita_bridge_real.lib \
+            /link $LIBPATHS \
+            /LIBPATH:"$QT/lib" /LIBPATH:"$KF5/lib" /LIBPATH:"$VP/lib" \
+            kritaimage.lib kritalibbrush.lib kritapigment.lib kritaresources.lib \
+            kritastore.lib kritacommand.lib kritaglobal.lib kritaversion.lib \
+            kritaflake.lib kritaplugin.lib KF5I18n.lib Qt5Core.lib Qt5Gui.lib Qt5Xml.lib zlib.lib
+          # ---- collect runtime DLLs next to the smoke exe (Windows resolves from PATH/artifact dir)
+          find "$BUILD" -name 'krita*.dll' -exec cp {} artifact/bin/ \;
+          cp "$KF5/bin/"KF5*.dll artifact/bin/ 2>/dev/null || true
+          cp "$QT/bin/Qt5Core.dll" "$QT/bin/Qt5Gui.dll" "$QT/bin/Qt5Xml.dll" artifact/bin/
+          cp -r "$VP/bin/"*.dll artifact/bin/ 2>/dev/null || true
+          # ---- smoke exe (links the bridge import lib, exercises the full closure)
+          cl /nologo /std:c++17 /EHsc /O2 /MD \
+            "$WS/bridge/smoke_test_real.cpp" \
+            /Fe:artifact/bin/smoke_test_real.exe \
+            /link /LIBPATH:artifact/lib krita_bridge_real.lib
+          echo '=== Running REAL-engine smoke test on Windows (MSVC-built engine) ==='
+          export PATH="$GITHUB_WORKSPACE/artifact/bin:$QT/bin:$KF5/bin:$VP/bin:$PATH"
+          ./artifact/bin/smoke_test_real.exe
+
+      - name: Upload Windows brush engine
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: krita-brush-engine-windows
+          path: artifact/
+          retention-days: 90
+
+      - name: Windows Summary
+        if: always()
+        run: |
+          echo "## Real Krita Brush Engine (Windows/MSVC)" >> $GITHUB_STEP_SUMMARY
+          echo "Source: real Krita v6.0.4 (unmodified, from krita-source/)" >> $GITHUB_STEP_SUMMARY
+          if [ -f artifact/bin/krita_bridge_real.dll ] && ls artifact/bin/krita*.dll >/dev/null 2>&1; then
+            echo "### SUCCESS — krita_bridge_real.dll + real krita*.dll (MSVC x64)" >> $GITHUB_STEP_SUMMARY
+            ls -lh artifact/bin/ artifact/lib/ >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### FAILED — no bridge/engine DLLs produced" >> $GITHUB_STEP_SUMMARY
+          fi
