@@ -378,7 +378,8 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows \
             -DQUAZIP_QT_MAJOR_VERSION=5 -DBUILD_TESTING=OFF -DQUAZIP_BUILD_TESTS=OFF
           cmake --build C:/kf5-build/build-quazip && cmake --install C:/kf5-build/build-quazip
-          test -f "$KF5DIR/lib/cmake/QuaZip-Qt5/QuaZip-Qt5Config.cmake" || { echo 'FATAL: QuaZip-Qt5 config not installed'; exit 1; }
+          find "$KF5DIR" -name 'QuaZip-Qt5*Config.cmake' | head -3
+          test -n "$(find "$KF5DIR" -name 'QuaZip-Qt5*Config.cmake' | head -1)" || { echo 'FATAL: QuaZip-Qt5 config not installed'; exit 1; }
 
       - name: Configure Krita (minimal engine build, Qt5, MSVC, unmodified source)
         run: |
