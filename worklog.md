@@ -679,3 +679,51 @@ Work Log:
 
 Stage Summary:
 - A brush stabilizer now ships end to end: the Stylus card's "Stroke smoothing" slider (persisted, 0-100%) drives a symmetric moving-average that smooths the recorded stroke path at commit time, while live dabbing stays raw for zero input lag. Pure-Dart, no native-engine coupling, fully unit-tested. Loop-26 candidates: verify the loop-25 CI run, release v0.18, on-device GUI verification, CAVLC 8x8 if ever needed.
+
+---
+Task ID: 5-loop-25 (validation addendum, post-push)
+Agent: Z.ai Code (main, autonomous loop)
+Task: public CI validation of the loop-25 brush-stabilizer tree
+
+Work Log:
+- Full-tree sync pushed to the public builder repo as 820da10 (.github excluded per the loop-14 rule).
+- Build Feather-Krita App run 35322664436 = SUCCESS at 820da10: build-windows ✅, build-android ✅ (the latter runs `flutter test --concurrency=1` serial regression gate — the 9 new stroke_smoother tests + 74 existing all pass on the 7 GB ubuntu runner).
+- Private HEAD: 538f2a9 (+ this addendum); public CI repo HEAD: 820da10, all green.
+- Health: analyze 0 issues; per-file local gate green (stroke_smoother 9/9, file_picker_ux 4/4, gui 9/9). gui_test's "canvas ticker" flaked once on the documented 4GB-box OOM, passed clean on re-run.
+
+Stage Summary:
+- Loop-25 fully validated end to end: brush stabilizer shipped and CI-green; the Stylus card's persisted smoothing slider drives a moving-average that smooths the recorded stroke at commit while live dabbing stays raw. Loop-26 candidates: release v0.18 (stabilizer is a user-visible painting win, version already bumped 0.18.0+1), on-device GUI verification, CAVLC 8x8 if ever needed.
+
+---
+Task ID: 5-loop-26
+Agent: Z.ai Code (main, autonomous loop)
+Task: validate the loop-25 brush-stabilizer tree; release v0.18
+
+Work Log:
+- Entry gates: tree clean at 538f2a9 (loop-25 writer landed cleanly between crons — no concurrent-writer race this time); flutter analyze 0 issues; disk 85-86% (~1.4 GB free), mem ~2.1 GB free.
+- LOCAL GATE: new stroke_smoother_test.dart 9/9 green; gui_test starved at test 4 ("canvas ticker", did-not-complete) on the documented 4 GB-box OOM, then 9/9 green on re-run after memory recovery — matches the loop-25 writer's own observation; environmental, not a regression.
+- PUBLIC CI: run 35322664436 = SUCCESS @ 820da10 (loop-25 tree: Windows + Android + serial regression suite incl. the 9 new stabilizer tests) — the authoritative arbiter.
+- RELEASE v0.18-brush-stabilizer published (id 391310735): https://github.com/koenigsegggjesk0o/krita/releases/tag/v0.18-brush-stabilizer
+- scripts/release_v18.py added (adapted from v17; warns if the builder HEAD isn't the expected 820da10). Assets uploaded from CI run 35322664436: feather-krita-windows.zip 12146428 bytes, feather-krita-android.apk 50363493 bytes. Release notes cover the moving-average stabilizer, the raw-live/smooth-recorded no-lag split, pressure/tilt/UV lockstep averaging, and the persisted Stylus slider; downloads cleaned post-upload (disk steady 86%).
+- Private HEAD: 538f2a9 + this loop; public CI repo HEAD: 820da10 (synced by the loop-25 writer).
+
+Stage Summary:
+- v0.18 ships loop-25's brush stabilizer (Stylus "Stroke smoothing" slider, 0-100%, persisted) to end users (Windows + Android). Loop-25 fully validated end to end; six releases now published (v0.13 → v0.18). Loop-27 candidates: on-device GUI verification (still pending since loop-22), CAVLC 8x8 (i8x8DCT) if ever needed, keep per-file/per-test gate + CI-as-arbiter as the standing recipe.
+
+---
+Task ID: 5-loop-27
+Agent: Z.ai Code (main, autonomous loop)
+Task: colour history (recent-colours palette) — persisted most-recent-first colour history with panel swatches + picker integration
+
+Work Log:
+- Entry gates: tree clean at e03effd (loop-26 release landed cleanly between crons — no concurrent-writer race); public builder CI green at 820da10 (run 35322664436 SUCCESS); flutter analyze 0 issues; disk 86% (~1.4 GB free), mem ~2.1 GB free.
+- STATE (lib/state/editor_state.dart): new colour-history subsystem. `static const int kMaxColorHistory = 12;` + `final List<int> _colorHistory`. Public API: `List<int> get colorHistory` (unmodifiable view), `recordColor(int argb)` (move-to-front dedup, cap at 12, fires `onColorHistoryChanged` + notifies), `loadColorHistory(List<int>)` (restore from prefs, clamps to cap, notifies but does NOT fire the persistence hook — it's a load not a mutation), `removeFromColorHistory(int)` (no-op if absent), `clearColorHistory()` (no-op if empty). `ValueChanged<List<int>>? onColorHistoryChanged` persistence hook (set by settings_screen). `setBrushColor(argb)` now calls `recordColor(argb)` after updating the native engine — every colour pick (picker, quick swatch, history reuse) is recorded uniformly. Single notify (recordColor handles it; setBrushColor no longer notifies directly).
+- PANEL (lib/widgets/brush_settings_panel.dart): new `_ColorHistoryRow` widget rendered directly below `_ColorRow`. Shows a "Recent" label + a Wrap of 22px circular swatches; tap reuses (state.setBrushColor), long-press removes (state.removeFromColorHistory). Active brush colour outlined with the accent ring (2px) vs glass border (1px). Hidden (SizedBox.shrink) when history empty so the panel is unchanged on first launch. `_ColorRow.onTap` now passes `history: state.colorHistory` into showGlassColorPicker so the picker surfaces the same recents.
+- PICKER (lib/widgets/glass_color_picker.dart): `showGlassColorPicker` + `GlassColorPicker` gained an optional `List<int>? history` param. A new `_HistorySwatches` section (labelled "Recent") renders above the static `_PresetSwatches` when history is non-empty — tapping a recent swatch jumps the wheel/hex/sliders to that colour (live emit, not auto-confirm). Discoverability from both the panel and the picker.
+- PERSISTENCE (lib/screens/settings_screen.dart): `_load()` now restores `color.history` (SharedPreferences `setStringList` of decimal int strings) into `widget.state.loadColorHistory(...)` and wires `widget.state.onColorHistoryChanged` to write back on every mutation. Mirrors the loop-25 smoothing load+reflect pattern. The load is fire-and-forget outside setState (loadColorHistory notifies itself).
+- TESTS (test/color_history_test.dart, 9 tests): recordColor adds to front, dedup+move-to-front, caps at kMaxColorHistory, loadColorHistory replaces+clamps (and drops overflow tail), removeFromColorHistory removes + no-op-if-absent, clearColorHistory clears + no-op-if-empty, setBrushColor records (and default colour is NOT auto-recorded), onColorHistoryChanged fires on record/remove/clear but NOT on load, colorHistory getter is unmodifiable (add + index-set throw UnsupportedError). Pure state-logic (no widget pump) → OOM-free on the 4 GB box.
+- HEALTH: analyze 0 issues. Per-file gate — color_history 9/9, stroke_smoother+file_picker_ux 13/13, gui 9/9 (starved once at test 3 on the documented 4GB-box OOM — dmesg confirmed `oom-kill task=flutter_tester anon-rss 1570108kB`, exact loop-22/24/26 signature — then 9/9 green on re-run after memory recovery). keyboard_shortcuts full-file starved at test 4 (Delete) — the exact loop-24 signature (dmesg-confirmed OOM, NOT a regression); all 3 starved tests (Delete, Ctrl+N, Ctrl+S) pass individually via `--plain-name` → 6/6 green in isolation. CI ubuntu (7 GB, serial gate) is the arbiter. 12 test files, 92 tests total.
+- Version 0.19.0+1; README test count 92.
+
+Stage Summary:
+- A persisted colour history now ships end to end: every brush-colour pick is recorded most-recent-first (capped at 12, deduped) and surfaced as tappable swatches in both the brush panel ("Recent" row) and the colour picker dialog ("Recent" section) — tap to reuse, long-press to remove. SharedPreferences-backed so the palette survives restarts. Pure-Dart (no native-engine coupling), 9 unit tests, analyze clean. Loop-28 candidates: verify the loop-27 CI run on the ubuntu runner, release v0.19 (colour history is a user-visible workflow win), on-device GUI verification (still pending since loop-22), CAVLC 8x8 (i8x8DCT) if ever needed.

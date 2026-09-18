@@ -188,6 +188,17 @@ class EditorState extends ChangeNotifier {
   int _brushColor = 0xFF1A1A1A;
   String _brushPresetName = 'Basic Round';
 
+  /// Recently-used brush colours (most-recent-first). Loop-27.
+  /// Capped at [kMaxColorHistory]. Mutated by [recordColor] (called from
+  /// [setBrushColor]) and persisted via [onColorHistoryChanged].
+  static const int kMaxColorHistory = 12;
+  final List<int> _colorHistory = <int>[];
+
+  /// Optional persistence hook — set by the settings screen to write the
+  /// colour history to SharedPreferences whenever it mutates. Not fired
+  /// by [loadColorHistory] (a restore, not a user mutation).
+  ValueChanged<List<int>>? onColorHistoryChanged;
+
   // ----- Read accessors ---------------------------------------------------
 
   StrokeManager get strokes => _strokes;
@@ -202,6 +213,11 @@ class EditorState extends ChangeNotifier {
   double get brushSmoothing => _brushSmoothing;
   int get brushColor => _brushColor;
   String get brushPresetName => _brushPresetName;
+
+  /// The recently-used brush colours, most-recent-first (loop-27).
+  /// Unmodifiable view; mutate via [recordColor] / [loadColorHistory] /
+  /// [removeFromColorHistory] / [clearColorHistory].
+  List<int> get colorHistory => List.unmodifiable(_colorHistory);
 
   bool get canUndo => _undoJournal.isNotEmpty;
   bool get canRedo => _redoJournal.isNotEmpty;
@@ -349,6 +365,47 @@ class EditorState extends ChangeNotifier {
     if (_brushColor == argb) return;
     _brushColor = argb;
     _brushEngine?.color = BrushColor.fromPacked(argb);
+    // loop-27: record into the colour history (notifies + persists).
+    recordColor(argb);
+  }
+
+  /// Records [argb] at the front of the colour history (loop-27). If the
+  /// colour is already present it is moved to the front (no duplicate).
+  /// The list is capped at [kMaxColorHistory]. Fires [onColorHistoryChanged]
+  /// for persistence and notifies listeners.
+  void recordColor(int argb) {
+    _colorHistory.remove(argb);
+    _colorHistory.insert(0, argb);
+    if (_colorHistory.length > kMaxColorHistory) {
+      _colorHistory.removeLast();
+    }
+    onColorHistoryChanged?.call(colorHistory);
+    notifyListeners();
+  }
+
+  /// Restores the colour history from persisted storage (loop-27). Replaces
+  /// the in-memory list (clamped to [kMaxColorHistory]); does NOT fire
+  /// [onColorHistoryChanged] (this is a load, not a user mutation).
+  void loadColorHistory(List<int> colors) {
+    _colorHistory
+      ..clear()
+      ..addAll(colors.take(kMaxColorHistory));
+    notifyListeners();
+  }
+
+  /// Removes [argb] from the colour history (loop-27). No-op if absent.
+  void removeFromColorHistory(int argb) {
+    if (_colorHistory.remove(argb)) {
+      onColorHistoryChanged?.call(colorHistory);
+      notifyListeners();
+    }
+  }
+
+  /// Clears the colour history (loop-27). No-op if already empty.
+  void clearColorHistory() {
+    if (_colorHistory.isEmpty) return;
+    _colorHistory.clear();
+    onColorHistoryChanged?.call(colorHistory);
     notifyListeners();
   }
 

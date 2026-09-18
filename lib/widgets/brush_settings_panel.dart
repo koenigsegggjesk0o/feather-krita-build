@@ -134,6 +134,9 @@ class BrushSettingsPanel extends StatelessWidget {
 
               // Colour swatch + picker.
               _ColorRow(state: state),
+              const SizedBox(height: 8),
+              // Recent colours (loop-27).
+              _ColorHistoryRow(state: state),
               const SizedBox(height: 16),
 
               // Mirror.
@@ -280,6 +283,7 @@ class _ColorRow extends StatelessWidget {
             final c = await showGlassColorPicker(
               context,
               initialColor: state.brushColor,
+              history: state.colorHistory,
             );
             if (c != null) state.setBrushColor(c);
           },
@@ -308,6 +312,66 @@ class _ColorRow extends StatelessWidget {
             color: AppTheme.textSecondary,
             fontSize: 11,
             fontFamily: 'monospace',
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// A horizontally-wrapped row of recently-used brush colours (loop-27).
+/// Tap a swatch to reuse the colour; long-press to remove it from the
+/// history. Hidden when the history is empty. The active brush colour is
+/// outlined with the accent ring.
+class _ColorHistoryRow extends StatelessWidget {
+  const _ColorHistoryRow({required this.state});
+
+  final EditorState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final history = state.colorHistory;
+    if (history.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        const Text(
+          'Recent',
+          style: TextStyle(
+            color: AppTheme.textTertiary,
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final c in history)
+                GestureDetector(
+                  onTap: () => state.setBrushColor(c),
+                  onLongPress: () => state.removeFromColorHistory(c),
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: Color(c),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: c == state.brushColor
+                            ? AppTheme.accent
+                            : AppTheme.glassBorder,
+                        width: c == state.brushColor ? 2 : 1,
+                      ),
+                      boxShadow: AppTheme.glassShadow,
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ],

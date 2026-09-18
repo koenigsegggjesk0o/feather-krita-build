@@ -84,6 +84,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // the very first stroke after launch is already stabilized.
       widget.state.setBrushSmoothing(_smoothing);
     });
+    // loop-27: restore the colour history + wire persistence. Done outside
+    // setState because loadColorHistory notifies itself and the prefs write
+    // is fire-and-forget.
+    final histStr = _prefs.getStringList('color.history') ?? const <String>[];
+    final hist = <int>[];
+    for (final s in histStr) {
+      final v = int.tryParse(s);
+      if (v != null) hist.add(v);
+    }
+    widget.state.loadColorHistory(hist);
+    widget.state.onColorHistoryChanged = (colors) {
+      _prefs.setStringList(
+        'color.history',
+        colors.map((c) => c.toString()).toList(),
+      );
+    };
     _applyGuideSurface();
   }
 

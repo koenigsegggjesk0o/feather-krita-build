@@ -26,6 +26,7 @@ import 'package:feather_krita/widgets/glass_slider.dart';
 Future<int?> showGlassColorPicker(
   BuildContext context, {
   int initialColor = 0xFF000000,
+  List<int>? history,
 }) {
   return showDialog<int>(
     context: context,
@@ -34,6 +35,7 @@ Future<int?> showGlassColorPicker(
       insetPadding: const EdgeInsets.all(24),
       child: GlassColorPicker(
         initialColor: initialColor,
+        history: history,
         onCancel: () => Navigator.pop(ctx),
         onConfirm: (c) => Navigator.pop(ctx, c),
       ),
@@ -49,12 +51,17 @@ class GlassColorPicker extends StatefulWidget {
     required this.onConfirm,
     this.onCancel,
     this.onChanged,
+    this.history,
   });
 
   final int initialColor;
   final ValueChanged<int> onConfirm;
   final VoidCallback? onCancel;
   final ValueChanged<int>? onChanged;
+
+  /// Recently-used colours to surface above the static preset swatches
+  /// (loop-27). May be null or empty; the section is hidden in that case.
+  final List<int>? history;
 
   @override
   State<GlassColorPicker> createState() => _GlassColorPickerState();
@@ -183,6 +190,16 @@ class _GlassColorPickerState extends State<GlassColorPicker> {
             },
           ),
           const SizedBox(height: 16),
+          if (widget.history != null && widget.history!.isNotEmpty) ...[
+            _HistorySwatches(
+              history: widget.history!,
+              onSelected: (argb) {
+                setState(() => _hsv = HSVColor.fromColor(Color(argb)));
+                _emit();
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
           _PresetSwatches(
             onSelected: (argb) {
               setState(() => _hsv = HSVColor.fromColor(Color(argb)));
@@ -607,6 +624,53 @@ class _PresetSwatches extends StatelessWidget {
               ),
             ),
           ),
+      ],
+    );
+  }
+}
+
+/// Dynamic recently-used colour swatches (loop-27). Rendered above the
+/// static [_PresetSwatches] when the caller supplies a non-empty history.
+class _HistorySwatches extends StatelessWidget {
+  const _HistorySwatches({
+    required this.history,
+    required this.onSelected,
+  });
+
+  final List<int> history;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(bottom: 6),
+          child: Text('Recent',
+              style:
+                  TextStyle(color: AppTheme.textTertiary, fontSize: 11)),
+        ),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final c in history)
+              GestureDetector(
+                onTap: () => onSelected(c),
+                child: Container(
+                  width: 26,
+                  height: 26,
+                  decoration: BoxDecoration(
+                    color: Color(c),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AppTheme.glassBorder),
+                    boxShadow: AppTheme.glassShadow,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ],
     );
   }
