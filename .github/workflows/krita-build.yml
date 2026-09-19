@@ -590,8 +590,8 @@ jobs:
             /I"$KF5/include" /I"$VP/include" \
             "$WS/bridge/krita_bridge_real.cpp" \
             "@$BUILD/krita_objs.rsp" \
-            /LD /Fe:artifact/bin/krita_bridge_real.dll /IMPLIB:artifact/lib/krita_bridge_real.lib \
-            /link /LIBPATH:"$QT/lib" /LIBPATH:"$KF5/lib" /LIBPATH:"$VP/lib" \
+            /LD /Fe:artifact/bin/krita_bridge_real.dll \
+            /link /IMPLIB:artifact/lib/krita_bridge_real.lib /LIBPATH:"$QT/lib" /LIBPATH:"$KF5/lib" /LIBPATH:"$VP/lib" \
             Qt5Core.lib Qt5Gui.lib Qt5Xml.lib Qt5Svg.lib Qt5Widgets.lib Qt5Sql.lib Qt5Concurrent.lib Qt5Network.lib Qt5PrintSupport.lib Qt5WinExtras.lib \
             ole32.lib shell32.lib user32.lib advapi32.lib uuid.lib gdi32.lib \
             $KFLIBS \
@@ -603,6 +603,8 @@ jobs:
              "$QT/bin/Qt5WinExtras.dll" artifact/bin/
           cp "$KF5/bin/"KF5*.dll artifact/bin/ 2>/dev/null || true
           cp -r "$VP/bin/"*.dll artifact/bin/ 2>/dev/null || true
+          # defensive: some clang-cl versions derive the implib from /Fe
+          [ -f artifact/lib/krita_bridge_real.lib ] || cp artifact/bin/krita_bridge_real.lib artifact/lib/ 2>/dev/null || true
           # ---- smoke exe (links the bridge import lib, exercises the full closure)
           clang-cl /nologo /std:c++17 /EHsc /O2 /MD \
             "$WS/bridge/smoke_test_real.cpp" \
