@@ -558,7 +558,7 @@ jobs:
           # cross-object references are direct and resolve inside this one
           # image — no dllimport needed anywhere. Only the extern "C" ABI
           # (KRITA_BRIDGE_API dllexport in krita_bridge.h) is exported.
-          clang-cl /nologo /std:c++17 /EHsc /O2 /MD /Zc:__cplusplus \
+          clang-cl /nologo /std:c++17 /EHsc /O2 /MD /Zc:__cplusplus /permissive \
             -DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= \
             -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= \
             -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= \
