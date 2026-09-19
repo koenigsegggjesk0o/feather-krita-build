@@ -1255,10 +1255,12 @@ jobs:
           # llvm-readelf for all symbol work (proven present).
           "$RE" --dyn-syms artifact/lib/libkrita_bridge.so 2>/dev/null | grep ' GLOBAL ' | head -12 || true
           # ---- export gate: the extern "C" bridge ABI must be visible
-          NEXP=$("$RE" --dyn-syms artifact/lib/libkrita_bridge.so 2>/dev/null | grep -c 'krita_bridge' || true)
-          echo "exported krita_bridge symbols: $NEXP"
+          # ABI symbols are krita_brush_* / krita_image_* (the FILE is
+          # libkrita_bridge.so but the extern "C" API uses krita_ prefixes)
+          NEXP=$("$RE" --dyn-syms artifact/lib/libkrita_bridge.so 2>/dev/null | grep -cE 'GLOBAL DEFAULT +[0-9]+ krita_(brush|image|paint|preset|version|last_error|colour)' || true)
+          echo "exported krita_* ABI symbols: $NEXP"
           [ "$NEXP" -ge 5 ] || { echo 'FATAL: bridge ABI exports missing'; exit 1; }
-          "$RE" --dyn-syms artifact/lib/libkrita_bridge.so 2>/dev/null | grep 'krita_bridge' | head -12
+          "$RE" --dyn-syms artifact/lib/libkrita_bridge.so 2>/dev/null | grep -E 'GLOBAL DEFAULT +[0-9]+ krita_' | head -12
           # ---- diagnostics: unresolved symbols triage (NOT a hard gate yet;
           # bionic/log symbols are provided by the OS at dlopen time)
           UNDEF=$("$RE" --dyn-syms artifact/lib/libkrita_bridge.so 2>/dev/null | awk '$7 == "UND" {print $8}' | sort -u)
