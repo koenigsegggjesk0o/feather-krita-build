@@ -343,7 +343,8 @@ jobs:
               -DCMAKE_PREFIX_PATH="$PREFIX" \
               -DCMAKE_TOOLCHAIN_FILE="$TCF" \
               -DVCPKG_TARGET_TRIPLET=x64-windows \
-              -DBUILD_TESTING=OFF -DBUILD_HTML_DOCS=OFF -DBUILD_QTHELP_DOCS=OFF -DBUILD_DESIGNERPLUGIN=OFF
+              -DBUILD_TESTING=OFF -DBUILD_HTML_DOCS=OFF -DBUILD_QTHELP_DOCS=OFF -DBUILD_DESIGNERPLUGIN=OFF \
+              -DKF_IGNORE_PLATFORM_CHECK=TRUE
             cmake --build "C:/kf5-build/build-$fw" --parallel
             cmake --install "C:/kf5-build/build-$fw"
           done
