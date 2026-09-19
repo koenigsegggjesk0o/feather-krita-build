@@ -1045,11 +1045,17 @@ jobs:
           # (sysroot/usr/lib/<arch>/libc++_shared.so). NDK r29 uses full
           # triples. Create arch-alias symlinks INSIDE the NDK (toolchain
           # provisioning, krita untouched) so the EXISTS check passes.
-          NDKLIB="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib"
-          test -f "$NDKLIB/$ABI_TRIPLE/libc++_shared.so" || { echo "FATAL: NDK libc++_shared missing at $NDKLIB/$ABI_TRIPLE"; exit 1; }
+          NDKPRE="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64"
+          REALCXX=$(find "$NDKPRE/sysroot" "$NDKPRE/lib" -name 'libc++_shared.so' 2>/dev/null | grep -m1 "$ABI_TRIPLE")
+          [ -z "$REALCXX" ] && REALCXX=$(find "$NDKPRE/sysroot" "$NDKPRE/lib" -name 'libc++_shared.so' 2>/dev/null | head -1)
+          test -n "$REALCXX" || { echo 'FATAL: NDK libc++_shared not found anywhere under prebuilt'; exit 1; }
+          echo "LIBCXX_REAL=$REALCXX" >> "$GITHUB_ENV"
+          echo "resolved libc++_shared: $REALCXX"
+          # krita's check: sysroot/usr/lib/<arch>/libc++_shared.so
+          NDKLIB="$NDKPRE/sysroot/usr/lib"
           for ARCH in x86_64 aarch64 arm64-v8a armeabi-v7a; do
             sudo mkdir -p "$NDKLIB/$ARCH"
-            sudo ln -sf "$NDKLIB/$ABI_TRIPLE/libc++_shared.so" "$NDKLIB/$ARCH/libc++_shared.so"
+            sudo ln -sf "$REALCXX" "$NDKLIB/$ARCH/libc++_shared.so"
           done
           echo "NDK sysroot STL aliases created:"
           ls -la "$NDKLIB/x86_64/"
@@ -1192,8 +1198,8 @@ jobs:
           # merged engine must use the SAME STL (two libc++ copies in one
           # process = ODR crash). -nostdlib++ suppresses the driver default,
           # then libc++_shared.so is linked explicitly + bundled.
-          LIBCXXSHARED="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$ABI_TRIPLE/libc++_shared.so"
-          test -f "$LIBCXXSHARED" || { echo "FATAL: libc++_shared.so not found at $LIBCXXSHARED"; exit 1; }
+          LIBCXXSHARED="$LIBCXX_REAL"
+          test -n "$LIBCXXSHARED" && test -f "$LIBCXXSHARED" || { echo 'FATAL: LIBCXX_REAL not resolved'; exit 1; }
           CLANG="$TC/$ABI_TRIPLE-clang++"
           $CLANG -std=c++17 -shared -fPIC -O2 -fno-operator-names -nostdlib++ $INCS \
             "$WS/bridge/krita_bridge_real.cpp" \
