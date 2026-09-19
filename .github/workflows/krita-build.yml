@@ -706,9 +706,12 @@ jobs:
             /opt/kf5-android
             /opt/kf5-host
             /opt/kf5-src
+            /opt/kf5-build
             /opt/vcpkg-android/installed
-          key: andengine-deps-v1-${{ matrix.abi }}
-          restore-keys: andengine-deps-v1-${{ matrix.abi }}-
+          key: andengine-deps-v2-${{ matrix.abi }}
+          restore-keys: |
+            andengine-deps-v2-${{ matrix.abi }}-
+            andengine-deps-v1-${{ matrix.abi }}
 
       - name: Restore krita build tree (ninja incremental)
         uses: actions/cache/restore@v4
@@ -1032,8 +1035,9 @@ jobs:
             /opt/kf5-android
             /opt/kf5-host
             /opt/kf5-src
+            /opt/kf5-build
             /opt/vcpkg-android/installed
-          key: andengine-deps-v1-${{ matrix.abi }}
+          key: andengine-deps-v2-${{ matrix.abi }}
 
       - name: Save krita build tree cache
         if: always()
