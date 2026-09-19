@@ -549,10 +549,11 @@ jobs:
           # ---- vcpkg import libs (over-link: unused import libs are ignored)
           VPLIBARGS=$(find "$VP/lib" -maxdepth 1 -name '*.lib' -printf '%f ' | tr '\n' ' ')
           echo "vcpkg libs: $VPLIBARGS"
-          # ---- KF5-built static libs outside the KF5 framework set (lager,
-          # QuaZip — kritalibbrush links lager; KRA/ORA zip I/O needs quazip)
-          KFLIBS=$(find "$KF5/lib" -maxdepth 1 \( -iname 'lager*.lib' -o -iname 'quazip*.lib' \) -printf '%f ' | tr '\n' ' ')
-          echo "kf5 extra libs: $KFLIBS"
+          # ---- KF5-built libs (fix45f: glob ALL of C:/kf5/lib/*.lib —
+          # KF5Config installs KF5ConfigCore+KF5ConfigGui, not KF5Config;
+          # also catches quazip1-qt5.lib; lager is header-only)
+          KFLIBS=$(find "$KF5/lib" -maxdepth 1 -name '*.lib' -printf '%f ' | tr '\n' ' ')
+          echo "kf5 libs: $KFLIBS"
           # ---- merged engine DLL = bridge glue + all krita objects.
           # Objects were compiled with EMPTY krita export macros, so all
           # cross-object references are direct and resolve inside this one
@@ -571,7 +572,6 @@ jobs:
             /LD /Fe:artifact/bin/krita_bridge_real.dll /IMPLIB:artifact/lib/krita_bridge_real.lib \
             /link /LIBPATH:"$QT/lib" /LIBPATH:"$KF5/lib" /LIBPATH:"$VP/lib" \
             Qt5Core.lib Qt5Gui.lib Qt5Xml.lib Qt5Svg.lib Qt5Widgets.lib Qt5Sql.lib Qt5Concurrent.lib Qt5Network.lib Qt5PrintSupport.lib \
-            KF5CoreAddons.lib KF5Archive.lib KF5Config.lib KF5I18n.lib KF5GuiAddons.lib KF5WidgetsAddons.lib KF5Completion.lib KF5ItemViews.lib \
             $KFLIBS \
             $VPLIBARGS
           # ---- collect runtime DLLs next to the smoke exe (Windows resolves from PATH/artifact dir)
