@@ -390,7 +390,11 @@ jobs:
           # official upstream source against the already-installed vcpkg
           # freetype/harfbuzz/fribidi. Static lib -> linked into the merged
           # engine DLL, no runtime DLL needed. Krita source untouched.
-          [ -d C:/kf5-src/raqm ] || git clone --depth 1 --branch v0.10.1 https://github.com/HOST-Oman/libraqm.git C:/kf5-src/raqm
+          # Krita 6 uses raqm_set_arbitrary_run_break (post-0.10.1, in
+          # master) — always clone fresh master and rebuild (cache holds the
+          # old 0.10.1 source, so rm first; ~2-3 min).
+          rm -rf C:/kf5-src/raqm C:/kf5-build/build-raqm
+          git clone --depth 1 https://github.com/HOST-Oman/libraqm.git C:/kf5-src/raqm
           # libraqm v0.10.x builds with MESON (no CMakeLists.txt). Point it at
           # vcpkg's pkgconf + freetype/harfbuzz/fribidi, static lib.
           python -m pip install --quiet meson
