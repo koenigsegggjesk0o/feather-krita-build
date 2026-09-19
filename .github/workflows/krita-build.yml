@@ -742,7 +742,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build pkg-config gettext qtbase5-dev qttools5-dev-tools
+            ninja-build pkg-config gettext qtbase5-dev qttools5-dev-tools qttools5-dev
           python -m pip install --quiet aqtinstall
           for i in 1 2 3; do
             rm -rf /opt/Qt
