@@ -242,7 +242,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/build
-          key: winengine-krbuild-v2
+          key: winengine-krbuild-v3
           restore-keys: winengine-krbuild-
 
       - name: Clone krita-source (real Krita v6.0.4, unmodified)
@@ -471,15 +471,17 @@ jobs:
       - name: Build brush engine OBJECTS (kritaimage + kritalibbrush closure)
         run: |
           cd "$GITHUB_WORKSPACE/build"
-          # loop-35 fix43/fix44 DESIGN: we no longer consume the per-lib
-          # krita*.dll at all. Cross-DLL static-data imports (e.g.
-          # KoXmlNS::manifest from kritastore used by kritaresources) cannot
-          # be satisfied without dllimport semantics, which conflict with the
-          # empty-export flags that kill the dllexport forced-instantiation
-          # errors. Link edges are pruned from build.ninja (previous step);
-          # this step compiles the complete object set. Krita source remains
-          # untouched.
-          ninja kritaimage kritalibbrush 2>&1 | tail -60
+          # loop-35 fix43/fix44/fix44c DESIGN: we never consume the per-lib
+          # krita*.dll — link edges are pruned (previous step) and the bridge
+          # step merges ALL objects into ONE engine DLL. Objects are built
+          # directly by their explicit ninja outputs (bypasses the phony
+          # alias chains whose behavior surprised us in fix44b). -k 0 keeps
+          # one bad TU from blocking the rest; the object gates below catch
+          # under-production. Krita source remains untouched.
+          OBJS=$(ninja -t targets all | grep -E 'CMakeFiles/krita[^:\\/]*/.*\.obj:' | cut -d: -f1)
+          NOBJS_PLAN=$(printf '%s\n' "$OBJS" | wc -l)
+          echo "objects planned: $NOBJS_PLAN"
+          printf '%s\n' "$OBJS" | xargs -n 80 ninja -k 0 2>&1 | tail -40 || true
           NOBJS=$(find . -name '*.obj' | wc -l)
           echo "krita objects built: $NOBJS"
           [ "$NOBJS" -gt 700 ] || { echo 'FATAL: too few objects built (compile errors?)'; exit 1; }
@@ -576,7 +578,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/build
-          key: winengine-krbuild-v2
+          key: winengine-krbuild-v3
 
       - name: Upload Windows brush engine
         if: always()
