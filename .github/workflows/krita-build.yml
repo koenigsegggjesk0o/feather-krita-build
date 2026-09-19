@@ -964,6 +964,81 @@ jobs:
           cmake --build /opt/kf5-build/and-quazip && cmake --install /opt/kf5-build/and-quazip
           test -n "$(find "$KF5DIR" -name 'QuaZip-Qt5*Config.cmake' | head -1)" || { echo 'FATAL: QuaZip-Qt5 config not installed'; exit 1; }
 
+      - name: Provide android deps (unwindstack header-only stub + find module)
+        run: |
+          # Krita's android path requires find_package(unwindstack) — upstream
+          # resolves it from KDE's android deps bundle (AOSP libunwindstack).
+          # The android crash backtrace is NOT an engine feature; provide a
+          # header-only no-op of the exact API surface krita uses, so the
+          # merged engine .so carries no unwindstack link-time symbols at all.
+          # Plus a Findunwindstack.cmake module setting the variables krita's
+          # CMakeLists reads. Workflow provisioning — krita source untouched.
+          mkdir -p /opt/android_deps/include/unwindstack /opt/android_deps/cmake
+          python3 - << 'PYEOF'
+          import os
+          inc = '/opt/android_deps/include/unwindstack'
+          regsh = r'''
+          #pragma once
+          #include <cstdint>
+          #include <sys/types.h>
+          namespace unwindstack {
+          enum class Arch { UNKNOWN = 0 };
+          class Regs {
+          public:
+            virtual ~Regs() = default;
+            static Arch CurrentArch() { return Arch::UNKNOWN; }
+            static Regs *CreateFromLocal() { return new Regs(); }
+            static Regs *CreateFromUcontext(Arch, void *) { return new Regs(); }
+          };
+          }  // namespace unwindstack
+          '''
+          unwinderh = r'''
+          #pragma once
+          #include <string>
+          #include <vector>
+          #include "Regs.h"
+          namespace unwindstack {
+          struct FrameData {
+            uint64_t pc = 0;
+            uint64_t sp = 0;
+            std::string function_name;
+            uint64_t function_offset = 0;
+            std::string map_name;
+          };
+          class UnwinderFromPid {
+          public:
+            UnwinderFromPid(size_t, pid_t, Arch) {}
+            bool Init() { return false; }
+            const char *LastErrorCodeString() { return "unwindstack stub (android crash backtrace not an engine feature)"; }
+            int LastErrorCode() { return 0; }
+            void SetRegs(Regs *) {}
+            void Unwind() {}
+            std::vector<FrameData> &frames() { return frames_; }
+            std::string FormatFrame(const FrameData &) { return std::string(); }
+          private:
+            std::vector<FrameData> frames_;
+          };
+          }  // namespace unwindstack
+          '''
+          open(inc + '/Regs.h', 'w').write(regsh)
+          open(inc + '/Unwinder.h', 'w').write(unwinderh)
+          fmod = r'''
+          # Findunwindstack.cmake — workflow provisioning for krita's android
+          # configure path. unwindstack is header-only (no-op stub): no libs.
+          if(NOT unwindstack_FIND_QUIETLY)
+            message(STATUS "unwindstack: workflow stub (header-only, no-op)")
+          endif()
+          set(unwindstack_INCLUDE_DIR /opt/android_deps/include)
+          set(unwindstack_LIBRARIES "")
+          include(FindPackageHandleStandardArgs)
+          find_package_handle_standard_args(unwindstack DEFAULT_MSG unwindstack_INCLUDE_DIR)
+          '''
+          os.makedirs('/opt/android_deps/cmake', exist_ok=True)
+          open('/opt/android_deps/cmake/Findunwindstack.cmake', 'w').write(fmod)
+          PYEOF
+          ls -la /opt/android_deps/include/unwindstack/ /opt/android_deps/cmake/
+          test -f /opt/android_deps/include/unwindstack/Regs.h || { echo 'FATAL: unwindstack stub missing'; exit 1; }
+
       - name: Configure Krita (minimal engine build, Qt5 android, unmodified source)
         run: |
           VPTC="$VPROOT/scripts/buildsystems/vcpkg.cmake"
@@ -989,6 +1064,8 @@ jobs:
             -DGETTEXT_MSGMERGE_EXECUTABLE=/usr/bin/msgmerge \
             -DCMAKE_PREFIX_PATH="$QTDIR;$KF5DIR;$VPROOT/installed/$VPT_TRIPLET" \
             -DCMAKE_FIND_ROOT_PATH="$QTDIR;$KF5DIR;$VPROOT/installed/$VPT_TRIPLET" \
+            -DCMAKE_MODULE_PATH="/opt/android_deps/cmake" \
+            -DANDROID_SDK_ROOT=/usr/local/lib/android/sdk \
             -DCMAKE_TOOLCHAIN_FILE="$VPTC" \
             -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
             -DVCPKG_TARGET_TRIPLET="$VPT_TRIPLET" \
