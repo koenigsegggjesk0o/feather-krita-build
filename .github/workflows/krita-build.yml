@@ -403,6 +403,7 @@ jobs:
             -DWITH_WEBP=OFF -DWITH_JXL=OFF -DWITH_OCIO=OFF \
             -DWITH_OPENJPEG=OFF -DWITH_MEDIA=OFF \
             -DCMAKE_DISABLE_FIND_PACKAGE_LibMyPaint=TRUE \
+            -DCMAKE_CXX_FLAGS='/Zc:twoPhase-' \
             -DPKG_CONFIG_EXECUTABLE='C:/vcpkg2/installed/x64-windows/tools/pkgconf/pkgconf.exe' \
             -DCMAKE_PREFIX_PATH="$KF5DIR;$QTDIR;C:/vcpkg2/installed/x64-windows" \
             -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake' \
