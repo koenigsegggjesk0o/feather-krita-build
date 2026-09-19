@@ -105,6 +105,78 @@ jobs:
           path: feather-krita-android.apk
           retention-days: 30
 
+
+  build-windows-real-engine:
+    # Windows desktop build bundling the REAL Krita engine (merged
+    # krita_bridge_real.dll = bridge glue + 955 krita objects in ONE image,
+    # MSVC x64, plus Qt5/KF5/vcpkg runtime DLLs), verified end-to-end via
+    # the app's own Dart FFI bindings running on the Dart VM (loop-35,
+    # roadmap b). Krita source: real v6.0.4, never modified.
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.3'
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Find latest green krita-build run
+        id: engine_run
+        shell: bash
+        run: |
+          RID=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/krita-build.yml/runs?status=success&per_page=1" \
+            | python -c 'import sys,json;print(json.load(sys.stdin)["workflow_runs"][0]["id"])')
+          echo "run_id=$RID" >> "$GITHUB_OUTPUT"
+          echo "Latest green krita-build run: $RID"
+
+      - name: Download real-engine artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: krita-brush-engine-windows
+          run-id: ${{ steps.engine_run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: krita-engine
+
+      - name: Build Windows app (release)
+        run: flutter build windows --release
+
+      - name: Bundle real engine into Release dir
+        shell: bash
+        run: |
+          REL=build/windows/x64/runner/Release
+          # single merged engine DLL + every runtime DLL next to the exe
+          cp krita-engine/bin/*.dll "$REL/"
+          echo "Release dir: $(ls "$REL" | wc -l) files"
+          ls "$REL" | head -12
+
+      - name: Dart FFI end-to-end smoke (real engine, self-contained)
+        shell: bash
+        run: |
+          export PATH="$(pwd)/build/windows/x64/runner/Release:$PATH"
+          dart run tool/ffi_real_smoke.dart "$(pwd)/build/windows/x64/runner/Release"
+
+      - name: Package Windows zip (real engine)
+        shell: bash
+        run: |
+          cd build/windows/x64/runner/Release
+          zip -qr feather-krita-windows-real-engine.zip .
+          ls -lh feather-krita-windows-real-engine.zip
+
+      - name: Upload Windows build (real engine)
+        uses: actions/upload-artifact@v4
+        with:
+          name: feather-krita-windows-real-engine
+          path: build/windows/x64/runner/Release/feather-krita-windows-real-engine.zip
+          retention-days: 30
+
   build-linux-real-engine:
     # Linux desktop build bundling the REAL Krita engine (libkrita_bridge.so
     # renamed from libkrita_bridge_real.so + real libkrita*.so from the
