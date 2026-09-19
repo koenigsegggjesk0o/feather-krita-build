@@ -800,6 +800,7 @@ jobs:
             cmake -S "/opt/kf5-src/host-$fw" -B "/opt/kf5-build/host-$fw" -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX="$KF5HOST" \
+              -DCMAKE_PREFIX_PATH="$KF5DIR" \
               -DBUILD_TESTING=OFF -DBUILD_HTML_DOCS=OFF -DBUILD_QTHELP_DOCS=OFF -DBUILD_DESIGNERPLUGIN=OFF
             cmake --build "/opt/kf5-build/host-$fw" --parallel
             cmake --install "/opt/kf5-build/host-$fw"
