@@ -674,7 +674,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        abi: [x86_64]        # bring-up ABI; add arm64-v8a once green
+        abi: [x86_64, arm64-v8a]   # x86_64 = emulator-testable; arm64-v8a = device deliverable
     env:
       QTDIR: /opt/Qt/5.15.2/android
       KF5DIR: /opt/kf5-android
@@ -1278,6 +1278,7 @@ jobs:
           # Qt libraries provide it (single copy per process).
           # ---- android smoke executable (links the merged engine .so; run
           # later on an x86_64 emulator via adb for the C++ end-to-end proof)
+          mkdir -p artifact/bin
           $CLANG -std=c++17 -O2 -fPIE -pie $INCS "$WS/bridge/smoke_test_real.cpp" \
             "$WS/artifact/lib/libkrita_bridge.so" \
             -Wl,-rpath,'$ORIGIN' \
