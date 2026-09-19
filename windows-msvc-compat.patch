@@ -52,3 +52,16 @@
  {
      Q_DISABLE_COPY_MOVE(KisScopedPerformanceLogger)
  public:
+--- a/libs/widgets/KoZoomActionState.cpp
++++ b/libs/widgets/KoZoomActionState.cpp
+@@ -135,7 +135,9 @@
+     auto it = std::lower_bound(standardLevels.begin(), standardLevels.end(),
+                                zoom, fuzzyCompareLess);
+ 
+-    return qMin(standardLevels.size() - 1, std::distance(standardLevels.begin(), it));
++    // Feather-Krita Windows CI: MSVC/clang-cl deduces int vs long long for qMin;
++    // narrow explicitly. (Build-provisioning shim, not upstream code.)
++    return qMin(standardLevels.size() - 1, static_cast<int>(std::distance(standardLevels.begin(), it)));
+ }
+ 
+ int KoZoomActionState::calcNearestStandardLevel() const
