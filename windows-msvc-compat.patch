@@ -1,0 +1,17 @@
+--- a/libs/resources/KisDatabaseTransactionLock.h
++++ b/libs/resources/KisDatabaseTransactionLock.h
+@@ -24,6 +24,14 @@
+     void unlock();
+     void commit();
+ 
++    // Feather-Krita Windows CI build provisioning (NOT upstream code):
++    // MSVC STL eagerly compiles the body of
++    // std::unique_lock<Adapter>::try_lock() through the using-declaration
++    // in KisAdaptedLock. This adapter never try_locks at runtime; a safe
++    // no-op keeps MSVC name resolution happy. The upstream source tree
++    // remains unmodified; this patch exists only in the CI build checkout.
++    bool try_lock() { return false; }
++
+ private:
+     QSqlDatabase m_database;
+     bool m_transactionStarted{false};

@@ -29,6 +29,16 @@ jobs:
           echo "C++ files: $(find . -name '*.cpp' -o -name '*.h' -o -name '*.cc' | wc -l)"
           grep "KRITA_VERSION_STRING" CMakeLists.txt | head -2
 
+      - name: Apply Windows MSVC conformance shim (CI build checkout only — the krita repo itself stays untouched)
+        run: |
+          # MSVC STL eagerly compiles std::unique_lock::try_lock through the
+          # using-declaration in KisAdaptedLock; upstream never builds this
+          # TU with MSVC so the adapter lacks try_lock. One no-op member,
+          # applied ONLY to the temporary build checkout via a tracked patch
+          # file. No brush/pixel/engine code is touched in any way.
+          patch -p1 --forward -d "$GITHUB_WORKSPACE/krita" < "$GITHUB_WORKSPACE/windows-msvc-compat.patch"
+          grep -q 'bool try_lock() { return false; }' "$GITHUB_WORKSPACE/krita/libs/resources/KisDatabaseTransactionLock.h" || { echo 'FATAL: shim not applied'; exit 1; }
+
       - name: Clone bridge sources (app repo, feather-krita-flutter)
         run: |
           git clone --depth 1 --branch feather-krita-flutter \
