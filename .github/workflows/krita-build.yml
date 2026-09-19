@@ -742,7 +742,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build pkg-config gettext qtbase5-dev qttools5-dev-tools qttools5-dev
+            ninja-build pkg-config gettext qtbase5-dev qttools5-dev-tools qttools5-dev qtdeclarative5-dev
           python -m pip install --quiet aqtinstall
           for i in 1 2 3; do
             rm -rf /opt/Qt
@@ -800,7 +800,7 @@ jobs:
             cmake -S "/opt/kf5-src/host-$fw" -B "/opt/kf5-build/host-$fw" -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX="$KF5HOST" \
-              -DCMAKE_PREFIX_PATH="$KF5DIR" \
+              -DCMAKE_PREFIX_PATH="$KF5DIR;$KF5HOST" \
               -DBUILD_TESTING=OFF -DBUILD_HTML_DOCS=OFF -DBUILD_QTHELP_DOCS=OFF -DBUILD_DESIGNERPLUGIN=OFF
             cmake --build "/opt/kf5-build/host-$fw" --parallel
             cmake --install "/opt/kf5-build/host-$fw"
