@@ -389,14 +389,20 @@ jobs:
           # freetype/harfbuzz/fribidi. Static lib -> linked into the merged
           # engine DLL, no runtime DLL needed. Krita source untouched.
           [ -d C:/kf5-src/raqm ] || git clone --depth 1 --branch v0.10.1 https://github.com/HOST-Oman/libraqm.git C:/kf5-src/raqm
-          cmake -S C:/kf5-src/raqm -B C:/kf5-build/build-raqm -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$KF5DIR" \
-            -DCMAKE_PREFIX_PATH='C:/vcpkg2/installed/x64-windows' \
-            -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake' \
-            -DVCPKG_TARGET_TRIPLET=x64-windows \
-            -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF
-          cmake --build C:/kf5-build/build-raqm && cmake --install C:/kf5-build/build-raqm
+          # libraqm v0.10.x builds with MESON (no CMakeLists.txt). Point it at
+          # vcpkg's pkgconf + freetype/harfbuzz/fribidi, static lib.
+          python -m pip install --quiet meson
+          export PKG_CONFIG='C:/vcpkg2/installed/x64-windows/tools/pkgconf/pkgconf.exe'
+          export PKG_CONFIG_PATH='C:/vcpkg2/installed/x64-windows/lib/pkgconfig;C:/vcpkg2/installed/x64-windows/share/pkgconfig'
+          export CC=clang-cl CXX=clang-cl
+          if [ ! -f C:/kf5-build/build-raqm/build.ninja ]; then
+            rm -rf C:/kf5-build/build-raqm
+            meson setup C:/kf5-build/build-raqm C:/kf5-src/raqm \
+              --prefix 'C:/kf5' --default-library static --buildtype release \
+              -Ddocs=false
+          fi
+          meson compile -C C:/kf5-build/build-raqm
+          meson install -C C:/kf5-build/build-raqm
           test -n "$(find "$KF5DIR/lib" -maxdepth 1 -iname 'raqm*.lib' | head -1)" || { echo 'FATAL: raqm.lib not installed'; exit 1; }
           find "$KF5DIR/lib" -maxdepth 1 -iname 'raqm*.lib'
 
