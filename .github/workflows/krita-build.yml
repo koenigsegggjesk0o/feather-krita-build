@@ -655,3 +655,408 @@ jobs:
           else
             echo "### FAILED — no bridge/engine DLLs produced" >> $GITHUB_STEP_SUMMARY
           fi
+
+  # ---------------------------------------------------------------------
+  # Android (NDK) cross-build of the SAME real engine, loop-36 (roadmap c).
+  # Unmodified krita-source -> object closure via NDK clang (per-ABI),
+  # thin krita_bridge_real.cpp glue merged into ONE libkrita_bridge.so,
+  # export gates. Dependencies: Qt 5.15.2 android (aqtinstall, universal
+  # package covers all ABIs), KF5 v5.116.0 cross-built from official KDE
+  # sources with NDK toolchain (host tools from a native /opt/kf5-host
+  # build), vcpkg android triplets for the C deps (static linkage).
+  # Bring-up: x86_64 first (emulator-testable), arm64-v8a next — the
+  # matrix axis is the only difference. Krita source is NEVER modified —
+  # dependency provisioning + workflow tooling only.
+  # ---------------------------------------------------------------------
+  build-android-engine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [x86_64]        # bring-up ABI; add arm64-v8a once green
+    env:
+      QTDIR: /opt/Qt/5.15.2/android
+      KF5DIR: /opt/kf5-android
+      KF5HOST: /opt/kf5-host
+      KFTAG: v5.116.0
+      ANDROID_API: '24'
+      VPROOT: /opt/vcpkg-android
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve NDK + ABI mapping
+        run: |
+          NDK=$(ls -d /usr/local/lib/android/sdk/ndk/* 2>/dev/null | sort -V | tail -1)
+          test -n "$NDK" || { echo 'FATAL: no NDK on runner'; exit 1; }
+          echo "NDK_ROOT=$NDK" >> "$GITHUB_ENV"
+          case '${{ matrix.abi }}' in
+            x86_64)    TRIP=x86_64;  VPT=x64-android ;;
+            arm64-v8a) TRIP=aarch64; VPT=arm64-android ;;
+            *) echo "FATAL: unsupported abi ${{ matrix.abi }}"; exit 1 ;;
+          esac
+          echo "ABI_TRIPLE=${TRIP}-linux-android${ANDROID_API}" >> "$GITHUB_ENV"
+          echo "VPT_TRIPLET=${VPT}" >> "$GITHUB_ENV"
+          echo "NDK=$NDK abi=${{ matrix.abi }} triplet=${TRIP}-linux-android${ANDROID_API} vcpkg=${VPT}"
+
+      - name: Restore dependency caches (KF5-android + vcpkg installed)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /opt/kf5-android
+            /opt/kf5-host
+            /opt/kf5-src
+            /opt/vcpkg-android/installed
+          key: andengine-deps-v1-${{ matrix.abi }}
+          restore-keys: andengine-deps-v1-${{ matrix.abi }}-
+
+      - name: Restore krita build tree (ninja incremental)
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/build
+          key: andengine-krbuild-${{ matrix.abi }}-v1
+          restore-keys: andengine-krbuild-${{ matrix.abi }}-
+
+      - name: Clone krita-source (real Krita v6.0.4, unmodified)
+        run: |
+          git clone --depth 1 --branch main \
+            "https://x-access-token:${{ secrets.KRITA_SOURCE_TOKEN }}@github.com/koenigsegggjesk0o/krita.git" \
+            /tmp/krita-repo
+          cp -r /tmp/krita-repo/krita-source "$GITHUB_WORKSPACE/krita"
+          cd "$GITHUB_WORKSPACE/krita"
+          echo "=== Real Krita source verified ==="
+          grep "KRITA_VERSION_STRING" CMakeLists.txt | head -2
+
+      - name: Clone bridge sources (app repo, feather-krita-flutter)
+        run: |
+          git clone --depth 1 --branch feather-krita-flutter \
+            "https://x-access-token:${{ secrets.KRITA_SOURCE_TOKEN }}@github.com/koenigsegggjesk0o/krita.git" \
+            /tmp/fkr-app
+          mkdir -p "$GITHUB_WORKSPACE/bridge"
+          cp /tmp/fkr-app/native/krita_bridge/krita_bridge.h        "$GITHUB_WORKSPACE/bridge/"
+          cp /tmp/fkr-app/native/krita_bridge/krita_bridge_real.cpp "$GITHUB_WORKSPACE/bridge/"
+          cp /tmp/fkr-app/native/krita_bridge/smoke_test_real.cpp   "$GITHUB_WORKSPACE/bridge/"
+          ls -la "$GITHUB_WORKSPACE/bridge/"
+
+      - name: Install host deps + Qt 5.15.2 (android universal) via aqtinstall
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config gettext qtbase5-dev qttools5-dev-tools
+          python -m pip install --quiet aqtinstall
+          for i in 1 2 3; do
+            rm -rf /opt/Qt
+            aqt install-qt linux android 5.15.2 android -O /opt/Qt \
+              --archives qtbase qtdeclarative qttools qtsvg qttranslations icu && break
+            echo "aqt attempt $i failed; retrying in 15s"; sleep 15
+          done
+          test -f "$QTDIR/bin/qmake" || { echo 'FATAL: android qmake missing'; exit 1; }
+          ls "$QTDIR/lib" | grep "Qt5Core_${{ matrix.abi }}.so" || { echo "FATAL: Qt5Core_${{ matrix.abi }}.so missing"; exit 1; }
+          echo "Qt android installed: $QTDIR"
+
+      - name: Bootstrap vcpkg (android triplets, static linkage)
+        run: |
+          if [ ! -x "$VPROOT/vcpkg" ]; then
+            rm -rf "$VPROOT-tmp"
+            git clone --depth 1 --branch 2025.06.13 https://github.com/microsoft/vcpkg.git "$VPROOT-tmp"
+            mkdir -p "$VPROOT"
+            cp -a "$VPROOT-tmp/." "$VPROOT/"
+            rm -rf "$VPROOT-tmp"
+            "$VPROOT/bootstrap-vcpkg.sh" -disableMetrics
+          fi
+          test -x "$VPROOT/vcpkg" || { echo 'FATAL: vcpkg bootstrap failed'; exit 1; }
+          echo 'vcpkg bootstrapped'
+
+      - name: vcpkg engine deps (static, android triplet)
+        run: |
+          export ANDROID_NDK_HOME="$NDK_ROOT"
+          "$VPROOT/vcpkg" install --triplet "$VPT_TRIPLET" \
+            zlib bzip2 lcms eigen3 exiv2 fribidi freetype harfbuzz libunibreak \
+            boost-multi-array boost-icl boost-rational boost-utility boost-integer \
+            boost-accumulators boost-circular-buffer boost-heap boost-math \
+            boost-intrusive boost-polygon boost-geometry boost-graph \
+            boost-property-tree boost-random boost-format boost-function gsl
+          test -d "$VPROOT/installed/$VPT_TRIPLET/lib" || { echo 'FATAL: vcpkg install failed'; exit 1; }
+
+      - name: ECM (host build, arch-independent install into cross prefix)
+        run: |
+          mkdir -p /opt/kf5-src /opt/kf5-build
+          [ -d /opt/kf5-src/ECM ] || git clone --depth 1 --branch "$KFTAG" https://invent.kde.org/frameworks/extra-cmake-modules.git /opt/kf5-src/ECM
+          cmake -S /opt/kf5-src/ECM -B /opt/kf5-build/build-ecm -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$KF5DIR" -DBUILD_TESTING=OFF
+          cmake --build /opt/kf5-build/build-ecm
+          cmake --install /opt/kf5-build/build-ecm
+          test -f "$KF5DIR/share/ECM/cmake/ECMConfig.cmake" || { echo 'FATAL: ECM not installed'; exit 1; }
+
+      - name: Host tools (kconfig_compiler + desktoptojson, native)
+        run: |
+          # Cross builds of kconfig/kcoreaddons invoke code generators at
+          # BUILD time — they must be native binaries. Build the two
+          # frameworks natively first and expose their bin/ on PATH.
+          export PATH="$KF5HOST/bin:$PATH"
+          for fw in kcoreaddons kconfig; do
+            echo "=== host framework: $fw ==="
+            [ -d "/opt/kf5-src/host-$fw" ] || git clone --depth 1 --branch "$KFTAG" "https://invent.kde.org/frameworks/$fw.git" "/opt/kf5-src/host-$fw"
+            cmake -S "/opt/kf5-src/host-$fw" -B "/opt/kf5-build/host-$fw" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX="$KF5HOST" \
+              -DBUILD_TESTING=OFF -DBUILD_HTML_DOCS=OFF -DBUILD_QTHELP_DOCS=OFF -DBUILD_DESIGNERPLUGIN=OFF
+            cmake --build "/opt/kf5-build/host-$fw" --parallel
+            cmake --install "/opt/kf5-build/host-$fw"
+          done
+          test -x "$KF5HOST/bin/kconfig_compiler" || test -x "$KF5HOST/bin/kconfig_compiler5" || { echo 'FATAL: host kconfig_compiler missing'; ls "$KF5HOST/bin"; exit 1; }
+          ls "$KF5HOST/bin" | head -20
+
+      - name: Cross-build KF5 frameworks (engine closure set, NDK toolchain)
+        run: |
+          export PATH="$KF5HOST/bin:$VPROOT/installed/$VPT_TRIPLET/tools/gettext/bin:$PATH"
+          VPTC="$VPROOT/scripts/buildsystems/vcpkg.cmake"
+          PREFIX="$QTDIR;$KF5DIR;$VPROOT/installed/$VPT_TRIPLET"
+          for fw in kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews; do
+            echo "=== cross framework: $fw (${{ matrix.abi }}) ==="
+            [ -d "/opt/kf5-src/KF5-$fw" ] || git clone --depth 1 --branch "$KFTAG" "https://invent.kde.org/frameworks/$fw.git" "/opt/kf5-src/KF5-$fw"
+            cmake -S "/opt/kf5-src/KF5-$fw" -B "/opt/kf5-build/and-$fw" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX="$KF5DIR" \
+              -DCMAKE_PREFIX_PATH="$PREFIX" \
+              -DCMAKE_PROGRAM_PATH="$KF5HOST/bin" \
+              -DCMAKE_TOOLCHAIN_FILE="$VPTC" \
+              -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
+              -DVCPKG_TARGET_TRIPLET="$VPT_TRIPLET" \
+              -DANDROID_ABI='${{ matrix.abi }}' -DANDROID_PLATFORM="android-$ANDROID_API" \
+              -DBUILD_TESTING=OFF -DBUILD_HTML_DOCS=OFF -DBUILD_QTHELP_DOCS=OFF -DBUILD_DESIGNERPLUGIN=OFF \
+              -DKF_IGNORE_PLATFORM_CHECK=TRUE
+            cmake --build "/opt/kf5-build/and-$fw" --parallel
+            cmake --install "/opt/kf5-build/and-$fw"
+          done
+          test -f "$KF5DIR/lib/cmake/KF5I18n/KF5I18nConfig.cmake" || { echo 'FATAL: KF5I18n not installed'; exit 1; }
+
+      - name: Install immer + zug + xsimd + lager (header-only, host install)
+        run: |
+          mkdir -p /opt/kf5-src /opt/kf5-build
+          [ -d /opt/kf5-src/immer ] || git clone --depth 1 https://github.com/arximboldi/immer.git /opt/kf5-src/immer
+          cmake -S /opt/kf5-src/immer -B /opt/kf5-build/build-immer -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$KF5DIR" -DBUILD_TESTING=OFF -Dimmer_BUILD_TESTS=OFF -Dimmer_BUILD_PERSIST_TESTS=OFF -Dimmer_BUILD_EXAMPLES=OFF -Dimmer_BUILD_DOCS=OFF -Dimmer_BUILD_EXTRAS=OFF -Dimmer_BUILD_BENCHMARKS=OFF
+          cmake --build /opt/kf5-build/build-immer && cmake --install /opt/kf5-build/build-immer
+          [ -d /opt/kf5-src/zug ] || git clone --depth 1 https://github.com/arximboldi/zug.git /opt/kf5-src/zug
+          cmake -S /opt/kf5-src/zug -B /opt/kf5-build/build-zug -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$KF5DIR" -DBUILD_TESTING=OFF -Dzug_BUILD_TESTS=OFF -Dzug_BUILD_EXAMPLES=OFF -Dzug_BUILD_DOCS=OFF
+          cmake --build /opt/kf5-build/build-zug && cmake --install /opt/kf5-build/build-zug
+          [ -d /opt/kf5-src/xsimd ] || git clone --depth 1 --branch 13.0.0 https://github.com/xtensor-stack/xsimd.git /opt/kf5-src/xsimd
+          cmake -S /opt/kf5-src/xsimd -B /opt/kf5-build/build-xsimd -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$KF5DIR" -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF
+          cmake --build /opt/kf5-build/build-xsimd && cmake --install /opt/kf5-build/build-xsimd
+          [ -d /opt/kf5-src/lager ] || git clone --depth 1 https://github.com/arximboldi/lager.git /opt/kf5-src/lager
+          cmake -S /opt/kf5-src/lager -B /opt/kf5-build/build-lager -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$KF5DIR" -DBUILD_TESTING=OFF -Dlager_BUILD_TESTS=OFF -Dlager_BUILD_FAILURE_TESTS=OFF -Dlager_BUILD_EXAMPLES=OFF -Dlager_BUILD_DEBUGGER_EXAMPLES=OFF -Dlager_BUILD_DOCS=OFF -Dlager_EMBED_RESOURCES_PATH=OFF
+          cmake --build /opt/kf5-build/build-lager && cmake --install /opt/kf5-build/build-lager
+
+      - name: Cross-build QuaZip v1.4 (Qt5Core-only, NDK)
+        run: |
+          [ -d /opt/kf5-src/quazip ] || git clone --depth 1 --branch v1.4 https://github.com/stachenov/quazip.git /opt/kf5-src/quazip
+          cmake -S /opt/kf5-src/quazip -B /opt/kf5-build/and-quazip -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$KF5DIR" \
+            -DCMAKE_PREFIX_PATH="$QTDIR;$KF5DIR;$VPROOT/installed/$VPT_TRIPLET" \
+            -DCMAKE_TOOLCHAIN_FILE="$VPROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$VPT_TRIPLET" \
+            -DANDROID_ABI='${{ matrix.abi }}' -DANDROID_PLATFORM="android-$ANDROID_API" \
+            -DQUAZIP_QT_MAJOR_VERSION=5 -DBUILD_TESTING=OFF -DQUAZIP_BUILD_TESTS=OFF
+          cmake --build /opt/kf5-build/and-quazip && cmake --install /opt/kf5-build/and-quazip
+          test -n "$(find "$KF5DIR" -name 'QuaZip-Qt5*Config.cmake' | head -1)" || { echo 'FATAL: QuaZip-Qt5 config not installed'; exit 1; }
+
+      - name: Configure Krita (minimal engine build, Qt5 android, unmodified source)
+        run: |
+          VPTC="$VPROOT/scripts/buildsystems/vcpkg.cmake"
+          rm -f "$GITHUB_WORKSPACE/build/CMakeCache.txt"
+          # EMPTY krita export macros: no dllexport/visibility special-casing
+          # anywhere; the merged .so exports the extern "C" bridge ABI via
+          # KRITA_BRIDGE_API in krita_bridge.h (same design as Windows).
+          EMPTY_EXPORTS="-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT= -DKRITARESOURCEWIDGETS_EXPORT="
+          cmake -S "$GITHUB_WORKSPACE/krita" -B "$GITHUB_WORKSPACE/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_FLAGS="$EMPTY_EXPORTS" \
+            -DBUILD_TESTING=OFF -DENABLE_PYTHON=OFF \
+            -DWITH_QT6=OFF \
+            -DWITH_HEIF=OFF -DWITH_JPEG=OFF -DWITH_PNG=OFF -DWITH_TIFF=OFF \
+            -DWITH_RAW=OFF -DWITH_GIF=OFF -DWITH_FFTW3=OFF -DWITH_OPENEXR=OFF \
+            -DWITH_KDE=ON -DWITH_XCF=OFF -DWITH_SOPRANO=OFF -DWITH_HDR=OFF \
+            -DWITH_WEBP=OFF -DWITH_JXL=OFF -DWITH_OCIO=OFF \
+            -DWITH_OPENJPEG=OFF -DWITH_MEDIA=OFF \
+            -DCMAKE_DISABLE_FIND_PACKAGE_LibMyPaint=TRUE \
+            -DCMAKE_PROGRAM_PATH="$KF5HOST/bin" \
+            -DGETTEXT_MSGFMT_EXECUTABLE=/usr/bin/msgfmt \
+            -DGETTEXT_MSGMERGE_EXECUTABLE=/usr/bin/msgmerge \
+            -DCMAKE_PREFIX_PATH="$QTDIR;$KF5DIR;$VPROOT/installed/$VPT_TRIPLET" \
+            -DCMAKE_TOOLCHAIN_FILE="$VPTC" \
+            -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
+            -DVCPKG_TARGET_TRIPLET="$VPT_TRIPLET" \
+            -DANDROID_ABI='${{ matrix.abi }}' -DANDROID_PLATFORM="android-$ANDROID_API" 2>&1 | tail -100
+          grep -m2 'CMAKE_PREFIX_PATH\|ANDROID' "$GITHUB_WORKSPACE/build/CMakeCache.txt" || echo 'DIAG: no cache entries matched'
+
+      - name: Prune per-lib .so link edges from build.ninja (objects are the deliverable)
+        run: |
+          cd "$GITHUB_WORKSPACE/build"
+          python - << 'PYEOF'
+          import re
+          data = open('build.ninja','rb').read().decode('utf-8', 'replace')
+          SO = re.compile(r'\.so(\.[0-9.]+)?$')
+          def is_lib_tok(t):
+              return bool(SO.search(t)) or t.endswith('.a')
+          blocks = data.split('\n\n')
+          kept = []
+          dropped = 0
+          for b in blocks:
+              if not b.strip():
+                  continue
+              lines = b.split('\n')
+              first = lines[0]
+              if first.startswith('build '):
+                  outputs = first.split(':', 1)[0].split()
+                  if any(is_lib_tok(o) for o in outputs):
+                      dropped += 1
+                      continue
+              nb = []
+              for l in lines:
+                  toks = [t for t in l.split(' ') if not is_lib_tok(t)]
+                  nb.append(' '.join(toks))
+              kept.append('\n'.join(nb))
+          open('build.ninja','w').write('\n\n'.join(kept) + '\n')
+          print('dropped link edges:', dropped, '| kept blocks:', len(kept))
+          bad = [l for l in open('build.ninja').read().split('\n')
+                 if l.startswith('build ') and any(is_lib_tok(t) for t in l.split(' '))]
+          print('lines still referencing lib outputs:', len(bad))
+          for l in bad[:5]: print('  BAD:', l[:120])
+          if bad:
+              raise SystemExit(3)
+          PYEOF
+          test "$?" -eq 0 || { echo 'FATAL: build.ninja surgery failed'; exit 1; }
+
+      - name: Build brush engine OBJECTS (engine closure, NDK)
+        run: |
+          cd "$GITHUB_WORKSPACE/build"
+          # Same explicit-object design as the Windows job (loop-35): build
+          # the closure's object outputs directly; the merged-.so link step
+          # consumes them. -k 0 so one bad TU doesn't block the rest.
+          OBJS=$(ninja -t targets all | grep -E '\.o:' \
+            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets|libraqm)(_autogen)?\.dir' \
+            | cut -d: -f1)
+          NOBJS_PLAN=$(printf '%s\n' "$OBJS" | wc -l)
+          echo "objects planned: $NOBJS_PLAN"
+          [ "$NOBJS_PLAN" -gt 700 ] || { echo 'FATAL: object plan too small - filter mismatch?'; printf '%s\n' "$OBJS" | head -5; exit 1; }
+          printf '%s\n' "$OBJS" | xargs -n 80 ninja -k 0 2>&1 | tail -40 || true
+          NOBJS=$(find . -name '*.o' | wc -l)
+          echo "krita objects built: $NOBJS"
+          [ "$NOBJS" -gt 700 ] || { echo 'FATAL: too few objects built (compile errors?)'; exit 1; }
+          [ -n "$(find . -name 'kis_auto_brush.cpp.o' | head -1)" ] || { echo 'FATAL: kis_auto_brush.cpp.o missing'; exit 1; }
+          [ -n "$(find . -name 'KoXmlNS.cpp.o' | head -1)" ] || { echo 'FATAL: KoXmlNS.cpp.o missing'; exit 1; }
+          [ -n "$(find . -path '*CMakeFiles/libraqm.dir*' -name 'raqm.c.o' | head -1)" ] || { echo 'FATAL: vendored raqm.c.o missing'; exit 1; }
+          echo 'object gates OK'
+
+      - name: Merge real-engine .so (all krita objects + bridge glue) + export gates
+        run: |
+          WS="$GITHUB_WORKSPACE"
+          BUILD="$WS/build"
+          QT="$QTDIR"
+          KF5="$KF5DIR"
+          VP="$VPROOT/installed/$VPT_TRIPLET"
+          TC="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          mkdir -p artifact/lib
+          # ---- include dirs: reuse the exact flags CMake configured for kritalibbrush
+          BRUSHREL=$(cd "$BUILD" && find libs -name 'KisBrushModel.cpp.o' | head -1)
+          [ -z "$BRUSHREL" ] && BRUSHREL=$(cd "$BUILD" && find libs -name 'kis_auto_brush.cpp.o' | head -1)
+          [ -n "$BRUSHREL" ] || { echo 'FATAL: brush obj not found for include extraction'; exit 1; }
+          LINE=$(cd "$BUILD" && ninja -t commands "$BRUSHREL" | tail -1 || true)
+          [ -n "$LINE" ] || { echo 'FATAL: no compile command found for' "$BRUSHREL"; exit 1; }
+          INCS=$(printf '%s' "$LINE" | grep -oE '(-I"[^"]+"|-I[^ ]+)' | sed -E 's#^-I"?([^"]+)"?$#\1#' | sort -u | head -200 | sed 's#^#-I#' | tr '\n' ' ')
+          echo "extracted include dirs: $(printf '%s' "$INCS" | wc -w)"
+          LIBD=$(find "$WS/krita/libs" -maxdepth 2 -type d | sed 's#^#-I#' | tr '\n' ' ')
+          GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -80 | sed 's#^#-I#' | tr '\n' ' ')
+          QTINC=''; KFINC=''
+          for d in "$QT/include"/Qt*; do [ -d "$d" ] && QTINC="$QTINC -I$d"; done
+          for d in "$KF5/include/KF5"/*/; do [ -d "$d" ] && KFINC="$KFINC -I$d"; done
+          INCS="$INCS $LIBD $GEND -I$WS/krita -I$BUILD $QTINC $KFINC -I$VP/include"
+          echo "total include dirs: $(printf '%s' "$INCS" | wc -w)"
+          # ---- closure objects
+          find "$BUILD/libs" "$BUILD/3rdparty_vendor" -name '*.o' \
+            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets|libraqm)(_autogen)?\.dir' \
+            | sort > "$BUILD/krita_objs.rsp"
+          NOBJS=$(wc -l < "$BUILD/krita_objs.rsp")
+          echo "merging $NOBJS krita objects into ONE engine .so"
+          # ---- static vcpkg archives: FULL PATHS on the link line
+          # (over-link is safe: unused archive members are skipped)
+          VPLIBS=$(find "$VP/lib" -maxdepth 1 -name '*.a' | tr '\n' ' ')
+          echo "vcpkg static libs: $(echo $VPLIBS | wc -w)"
+          # ---- KF5 cross-built shared libs: full paths, over-link safe on ELF
+          KFLIBS=$(find "$KF5/lib" -maxdepth 1 -name 'libKF5*.so' | tr '\n' ' ')
+          echo "kf5 libs: $(echo $KFLIBS | wc -w)"
+          # ---- deterministic STL: Qt5 android libs use libc++_shared.so; the
+          # merged engine must use the SAME STL (two libc++ copies in one
+          # process = ODR crash). -nostdlib++ suppresses the driver default,
+          # then libc++_shared.so is linked explicitly + bundled.
+          LIBCXXSHARED="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$ABI_TRIPLE/libc++_shared.so"
+          test -f "$LIBCXXSHARED" || { echo "FATAL: libc++_shared.so not found at $LIBCXXSHARED"; exit 1; }
+          CLANG="$TC/$ABI_TRIPLE-clang++"
+          $CLANG -std=c++17 -shared -fPIC -O2 -fno-operator-names -nostdlib++ $INCS \
+            "$WS/bridge/krita_bridge_real.cpp" \
+            @"$BUILD/krita_objs.rsp" \
+            -L"$QT/lib" -L"$KF5/lib" -L"$VP/lib" \
+            -l"Qt5Core_${{ matrix.abi }}" -l"Qt5Gui_${{ matrix.abi }}" -l"Qt5Xml_${{ matrix.abi }}" \
+            -l"Qt5Svg_${{ matrix.abi }}" -l"Qt5Widgets_${{ matrix.abi }}" -l"Qt5Sql_${{ matrix.abi }}" \
+            -l"Qt5Concurrent_${{ matrix.abi }}" -l"Qt5Network_${{ matrix.abi }}" \
+            $KFLIBS $VPLIBS \
+            "$LIBCXXSHARED" -lz -llog \
+            -o artifact/lib/libkrita_bridge.so
+          # ---- export gate: the extern "C" bridge ABI must be visible
+          NM="$TC/llvm-nm"
+          NEXP=$("$NM" -D --defined-only artifact/lib/libkrita_bridge.so | grep -c 'krita_bridge' || true)
+          echo "exported krita_bridge symbols: $NEXP"
+          [ "$NEXP" -ge 5 ] || { echo 'FATAL: bridge ABI exports missing'; exit 1; }
+          "$NM" -D --defined-only artifact/lib/libkrita_bridge.so | grep 'krita_bridge' | head -12
+          # ---- diagnostics: unresolved symbols triage (NOT a hard gate yet;
+          # bionic/log symbols are provided by the OS at dlopen time)
+          UNDEF=$("$NM" -D --undefined-only artifact/lib/libkrita_bridge.so | awk '{print $NF}' | sort -u)
+          NUNDEF=$(printf '%s\n' "$UNDEF" | wc -l)
+          echo "undefined symbol refs: $NUNDEF (resolved at load by Qt/KF5/bionic)"
+          printf '%s\n' "$UNDEF" | grep -E 'Ko[A-Z]|Kis[A-Z]|krita_bridge' | head -40 || echo 'OK: no unresolved krita-namespace refs'
+          # ---- runtime .so bundle for emulator smoke (Qt + KF5, per-ABI where suffixed)
+          mkdir -p artifact/android/${{ matrix.abi }}
+          cp "$QT/lib"/libQt5*_x86_64.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
+          cp "$QT/lib"/libQt5*_arm64-v8a.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
+          cp "$QT/lib"/libicu*.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
+          cp "$KF5/lib"/libKF5*.so* artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
+          ls -lh artifact/lib/ artifact/android/${{ matrix.abi }}/ | head -40
+
+      - name: Save dependency caches
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /opt/kf5-android
+            /opt/kf5-host
+            /opt/kf5-src
+            /opt/vcpkg-android/installed
+          key: andengine-deps-v1-${{ matrix.abi }}
+
+      - name: Save krita build tree cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/build
+          key: andengine-krbuild-${{ matrix.abi }}-v1
+
+      - name: Upload Android brush engine
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: krita-brush-engine-android-${{ matrix.abi }}
+          path: artifact/
+          retention-days: 90
+
+      - name: Android Summary
+        if: always()
+        run: |
+          echo "## Real Krita Brush Engine (Android NDK ${{ matrix.abi }}, merged single-.so)" >> $GITHUB_STEP_SUMMARY
+          echo "Source: real Krita v6.0.4 (unmodified, from krita-source/)" >> $GITHUB_STEP_SUMMARY
+          if [ -f artifact/lib/libkrita_bridge.so ]; then
+            echo "### SUCCESS — merged libkrita_bridge.so (engine+bridge in one image, NDK ${{ matrix.abi }})" >> $GITHUB_STEP_SUMMARY
+            ls -lh artifact/lib/ >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### FAILED — no engine .so produced" >> $GITHUB_STEP_SUMMARY
+          fi
