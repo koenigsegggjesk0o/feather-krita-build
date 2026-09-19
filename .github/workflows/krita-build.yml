@@ -1021,12 +1021,20 @@ jobs:
           NUNDEF=$(printf '%s\n' "$UNDEF" | wc -l)
           echo "undefined symbol refs: $NUNDEF (resolved at load by Qt/KF5/bionic)"
           printf '%s\n' "$UNDEF" | grep -E 'Ko[A-Z]|Kis[A-Z]|krita_bridge' | head -40 || echo 'OK: no unresolved krita-namespace refs'
-          # ---- runtime .so bundle for emulator smoke (Qt + KF5, per-ABI where suffixed)
+          # ---- runtime .so bundle for emulator smoke + APK wiring
+          # (Qt + KF5 + icu + libc++_shared, per-ABI where suffixed)
           mkdir -p artifact/android/${{ matrix.abi }}
           cp "$QT/lib"/libQt5*_x86_64.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           cp "$QT/lib"/libQt5*_arm64-v8a.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           cp "$QT/lib"/libicu*.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           cp "$KF5/lib"/libKF5*.so* artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
+          cp "$LIBCXXSHARED" artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
+          # ---- android smoke executable (links the merged engine .so; run
+          # later on an x86_64 emulator via adb for the C++ end-to-end proof)
+          $CLANG -std=c++17 -O2 -fPIE -pie $INCS "$WS/bridge/smoke_test_real.cpp" \
+            "$WS/artifact/lib/libkrita_bridge.so" \
+            -Wl,-rpath,'$ORIGIN' \
+            -o artifact/bin/smoke_test_real_android || echo 'WARNING: smoke exe link failed (non-fatal this iteration)'
           ls -lh artifact/lib/ artifact/android/${{ matrix.abi }}/ | head -40
 
       - name: Save dependency caches
