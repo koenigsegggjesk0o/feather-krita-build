@@ -448,6 +448,11 @@ jobs:
           [ -z "$LINE" ] && LINE=$(cd "$BUILD" && ninja -t commands kritalibbrush | head -1)
           INCS=$(printf '%s' "$LINE" | grep -oE '(/|-)I"[^"]+"|(/|-)I[^ ]+' | sed -E 's#^(/|-)I"?([^"]+)"?$#\2#' | sort -u | head -200 | sed 's#^#/I"#; s#$#"#' | tr '\n' ' ')
           echo "extracted include dirs: $(printf '%s' "$INCS" | wc -w)"
+          # belt-and-braces: every lib subdir + every dir containing generated headers
+          LIBD=$(find "$WS/krita/libs" -maxdepth 2 -type d | sed 's#^#/I"#; s#$#"#' | tr '\n' ' ')
+          GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -80 | sed 's#^#/I"#; s#$#"#' | tr '\n' ' ')
+          INCS="$INCS $LIBD $GEND /I\"$WS/krita\" /I\"$BUILD\""
+          echo "total include dirs: $(printf '%s' "$INCS" | wc -w)"
           # ---- import libs: locate every krita*.lib produced by the build
           LIBPATHS=$(find "$BUILD" -name 'krita*.lib' -exec dirname {} \; | sort -u | head -10 | sed 's#^#/LIBPATH:"#; s#$#"#' | tr '\n' ' ')
           echo "import lib dirs: $LIBPATHS"
