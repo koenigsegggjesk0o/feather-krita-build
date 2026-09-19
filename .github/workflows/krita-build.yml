@@ -282,11 +282,12 @@ jobs:
           for i in 1 2 3; do
             rm -rf 'C:/Qt'
             aqt install-qt windows desktop 5.15.2 win64_msvc2019_64 -O 'C:/Qt' \
-              --archives qtbase qtdeclarative qtquickcontrols2 qttools qtsvg qttranslations && break
+              --archives qtbase qtdeclarative qtquickcontrols2 qttools qtsvg qttranslations qtwinextras && break
             echo "aqt attempt $i failed; retrying in 15s"; sleep 15
           done
           test -f "$QTDIR/bin/Qt5Core.dll" || { echo 'FATAL: Qt5Core.dll missing'; exit 1; }
           test -f "$QTDIR/bin/Qt5Svg.dll" || { echo 'FATAL: Qt5Svg.dll missing'; exit 1; }
+          test -f "$QTDIR/bin/Qt5WinExtras.dll" || { echo 'FATAL: Qt5WinExtras.dll missing'; exit 1; }
           echo "Qt installed: $QTDIR"
 
       - name: Bootstrap fresh vcpkg (runner's C:\vcpkg has a pruned ports tree — lcms2 missing)
@@ -617,14 +618,15 @@ jobs:
             "@$BUILD/krita_objs.rsp" \
             /LD /Fe:artifact/bin/krita_bridge_real.dll /IMPLIB:artifact/lib/krita_bridge_real.lib \
             /link /LIBPATH:"$QT/lib" /LIBPATH:"$KF5/lib" /LIBPATH:"$VP/lib" \
-            Qt5Core.lib Qt5Gui.lib Qt5Xml.lib Qt5Svg.lib Qt5Widgets.lib Qt5Sql.lib Qt5Concurrent.lib Qt5Network.lib Qt5PrintSupport.lib 
-                        ole32.lib shell32.lib user32.lib advapi32.lib uuid.lib gdi32.lib \
+            Qt5Core.lib Qt5Gui.lib Qt5Xml.lib Qt5Svg.lib Qt5Widgets.lib Qt5Sql.lib Qt5Concurrent.lib Qt5Network.lib Qt5PrintSupport.lib Qt5WinExtras.lib \
+            ole32.lib shell32.lib user32.lib advapi32.lib uuid.lib gdi32.lib \
             $KFLIBS \
             $VPLIBARGS
           # ---- collect runtime DLLs next to the smoke exe (Windows resolves from PATH/artifact dir)
           cp "$QT/bin/Qt5Core.dll" "$QT/bin/Qt5Gui.dll" "$QT/bin/Qt5Xml.dll" \
              "$QT/bin/Qt5Svg.dll" "$QT/bin/Qt5Widgets.dll" "$QT/bin/Qt5Sql.dll" \
-             "$QT/bin/Qt5Concurrent.dll" "$QT/bin/Qt5Network.dll" "$QT/bin/Qt5PrintSupport.dll" artifact/bin/
+             "$QT/bin/Qt5Concurrent.dll" "$QT/bin/Qt5Network.dll" "$QT/bin/Qt5PrintSupport.dll" \
+             "$QT/bin/Qt5WinExtras.dll" artifact/bin/
           cp "$KF5/bin/"KF5*.dll artifact/bin/ 2>/dev/null || true
           cp -r "$VP/bin/"*.dll artifact/bin/ 2>/dev/null || true
           # ---- smoke exe (links the bridge import lib, exercises the full closure)
