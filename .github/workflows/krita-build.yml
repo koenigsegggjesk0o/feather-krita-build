@@ -1107,7 +1107,14 @@ jobs:
             -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
             -DVCPKG_TARGET_TRIPLET="$VPT_TRIPLET" \
             -DANDROID_ABI='${{ matrix.abi }}' -DANDROID_PLATFORM="android-$ANDROID_API" \
-            -DANDROID_STL=c++_shared 2>&1 | tail -100
+            -DANDROID_STL=c++_shared 2>&1 | tee /tmp/krita_configure.log | tail -60
+          # cmake|tee hides the exit code — gate on artifacts explicitly
+          if grep -qE 'CMake Error|Configuring incomplete' /tmp/krita_configure.log; then
+            echo '=== configure FAILED — error context: ==='
+            grep -B3 -A15 -E 'CMake Error|Configuring incomplete' /tmp/krita_configure.log | tail -60
+            exit 1
+          fi
+          test -f "$GITHUB_WORKSPACE/build/build.ninja" || { echo 'FATAL: build.ninja not generated'; tail -60 /tmp/krita_configure.log; exit 1; }
           grep -m2 'CMAKE_PREFIX_PATH\|ANDROID' "$GITHUB_WORKSPACE/build/CMakeCache.txt" || echo 'DIAG: no cache entries matched'
 
       - name: Prune per-lib .so link edges from build.ninja (objects are the deliverable)
