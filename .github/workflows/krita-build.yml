@@ -851,10 +851,10 @@ jobs:
             FW_SHARED_LINK_FLAGS=""
             if [ "$fw" = "ki18n" ]; then
               {
-                echo '#include <QByteArray>'
-                echo '#include <cstdio>'
-                echo 'static inline void ki18n_stub_load(const QByteArray &, FILE *) {}'
-                echo '#define loadMessageCatalogFile(domain, moFile) ki18n_stub_load(domain, moFile)'
+                echo '#pragma once'
+                echo 'template <typename... A>'
+                echo 'static inline void ki18n_stub_load(A &&...) {}'
+                echo '#define loadMessageCatalogFile(...) ki18n_stub_load(__VA_ARGS__)'
               } > /opt/ki18n_android_stub.h
               FW_CXX_FLAGS="-include /opt/ki18n_android_stub.h"
               FW_SHARED_LINK_FLAGS="-landroid -llog"
