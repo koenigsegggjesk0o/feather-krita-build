@@ -425,18 +425,54 @@ jobs:
           grep -m2 'CMAKE_PREFIX_PATH\|ECM_DIR' "$GITHUB_WORKSPACE/build/CMakeCache.txt" || echo 'DIAG: no prefix entries in CMakeCache'
 
 
-      - name: Build brush engine OBJECTS (kritaimage + kritalibbrush closure, keep-going)
+      - name: Prune per-lib DLL link edges from build.ninja (objects are the deliverable)
         run: |
           cd "$GITHUB_WORKSPACE/build"
-          # loop-35 fix43 DESIGN CHANGE: we no longer consume the per-lib
+          # loop-35 fix44: CMake's ninja graph makes object edges transitively
+          # depend on the per-lib DLL links (via AutoGen chains), so a single
+          # failing DLL link (cross-DLL static-data imports) stalls the whole
+          # build. We never consume those DLLs — the bridge step merges ALL
+          # objects into ONE engine DLL — so the link edges are surgically
+          # removed here: pure workflow tooling, krita source untouched.
+          python - << 'PYEOF'
+          data = open('build.ninja','rb').read().decode('latin-1')
+          blocks = data.split('\n\n')
+          kept = []
+          dropped = 0
+          for b in blocks:
+              if not b.strip():
+                  continue
+              lines = b.split('\n')
+              first = lines[0]
+              if first.startswith('build '):
+                  outputs = first.split(':', 1)[0].split()
+                  if any(o.endswith('.dll') or o.endswith('.lib') for o in outputs):
+                      dropped += 1
+                      continue
+              nb = []
+              for l in lines:
+                  toks = l.split(' ')
+                  toks = [t for t in toks if not (t.endswith('.dll') or t.endswith('.lib') or t.endswith('.exp'))]
+                  nb.append(' '.join(toks))
+              kept.append('\n'.join(nb))
+          open('build.ninja','wb').write(('\n\n'.join(kept) + '\n').encode('latin-1'))
+          print('dropped link edges:', dropped, '| kept blocks:', len(kept))
+          PYEOF
+          test "$?" -eq 0 || { echo 'FATAL: build.ninja surgery failed'; exit 1; }
+          grep -E '^build .*\.(dll|lib) ' build.ninja | head -3 || echo 'OK: no dll/lib output edges remain'
+
+      - name: Build brush engine OBJECTS (kritaimage + kritalibbrush closure)
+        run: |
+          cd "$GITHUB_WORKSPACE/build"
+          # loop-35 fix43/fix44 DESIGN: we no longer consume the per-lib
           # krita*.dll at all. Cross-DLL static-data imports (e.g.
           # KoXmlNS::manifest from kritastore used by kritaresources) cannot
           # be satisfied without dllimport semantics, which conflict with the
           # empty-export flags that kill the dllexport forced-instantiation
-          # errors. So: build ALL objects with ninja -k 0 (DLL link failures
-          # tolerated), then link every krita object directly into ONE merged
-          # engine DLL in the bridge step. Krita source remains untouched.
-          cmake --build . --target kritaimage kritalibbrush --parallel 4 -- -k 0 2>&1 | tail -300 || echo 'NOTE: per-lib DLL link failures tolerated - objects are the deliverable'
+          # errors. Link edges are pruned from build.ninja (previous step);
+          # this step compiles the complete object set. Krita source remains
+          # untouched.
+          ninja kritaimage kritalibbrush 2>&1 | tail -60
           NOBJS=$(find . -name '*.obj' | wc -l)
           echo "krita objects built: $NOBJS"
           [ "$NOBJS" -gt 700 ] || { echo 'FATAL: too few objects built (compile errors?)'; exit 1; }
@@ -476,6 +512,10 @@ jobs:
           # ---- vcpkg import libs (over-link: unused import libs are ignored)
           VPLIBARGS=$(find "$VP/lib" -maxdepth 1 -name '*.lib' -printf '%f ' | tr '\n' ' ')
           echo "vcpkg libs: $VPLIBARGS"
+          # ---- KF5-built static libs outside the KF5 framework set (lager,
+          # QuaZip — kritalibbrush links lager; KRA/ORA zip I/O needs quazip)
+          KFLIBS=$(find "$KF5/lib" -maxdepth 1 \( -iname 'lager*.lib' -o -iname 'quazip*.lib' \) -printf '%f ' | tr '\n' ' ')
+          echo "kf5 extra libs: $KFLIBS"
           # ---- merged engine DLL = bridge glue + all krita objects.
           # Objects were compiled with EMPTY krita export macros, so all
           # cross-object references are direct and resolve inside this one
@@ -496,6 +536,7 @@ jobs:
             /link /LIBPATH:"$QT/lib" /LIBPATH:"$KF5/lib" /LIBPATH:"$VP/lib" \
             Qt5Core.lib Qt5Gui.lib Qt5Xml.lib Qt5Svg.lib Qt5Widgets.lib Qt5Sql.lib Qt5Concurrent.lib Qt5Network.lib \
             KF5CoreAddons.lib KF5Archive.lib KF5Config.lib KF5I18n.lib KF5GuiAddons.lib KF5WidgetsAddons.lib KF5Completion.lib KF5ItemViews.lib \
+            $KFLIBS \
             $VPLIBARGS
           # ---- collect runtime DLLs next to the smoke exe (Windows resolves from PATH/artifact dir)
           cp "$QT/bin/Qt5Core.dll" "$QT/bin/Qt5Gui.dll" "$QT/bin/Qt5Xml.dll" \
