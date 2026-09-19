@@ -708,9 +708,10 @@ jobs:
             /opt/kf5-src
             /opt/kf5-build
             /opt/vcpkg-android/installed
-          key: andengine-deps-v2-${{ matrix.abi }}
+          key: andengine-deps-v3-${{ matrix.abi }}
           restore-keys: |
-            andengine-deps-v2-${{ matrix.abi }}-
+            andengine-deps-v3-${{ matrix.abi }}-
+            andengine-deps-v2-${{ matrix.abi }}
             andengine-deps-v1-${{ matrix.abi }}
 
       - name: Restore krita build tree (ninja incremental)
@@ -722,9 +723,14 @@ jobs:
 
       - name: Clone krita-source (real Krita v6.0.4, unmodified)
         run: |
-          git clone --depth 1 --branch main \
-            "https://x-access-token:${{ secrets.KRITA_SOURCE_TOKEN }}@github.com/koenigsegggjesk0o/krita.git" \
-            /tmp/krita-repo
+          for i in 1 2 3 4 5; do
+            rm -rf /tmp/krita-repo
+            git clone --depth 1 --branch main \
+              "https://x-access-token:${{ secrets.KRITA_SOURCE_TOKEN }}@github.com/koenigsegggjesk0o/krita.git" \
+              /tmp/krita-repo && break
+            echo "kr clone attempt $i failed; retry in 15s"; sleep 15
+          done
+          test -d /tmp/krita-repo/krita-source || { echo 'FATAL: krita clone failed after retries'; exit 1; }
           cp -r /tmp/krita-repo/krita-source "$GITHUB_WORKSPACE/krita"
           cd "$GITHUB_WORKSPACE/krita"
           echo "=== Real Krita source verified ==="
@@ -732,9 +738,14 @@ jobs:
 
       - name: Clone bridge sources (app repo, feather-krita-flutter)
         run: |
-          git clone --depth 1 --branch feather-krita-flutter \
-            "https://x-access-token:${{ secrets.KRITA_SOURCE_TOKEN }}@github.com/koenigsegggjesk0o/krita.git" \
-            /tmp/fkr-app
+          for i in 1 2 3 4 5; do
+            rm -rf /tmp/fkr-app
+            git clone --depth 1 --branch feather-krita-flutter \
+              "https://x-access-token:${{ secrets.KRITA_SOURCE_TOKEN }}@github.com/koenigsegggjesk0o/krita.git" \
+              /tmp/fkr-app && break
+            echo "bridge clone attempt $i failed; retry in 15s"; sleep 15
+          done
+          test -d /tmp/fkr-app/native/krita_bridge || { echo 'FATAL: bridge clone failed after retries'; exit 1; }
           mkdir -p "$GITHUB_WORKSPACE/bridge"
           cp /tmp/fkr-app/native/krita_bridge/krita_bridge.h        "$GITHUB_WORKSPACE/bridge/"
           cp /tmp/fkr-app/native/krita_bridge/krita_bridge_real.cpp "$GITHUB_WORKSPACE/bridge/"
@@ -784,7 +795,11 @@ jobs:
       - name: ECM (host build, arch-independent install into cross prefix)
         run: |
           mkdir -p /opt/kf5-src /opt/kf5-build
-          [ -d /opt/kf5-src/ECM ] || git clone --depth 1 --branch "$KFTAG" https://invent.kde.org/frameworks/extra-cmake-modules.git /opt/kf5-src/ECM
+          [ -d /opt/kf5-src/ECM ] || for i in 1 2 3 4 5; do
+            git clone --depth 1 --branch "$KFTAG" https://invent.kde.org/frameworks/extra-cmake-modules.git /opt/kf5-src/ECM && break
+            echo "clone ECM attempt $i failed; retry in 15s"; rm -rf /opt/kf5-src/ECM; sleep 15
+          done
+          test -d /opt/kf5-src/ECM || { echo 'FATAL: clone ECM failed after retries'; exit 1; }
           cmake -S /opt/kf5-src/ECM -B /opt/kf5-build/build-ecm -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$KF5DIR" -DBUILD_TESTING=OFF
           cmake --build /opt/kf5-build/build-ecm
@@ -799,7 +814,11 @@ jobs:
           export PATH="$KF5HOST/bin:$PATH"
           for fw in kcoreaddons kconfig; do
             echo "=== host framework: $fw ==="
-            [ -d "/opt/kf5-src/host-$fw" ] || git clone --depth 1 --branch "$KFTAG" "https://invent.kde.org/frameworks/$fw.git" "/opt/kf5-src/host-$fw"
+            [ -d "/opt/kf5-src/host-$fw" ] || for i in 1 2 3 4 5; do
+              git clone --depth 1 --branch "$KFTAG" "https://invent.kde.org/frameworks/$fw.git" "/opt/kf5-src/host-$fw" && break
+              echo "clone host-$fw attempt $i failed; retry in 15s"; rm -rf "/opt/kf5-src/host-$fw"; sleep 15
+            done
+            test -d "/opt/kf5-src/host-$fw" || { echo "FATAL: clone host-$fw failed after retries"; exit 1; }
             cmake -S "/opt/kf5-src/host-$fw" -B "/opt/kf5-build/host-$fw" -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX="$KF5HOST" \
@@ -818,7 +837,11 @@ jobs:
           PREFIX="$QTDIR;$KF5DIR;$VPROOT/installed/$VPT_TRIPLET"
           for fw in kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews; do
             echo "=== cross framework: $fw (${{ matrix.abi }}) ==="
-            [ -d "/opt/kf5-src/KF5-$fw" ] || git clone --depth 1 --branch "$KFTAG" "https://invent.kde.org/frameworks/$fw.git" "/opt/kf5-src/KF5-$fw"
+            [ -d "/opt/kf5-src/KF5-$fw" ] || for i in 1 2 3 4 5; do
+              git clone --depth 1 --branch "$KFTAG" "https://invent.kde.org/frameworks/$fw.git" "/opt/kf5-src/KF5-$fw" && break
+              echo "clone $fw attempt $i failed; retry in 15s"; rm -rf "/opt/kf5-src/KF5-$fw"; sleep 15
+            done
+            test -d "/opt/kf5-src/KF5-$fw" || { echo "FATAL: clone $fw failed after retries"; exit 1; }
             # ki18n v5.116 has a latent Qt5-android compile bug: the
             # assets:-catalog path calls loadMessageCatalogFile which no
             # upstream source file defines (libintl-lite era leftover). We
@@ -874,7 +897,11 @@ jobs:
 
       - name: Cross-build QuaZip v1.4 (Qt5Core-only, NDK)
         run: |
-          [ -d /opt/kf5-src/quazip ] || git clone --depth 1 --branch v1.4 https://github.com/stachenov/quazip.git /opt/kf5-src/quazip
+          [ -d /opt/kf5-src/quazip ] || for i in 1 2 3 4 5; do
+            git clone --depth 1 --branch v1.4 https://github.com/stachenov/quazip.git /opt/kf5-src/quazip && break
+            echo "clone quazip attempt $i failed; retry in 15s"; rm -rf /opt/kf5-src/quazip; sleep 15
+          done
+          test -d /opt/kf5-src/quazip || { echo 'FATAL: clone quazip failed after retries'; exit 1; }
           cmake -S /opt/kf5-src/quazip -B /opt/kf5-build/and-quazip -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$KF5DIR" \
             -DCMAKE_PREFIX_PATH="$QTDIR;$KF5DIR;$VPROOT/installed/$VPT_TRIPLET" \
@@ -1066,10 +1093,9 @@ jobs:
           path: |
             /opt/kf5-android
             /opt/kf5-host
-            /opt/kf5-src
             /opt/kf5-build
             /opt/vcpkg-android/installed
-          key: andengine-deps-v2-${{ matrix.abi }}
+          key: andengine-deps-v3-${{ matrix.abi }}
 
       - name: Save krita build tree cache
         if: always()
