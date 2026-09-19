@@ -13,9 +13,12 @@
 // <bundleDir> is the Flutter Linux bundle directory (containing lib/).
 // The bridge (lib/libkrita_bridge.so, renamed from libkrita_bridge_real.so)
 // and the real libkrita*.so libraries must live in <bundleDir>/lib/.
-// The script switches the process CWD to the bundle so the loader's
-// relative candidates resolve, and the bridge's own rpath ($ORIGIN) finds
-// the bundled Krita libraries.
+// On Windows there is no lib/ subdir: krita_bridge.dll, Qt5*/KF5*/vcpkg
+// runtime DLLs all sit NEXT to the exe (single merged engine DLL, loop-35),
+// so <bundleDir> is the Release directory itself and the lib/ check is
+// skipped there. The script switches the process CWD to the bundle so the
+// loader's relative candidates resolve, and the bridge's own rpath ($ORIGIN)
+// finds the bundled Krita libraries on Linux.
 
 import 'dart:io';
 
@@ -44,12 +47,14 @@ void main(List<String> args) {
   }
   final bundle = Directory(args[0]).absolute.path;
   final libDir = Directory('$bundle/lib');
-  if (!libDir.existsSync()) {
+  // Windows layout: DLLs next to the exe, no lib/ subdir (merged engine DLL).
+  if (!libDir.existsSync() && !Platform.isWindows) {
     stderr.writeln('bundle lib dir not found: $libDir');
     exit(2);
   }
   stdout.writeln('bundle: $bundle');
-  stdout.writeln('lib contents: ${libDir.listSync().length} files');
+  final contentDir = libDir.existsSync() ? libDir : Directory(bundle);
+  stdout.writeln('native dir contents: ${contentDir.listSync().length} files');
 
   // The FFI loader resolves relative candidates against the process CWD.
   Directory.current = bundle;
