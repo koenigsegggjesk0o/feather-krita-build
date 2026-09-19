@@ -394,6 +394,8 @@ jobs:
       - name: Configure Krita (minimal engine build, Qt5, MSVC, unmodified source)
         run: |
           export PATH="C:/vcpkg2/installed/x64-windows/tools/gettext/bin:$PATH"
+          # stale CMakeCache entries poison re-configures (e.g. GETTEXT executables cached NOTFOUND)
+          rm -f "$GITHUB_WORKSPACE/build/CMakeCache.txt"
           # Krita's custom FindLibExiv2/Find modules get their versions via
           # pkg-config first; the runner has no pkg-config and vcpkg's .pc
           # files are not on PKG_CONFIG_PATH by default.
@@ -415,6 +417,8 @@ jobs:
             -DCMAKE_DISABLE_FIND_PACKAGE_LibMyPaint=TRUE \
             -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_C_COMPILER=clang-cl \
             -DPKG_CONFIG_EXECUTABLE='C:/vcpkg2/installed/x64-windows/tools/pkgconf/pkgconf.exe' \
+            -DGETTEXT_MSGFMT_EXECUTABLE='C:/vcpkg2/installed/x64-windows/tools/gettext/bin/msgfmt.exe' \
+            -DGETTEXT_MSGMERGE_EXECUTABLE='C:/vcpkg2/installed/x64-windows/tools/gettext/bin/msgmerge.exe' \
             -DCMAKE_PREFIX_PATH="$KF5DIR;$QTDIR;C:/vcpkg2/installed/x64-windows" \
             -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake' \
             -DVCPKG_TARGET_TRIPLET=x64-windows 2>&1 | tail -100
