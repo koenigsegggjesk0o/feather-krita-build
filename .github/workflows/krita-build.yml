@@ -403,6 +403,9 @@ jobs:
           fi
           meson compile -C C:/kf5-build/build-raqm
           meson install -C C:/kf5-build/build-raqm
+          # meson names the clang-cl static archive libraqm.a — same COFF
+          # archive content; expose it under the .lib name lld-link searches for
+          [ -f "$KF5DIR/lib/libraqm.a" ] && cp "$KF5DIR/lib/libraqm.a" "$KF5DIR/lib/raqm.lib" || true
           test -n "$(find "$KF5DIR/lib" -maxdepth 1 -iname 'raqm*.lib' | head -1)" || { echo 'FATAL: raqm.lib not installed'; exit 1; }
           find "$KF5DIR/lib" -maxdepth 1 -iname 'raqm*.lib'
 
