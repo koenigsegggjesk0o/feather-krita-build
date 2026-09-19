@@ -478,9 +478,17 @@ jobs:
           # alias chains whose behavior surprised us in fix44b). -k 0 keeps
           # one bad TU from blocking the rest; the object gates below catch
           # under-production. Krita source remains untouched.
-          OBJS=$(ninja -t targets all | grep -E 'CMakeFiles/krita[^:\\/]*/.*\.obj:' | cut -d: -f1)
+          # loop-35 fix45: EXPLICIT closure target list — the previous
+          # forward-slash grep silently matched nothing, the empty list made
+          # xargs run bare `ninja -k 0` (building the ENTIRE 2621-target
+          # graph incl. app+plugins!). Target-dir names match both / and \
+          # paths via the CMakeFiles.(x).dir pattern.
+          OBJS=$(ninja -t targets all | grep -E '\.obj:' \
+            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets)(_autogen)?\.dir' \
+            | cut -d: -f1)
           NOBJS_PLAN=$(printf '%s\n' "$OBJS" | wc -l)
           echo "objects planned: $NOBJS_PLAN"
+          [ "$NOBJS_PLAN" -gt 700 ] || { echo 'FATAL: object plan too small - filter mismatch?'; printf '%s\n' "$OBJS" | head -5; exit 1; }
           printf '%s\n' "$OBJS" | xargs -n 80 ninja -k 0 2>&1 | tail -40 || true
           NOBJS=$(find . -name '*.obj' | wc -l)
           echo "krita objects built: $NOBJS"
@@ -500,14 +508,17 @@ jobs:
           VP='C:/vcpkg2/installed/x64-windows'
           mkdir -p artifact/lib artifact/bin
           # ---- include dirs: reuse the exact flags CMake configured for kritalibbrush
-          LINE=$(cd "$BUILD" && ninja -t commands kritalibbrush | grep 'KisBrushModel' | head -1)
-          [ -z "$LINE" ] && LINE=$(cd "$BUILD" && ninja -t commands kritalibbrush | head -1)
+          # fix45: grep -m1 + || true — pipefail + -e killed the whole step
+          # silently in fix44c when this pipeline tripped SIGPIPE.
+          LINE=$(cd "$BUILD" && ninja -t commands kritalibbrush | grep -m1 'KisBrushModel' || true)
+          [ -z "$LINE" ] && LINE=$(cd "$BUILD" && ninja -t commands kritalibbrush | head -1 || true)
+          [ -n "$LINE" ] || { echo 'FATAL: no compile command found for kritalibbrush'; exit 1; }
           # fix42: NO embedded double quotes in flags. Bash passes args with
           # literal quote characters straight to clang-cl, so /I"D:\..." was
           # parsed as a path that CONTAINS quote marks (every include dir
           # broken -> 'kis_auto_brush.h' not found despite 192 dirs). Paths
           # here are quote-free (no spaces), so emit bare /I<dir> flags.
-          INCS=$(printf '%s' "$LINE" | grep -oE '(/|-)I"[^"]+"|(/|-)I[^ ]+' | sed -E 's#^(/|-)I"?([^"]+)"?$#\2#' | sort -u | head -200 | sed 's#^#/I#' | tr '\n' ' ')
+          INCS=$(printf '%s' "$LINE" | grep -oE '(/|-)I"[^"]+"|(/|-)I[^ ]+' | sed -E 's#^(/|-)I"?([^"]+)"?$#\2#' | sort -u | head -200 | sed 's#^#/I#' | tr '\n' ' ' || true)
           echo "extracted include dirs: $(printf '%s' "$INCS" | wc -w)"
           # belt-and-braces: every lib subdir + every dir containing generated headers
           LIBD=$(find "$WS/krita/libs" -maxdepth 2 -type d | sed 's#^#/I#' | tr '\n' ' ')
@@ -543,14 +554,14 @@ jobs:
             "@$BUILD/krita_objs.rsp" \
             /LD /Fe:artifact/bin/krita_bridge_real.dll /IMPLIB:artifact/lib/krita_bridge_real.lib \
             /link /LIBPATH:"$QT/lib" /LIBPATH:"$KF5/lib" /LIBPATH:"$VP/lib" \
-            Qt5Core.lib Qt5Gui.lib Qt5Xml.lib Qt5Svg.lib Qt5Widgets.lib Qt5Sql.lib Qt5Concurrent.lib Qt5Network.lib \
+            Qt5Core.lib Qt5Gui.lib Qt5Xml.lib Qt5Svg.lib Qt5Widgets.lib Qt5Sql.lib Qt5Concurrent.lib Qt5Network.lib Qt5PrintSupport.lib \
             KF5CoreAddons.lib KF5Archive.lib KF5Config.lib KF5I18n.lib KF5GuiAddons.lib KF5WidgetsAddons.lib KF5Completion.lib KF5ItemViews.lib \
             $KFLIBS \
             $VPLIBARGS
           # ---- collect runtime DLLs next to the smoke exe (Windows resolves from PATH/artifact dir)
           cp "$QT/bin/Qt5Core.dll" "$QT/bin/Qt5Gui.dll" "$QT/bin/Qt5Xml.dll" \
              "$QT/bin/Qt5Svg.dll" "$QT/bin/Qt5Widgets.dll" "$QT/bin/Qt5Sql.dll" \
-             "$QT/bin/Qt5Concurrent.dll" "$QT/bin/Qt5Network.dll" artifact/bin/
+             "$QT/bin/Qt5Concurrent.dll" "$QT/bin/Qt5Network.dll" "$QT/bin/Qt5PrintSupport.dll" artifact/bin/
           cp "$KF5/bin/"KF5*.dll artifact/bin/ 2>/dev/null || true
           cp -r "$VP/bin/"*.dll artifact/bin/ 2>/dev/null || true
           # ---- smoke exe (links the bridge import lib, exercises the full closure)
