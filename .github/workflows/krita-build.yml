@@ -819,6 +819,23 @@ jobs:
           for fw in kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews; do
             echo "=== cross framework: $fw (${{ matrix.abi }}) ==="
             [ -d "/opt/kf5-src/KF5-$fw" ] || git clone --depth 1 --branch "$KFTAG" "https://invent.kde.org/frameworks/$fw.git" "/opt/kf5-src/KF5-$fw"
+            # ki18n v5.116 has a latent Qt5-android compile bug: the
+            # assets:-catalog path calls loadMessageCatalogFile which no
+            # upstream source file defines (libintl-lite era leftover). We
+            # ship no translations, so neutralize that dead path with a
+            # forced-include stub — toolchain-level fix, NO source edits.
+            FW_CXX_FLAGS=""
+            FW_SHARED_LINK_FLAGS=""
+            if [ "$fw" = "ki18n" ]; then
+              {
+                echo '#include <QByteArray>'
+                echo '#include <cstdio>'
+                echo 'static inline void ki18n_stub_load(const QByteArray &, FILE *) {}'
+                echo '#define loadMessageCatalogFile(domain, moFile) ki18n_stub_load(domain, moFile)'
+              } > /opt/ki18n_android_stub.h
+              FW_CXX_FLAGS="-include /opt/ki18n_android_stub.h"
+              FW_SHARED_LINK_FLAGS="-landroid -llog"
+            fi
             cmake -S "/opt/kf5-src/KF5-$fw" -B "/opt/kf5-build/and-$fw" -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX="$KF5DIR" \
@@ -826,6 +843,8 @@ jobs:
               -DCMAKE_FIND_ROOT_PATH="$QTDIR;$KF5DIR;$VPROOT/installed/$VPT_TRIPLET" \
               -DCMAKE_PROGRAM_PATH="$KF5HOST/bin" \
               -DKF5_HOST_TOOLING="$KF5HOST/lib/x86_64-linux-gnu/cmake" \
+              -DCMAKE_CXX_FLAGS="$FW_CXX_FLAGS" \
+              -DCMAKE_SHARED_LINKER_FLAGS="$FW_SHARED_LINK_FLAGS" \
               -DCMAKE_TOOLCHAIN_FILE="$VPTC" \
               -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
               -DVCPKG_TARGET_TRIPLET="$VPT_TRIPLET" \
