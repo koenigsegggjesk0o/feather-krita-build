@@ -808,7 +808,7 @@ jobs:
             cmake --build "/opt/kf5-build/host-$fw" --parallel
             cmake --install "/opt/kf5-build/host-$fw"
           done
-          test -x "$KF5HOST/bin/kconfig_compiler" || test -x "$KF5HOST/bin/kconfig_compiler5" || { echo 'FATAL: host kconfig_compiler missing'; ls "$KF5HOST/bin"; exit 1; }
+          test -x "$KF5HOST/lib/x86_64-linux-gnu/libexec/kf5/kconfig_compiler_kf5" || test -x "$KF5HOST/bin/kconfig_compiler" || { echo 'FATAL: host kconfig_compiler missing'; ls "$KF5HOST/bin"; find "$KF5HOST" -name '*kconfig_compiler*'; exit 1; }
           ls "$KF5HOST/bin" | head -20
 
       - name: Cross-build KF5 frameworks (engine closure set, NDK toolchain)
@@ -824,6 +824,7 @@ jobs:
               -DCMAKE_INSTALL_PREFIX="$KF5DIR" \
               -DCMAKE_PREFIX_PATH="$PREFIX" \
               -DCMAKE_PROGRAM_PATH="$KF5HOST/bin" \
+              -DKF5_HOST_TOOLING="$KF5HOST/lib/x86_64-linux-gnu/cmake" \
               -DCMAKE_TOOLCHAIN_FILE="$VPTC" \
               -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
               -DVCPKG_TARGET_TRIPLET="$VPT_TRIPLET" \
@@ -885,6 +886,7 @@ jobs:
             -DWITH_OPENJPEG=OFF -DWITH_MEDIA=OFF \
             -DCMAKE_DISABLE_FIND_PACKAGE_LibMyPaint=TRUE \
             -DCMAKE_PROGRAM_PATH="$KF5HOST/bin" \
+            -DKF5_HOST_TOOLING="$KF5HOST/lib/x86_64-linux-gnu/cmake" \
             -DGETTEXT_MSGFMT_EXECUTABLE=/usr/bin/msgfmt \
             -DGETTEXT_MSGMERGE_EXECUTABLE=/usr/bin/msgmerge \
             -DCMAKE_PREFIX_PATH="$QTDIR;$KF5DIR;$VPROOT/installed/$VPT_TRIPLET" \
