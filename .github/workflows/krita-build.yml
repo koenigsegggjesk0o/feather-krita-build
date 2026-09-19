@@ -425,15 +425,26 @@ jobs:
           grep -m2 'CMAKE_PREFIX_PATH\|ECM_DIR' "$GITHUB_WORKSPACE/build/CMakeCache.txt" || echo 'DIAG: no prefix entries in CMakeCache'
 
 
-      - name: Build brush engine libs (kritaimage + kritalibbrush + deps)
+      - name: Build brush engine OBJECTS (kritaimage + kritalibbrush closure, keep-going)
         run: |
-          set -o pipefail
           cd "$GITHUB_WORKSPACE/build"
-          cmake --build . --target kritaimage kritalibbrush --parallel 4 2>&1 | tail -200
-          echo "=== Brush engine DLLs ==="
-          find . -name "krita*.dll" -o -name "krita*.lib" | head -40
+          # loop-35 fix43 DESIGN CHANGE: we no longer consume the per-lib
+          # krita*.dll at all. Cross-DLL static-data imports (e.g.
+          # KoXmlNS::manifest from kritastore used by kritaresources) cannot
+          # be satisfied without dllimport semantics, which conflict with the
+          # empty-export flags that kill the dllexport forced-instantiation
+          # errors. So: build ALL objects with ninja -k 0 (DLL link failures
+          # tolerated), then link every krita object directly into ONE merged
+          # engine DLL in the bridge step. Krita source remains untouched.
+          cmake --build . --target kritaimage kritalibbrush --parallel 4 -- -k 0 2>&1 | tail -300 || echo 'NOTE: per-lib DLL link failures tolerated - objects are the deliverable'
+          NOBJS=$(find . -name '*.obj' | wc -l)
+          echo "krita objects built: $NOBJS"
+          [ "$NOBJS" -gt 700 ] || { echo 'FATAL: too few objects built (compile errors?)'; exit 1; }
+          [ -n "$(find . -name 'kis_auto_brush.cpp.obj' | head -1)" ] || { echo 'FATAL: kis_auto_brush.cpp.obj missing'; exit 1; }
+          [ -n "$(find . -name 'KoXmlNS.cpp.obj' | head -1)" ] || { echo 'FATAL: KoXmlNS.cpp.obj missing'; exit 1; }
+          echo 'object gates OK'
 
-      - name: Build real bridge (krita_bridge_real.dll) + smoke test (MSVC)
+      - name: Build merged real-engine DLL (all krita objects + bridge glue) + smoke test
         run: |
           export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
           export PATH="C:/vcpkg2/installed/x64-windows/tools/gettext/bin:$PATH"
@@ -458,38 +469,46 @@ jobs:
           GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -80 | sed 's#^#/I#' | tr '\n' ' ')
           INCS="$INCS $LIBD $GEND /I$WS/krita /I$BUILD"
           echo "total include dirs: $(printf '%s' "$INCS" | wc -w)"
-          # ---- import libs: locate every krita*.lib produced by the build
-          LIBPATHS=$(find "$BUILD" -name 'krita*.lib' -exec dirname {} \; | sort -u | head -10 | sed 's#^#/LIBPATH:#' | tr '\n' ' ')
-          echo "import lib dirs: $LIBPATHS"
-          # ---- bridge DLL (consumer TU: same empty export macros as the
-          # engine libs, so krita headers never expand dllimport in it)
-          clang-cl /nologo /std:c++17 /EHsc /O2 /MD /Zc:__cplusplus /permissive- \
+          # ---- collect EVERY krita object of the engine closure into a rsp
+          find "$BUILD/libs" -name '*.obj' | sort > "$BUILD/krita_objs.rsp"
+          NOBJS=$(wc -l < "$BUILD/krita_objs.rsp")
+          echo "merging $NOBJS krita objects into ONE engine DLL"
+          # ---- vcpkg import libs (over-link: unused import libs are ignored)
+          VPLIBARGS=$(find "$VP/lib" -maxdepth 1 -name '*.lib' -printf '%f ' | tr '\n' ' ')
+          echo "vcpkg libs: $VPLIBARGS"
+          # ---- merged engine DLL = bridge glue + all krita objects.
+          # Objects were compiled with EMPTY krita export macros, so all
+          # cross-object references are direct and resolve inside this one
+          # image — no dllimport needed anywhere. Only the extern "C" ABI
+          # (KRITA_BRIDGE_API dllexport in krita_bridge.h) is exported.
+          clang-cl /nologo /std:c++17 /EHsc /O2 /MD /Zc:__cplusplus \
             -DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= \
             -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= \
             -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= \
             -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= \
             $INCS \
             /I"$QT/include" /I"$QT/include/QtCore" /I"$QT/include/QtGui" /I"$QT/include/QtXml" \
+            /I"$QT/include/QtSvg" /I"$QT/include/QtWidgets" /I"$QT/include/QtSql" /I"$QT/include/QtConcurrent" \
             /I"$KF5/include" /I"$VP/include" \
             "$WS/bridge/krita_bridge_real.cpp" \
+            "@$BUILD/krita_objs.rsp" \
             /LD /Fe:artifact/bin/krita_bridge_real.dll /IMPLIB:artifact/lib/krita_bridge_real.lib \
-            /link $LIBPATHS \
-            /LIBPATH:"$QT/lib" /LIBPATH:"$KF5/lib" /LIBPATH:"$VP/lib" \
-            kritaimage.lib kritalibbrush.lib kritapigment.lib kritaresources.lib \
-            kritastore.lib kritacommand.lib kritaglobal.lib kritaversion.lib \
-            kritaflake.lib kritaplugin.lib KF5I18n.lib Qt5Core.lib Qt5Gui.lib Qt5Xml.lib zlib.lib
+            /link /LIBPATH:"$QT/lib" /LIBPATH:"$KF5/lib" /LIBPATH:"$VP/lib" \
+            Qt5Core.lib Qt5Gui.lib Qt5Xml.lib Qt5Svg.lib Qt5Widgets.lib Qt5Sql.lib Qt5Concurrent.lib Qt5Network.lib \
+            KF5CoreAddons.lib KF5Archive.lib KF5Config.lib KF5I18n.lib KF5GuiAddons.lib KF5WidgetsAddons.lib KF5Completion.lib KF5ItemViews.lib \
+            $VPLIBARGS
           # ---- collect runtime DLLs next to the smoke exe (Windows resolves from PATH/artifact dir)
-          find "$BUILD" -name 'krita*.dll' -exec cp {} artifact/bin/ \;
-          cp "$KF5/bin/"KF5*.dll artifact/bin/ 2>/dev/null || true
           cp "$QT/bin/Qt5Core.dll" "$QT/bin/Qt5Gui.dll" "$QT/bin/Qt5Xml.dll" \
-             "$QT/bin/Qt5Svg.dll" "$QT/bin/Qt5Widgets.dll" artifact/bin/
+             "$QT/bin/Qt5Svg.dll" "$QT/bin/Qt5Widgets.dll" "$QT/bin/Qt5Sql.dll" \
+             "$QT/bin/Qt5Concurrent.dll" "$QT/bin/Qt5Network.dll" artifact/bin/
+          cp "$KF5/bin/"KF5*.dll artifact/bin/ 2>/dev/null || true
           cp -r "$VP/bin/"*.dll artifact/bin/ 2>/dev/null || true
           # ---- smoke exe (links the bridge import lib, exercises the full closure)
           clang-cl /nologo /std:c++17 /EHsc /O2 /MD \
             "$WS/bridge/smoke_test_real.cpp" \
             /Fe:artifact/bin/smoke_test_real.exe \
             /link /LIBPATH:artifact/lib krita_bridge_real.lib
-          echo '=== Running REAL-engine smoke test on Windows (MSVC-built engine) ==='
+          echo '=== Running REAL-engine smoke test on Windows (merged MSVC engine) ==='
           export PATH="$GITHUB_WORKSPACE/artifact/bin:$QT/bin:$KF5/bin:$VP/bin:$PATH"
           ./artifact/bin/smoke_test_real.exe
 
@@ -522,10 +541,10 @@ jobs:
       - name: Windows Summary
         if: always()
         run: |
-          echo "## Real Krita Brush Engine (Windows/MSVC)" >> $GITHUB_STEP_SUMMARY
+          echo "## Real Krita Brush Engine (Windows/MSVC, merged single-DLL)" >> $GITHUB_STEP_SUMMARY
           echo "Source: real Krita v6.0.4 (unmodified, from krita-source/)" >> $GITHUB_STEP_SUMMARY
-          if [ -f artifact/bin/krita_bridge_real.dll ] && ls artifact/bin/krita*.dll >/dev/null 2>&1; then
-            echo "### SUCCESS — krita_bridge_real.dll + real krita*.dll (MSVC x64)" >> $GITHUB_STEP_SUMMARY
+          if [ -f artifact/bin/krita_bridge_real.dll ] && [ -f artifact/bin/smoke_test_real.exe ]; then
+            echo "### SUCCESS — merged krita_bridge_real.dll (engine+bridge in one image, MSVC x64)" >> $GITHUB_STEP_SUMMARY
             ls -lh artifact/bin/ artifact/lib/ >> $GITHUB_STEP_SUMMARY
           else
             echo "### FAILED — no bridge/engine DLLs produced" >> $GITHUB_STEP_SUMMARY
