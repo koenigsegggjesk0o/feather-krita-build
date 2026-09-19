@@ -761,7 +761,7 @@ jobs:
           for i in 1 2 3; do
             rm -rf /opt/Qt
             aqt install-qt linux android 5.15.2 android -O /opt/Qt \
-              --archives qtbase qtdeclarative qttools qtsvg qttranslations icu qtandroidextras && break
+              --archives qtbase qtdeclarative qttools qtsvg qttranslations icu qtandroidextras qtquickcontrols2 && break
             echo "aqt attempt $i failed; retrying in 15s"; sleep 15
           done
           test -f "$QTDIR/bin/qmake" || { echo 'FATAL: android qmake missing'; exit 1; }
