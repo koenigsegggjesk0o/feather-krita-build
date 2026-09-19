@@ -785,7 +785,7 @@ jobs:
         run: |
           export ANDROID_NDK_HOME="$NDK_ROOT"
           "$VPROOT/vcpkg" install --triplet "$VPT_TRIPLET" \
-            zlib bzip2 lcms zstd gettext eigen3 exiv2 fribidi freetype harfbuzz libunibreak \
+            zlib bzip2 lcms zstd eigen3 exiv2 fribidi freetype harfbuzz libunibreak \
             boost-multi-array boost-icl boost-rational boost-utility boost-integer \
             boost-accumulators boost-circular-buffer boost-heap boost-math \
             boost-intrusive boost-polygon boost-geometry boost-graph \
@@ -835,6 +835,50 @@ jobs:
           export PATH="$KF5HOST/bin:$VPROOT/installed/$VPT_TRIPLET/tools/gettext/bin:$PATH"
           VPTC="$VPROOT/scripts/buildsystems/vcpkg.cmake"
           PREFIX="$QTDIR;$KF5DIR;$VPROOT/installed/$VPT_TRIPLET"
+          # ---- minimal libintl shim for android (workflow provisioning).
+          # GNU gettext's libintl.a has hard bionic gaps (iconv, nl_langinfo,
+          # fgets_unlocked at API 24) and libintl-lite is not fetchable
+          # anonymously. Krita ships NO translation catalogs, so a pass-through
+          # intl (every lookup returns the msgid = source string) is
+          # semantically identical to our Linux/Windows engine builds.
+          mkdir -p "$KF5DIR/include" "$KF5DIR/lib"
+          python3 - << 'PYEOF'
+          import os
+          kf5 = os.environ['KF5DIR']
+          hdr = r"""
+          #ifndef KRITA_INTL_SHIM_H
+          #define KRITA_INTL_SHIM_H
+          char *gettext(const char *msgid);
+          char *dgettext(const char *domain, const char *msgid);
+          char *dcgettext(const char *domain, const char *msgid, int category);
+          char *ngettext(const char *msgid1, const char *msgid2, unsigned long n);
+          char *dngettext(const char *domain, const char *msgid1, const char *msgid2, unsigned long n);
+          char *dcngettext(const char *domain, const char *msgid1, const char *msgid2, unsigned long n, int category);
+          char *textdomain(const char *domain);
+          char *bindtextdomain(const char *domain, const char *dir);
+          char *bind_textdomain_codeset(const char *domain, const char *codeset);
+          #endif
+          """
+          src = r"""
+          #include <stddef.h>
+          static const char *shim_domain = "messages";
+          char *gettext(const char *msgid) { return (char *)msgid; }
+          char *dgettext(const char *d, const char *m) { (void)d; return (char *)m; }
+          char *dcgettext(const char *d, const char *m, int c) { (void)d; (void)c; return (char *)m; }
+          char *ngettext(const char *m1, const char *m2, unsigned long n) { return (char *)(n == 1 ? m1 : m2); }
+          char *dngettext(const char *d, const char *m1, const char *m2, unsigned long n) { (void)d; return (char *)(n == 1 ? m1 : m2); }
+          char *dcngettext(const char *d, const char *m1, const char *m2, unsigned long n, int c) { (void)d; (void)c; return (char *)(n == 1 ? m1 : m2); }
+          char *textdomain(const char *d) { if (d) shim_domain = d; return (char *)shim_domain; }
+          char *bindtextdomain(const char *d, const char *dir) { (void)d; (void)dir; return (char *)""; }
+          char *bind_textdomain_codeset(const char *d, const char *cs) { (void)d; (void)cs; return 0; }
+          """
+          open(kf5 + '/include/libintl.h', 'w').write(hdr)
+          open('/opt/intl_shim.c', 'w').write(src)
+          PYEOF
+          TC="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$TC/$ABI_TRIPLE-clang" -c /opt/intl_shim.c -O2 -fPIC -o /opt/intl_shim.o
+          "$TC/llvm-ar" rcs "$KF5DIR/lib/libintl.a" /opt/intl_shim.o
+          ls -la "$KF5DIR/lib/libintl.a" "$KF5DIR/include/libintl.h"
           for fw in kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews; do
             echo "=== cross framework: $fw (${{ matrix.abi }}) ==="
             [ -d "/opt/kf5-src/KF5-$fw" ] || for i in 1 2 3 4 5; do
