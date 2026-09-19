@@ -529,6 +529,14 @@ jobs:
           LIBD=$(find "$WS/krita/libs" -maxdepth 2 -type d | sed 's#^#/I#' | tr '\n' ' ')
           GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -80 | sed 's#^#/I#' | tr '\n' ' ')
           INCS="$INCS $LIBD $GEND /I$WS/krita /I$BUILD"
+          # fix45c: EVERY Qt module + EVERY KF5 framework include subdir.
+          # The wrapper TU includes krita headers that reach klocalizedstring.h
+          # (KI18n) etc. — CMake's per-target -I set on the extracted brush TU
+          # command does NOT cover the transitive closure of consumer headers.
+          QTINC=''; KFINC=''
+          for d in "$QT/include"/Qt*; do [ -d "$d" ] && QTINC="$QTINC /I$d"; done
+          for d in "$KF5/include/KF5"/*/; do [ -d "$d" ] && KFINC="$KFINC /I$d"; done
+          INCS="$INCS $QTINC $KFINC"
           echo "total include dirs: $(printf '%s' "$INCS" | wc -w)"
           # ---- collect the CLOSURE krita objects into a rsp (fix45b: the
           # build/libs tree also holds stale objs from earlier over-builds —
@@ -556,8 +564,7 @@ jobs:
             -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= \
             -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= \
             $INCS \
-            /I"$QT/include" /I"$QT/include/QtCore" /I"$QT/include/QtGui" /I"$QT/include/QtXml" \
-            /I"$QT/include/QtSvg" /I"$QT/include/QtWidgets" /I"$QT/include/QtSql" /I"$QT/include/QtConcurrent" \
+            /I"$QT/include" \
             /I"$KF5/include" /I"$VP/include" \
             "$WS/bridge/krita_bridge_real.cpp" \
             "@$BUILD/krita_objs.rsp" \
