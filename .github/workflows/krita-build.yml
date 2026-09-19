@@ -242,7 +242,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/build
-          key: winengine-krbuild-v1
+          key: winengine-krbuild-v2
           restore-keys: winengine-krbuild-
 
       - name: Clone krita-source (real Krita v6.0.4, unmodified)
@@ -413,20 +413,11 @@ jobs:
             -DWITH_WEBP=OFF -DWITH_JXL=OFF -DWITH_OCIO=OFF \
             -DWITH_OPENJPEG=OFF -DWITH_MEDIA=OFF \
             -DCMAKE_DISABLE_FIND_PACKAGE_LibMyPaint=TRUE \
-            -DCMAKE_CXX_FLAGS='/Zc:twoPhase-' \
+            -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_C_COMPILER=clang-cl \
             -DPKG_CONFIG_EXECUTABLE='C:/vcpkg2/installed/x64-windows/tools/pkgconf/pkgconf.exe' \
             -DCMAKE_PREFIX_PATH="$KF5DIR;$QTDIR;C:/vcpkg2/installed/x64-windows" \
             -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake' \
             -DVCPKG_TARGET_TRIPLET=x64-windows 2>&1 | tail -100
-          # CMAKE_CXX_FLAGS lands BEFORE /std:c++17 (whose implied
-          # /permissive- overrides it), so append /Zc:twoPhase- AFTER the
-          # std flag directly in the generated build.ninja (build-tree
-          # file — Krita source stays untouched).
-          G="$GITHUB_WORKSPACE/build/build.ninja"
-          sed -i 's#-std:c\+\+17#-std:c++17 /Zc:twoPhase-#g' "$G" || true
-          python3 -c "import sys; p=sys.argv[1]; s=open(p, encoding='utf-8').read(); f='-std:c++17 /Zc:twoPhase-' not in s; s=s.replace('-std:c++17','-std:c++17 /Zc:twoPhase-') if f else s; open(p,'w',encoding='utf-8').write(s) if f else None; print('injected via python fallback' if f else 'already injected by sed')" "$G"
-          grep -m1 -o -- '-std:c++17 /Zc:twoPhase-' "$G" || true
-          grep -c -- '-std:c++17 /Zc:twoPhase-' "$G" || { echo 'FATAL: twoPhase flag not injected'; grep -m1 -n -- '-std:c++17' "$G" | head -c 600; exit 1; }
 
 
       - name: Build brush engine libs (kritaimage + kritalibbrush + deps)
@@ -456,7 +447,7 @@ jobs:
           LIBPATHS=$(find "$BUILD" -name 'krita*.lib' -exec dirname {} \; | sort -u | head -10 | sed 's#^#/LIBPATH:"#; s#$#"#' | tr '\n' ' ')
           echo "import lib dirs: $LIBPATHS"
           # ---- bridge DLL
-          cl /nologo /std:c++17 /EHsc /O2 /MD /Zc:__cplusplus /permissive- \
+          clang-cl /nologo /std:c++17 /EHsc /O2 /MD /Zc:__cplusplus /permissive- \
             $INCS \
             /I"$QT/include" /I"$QT/include/QtCore" /I"$QT/include/QtGui" /I"$QT/include/QtXml" \
             /I"$KF5/include" /I"$VP/include" \
@@ -473,7 +464,7 @@ jobs:
           cp "$QT/bin/Qt5Core.dll" "$QT/bin/Qt5Gui.dll" "$QT/bin/Qt5Xml.dll" artifact/bin/
           cp -r "$VP/bin/"*.dll artifact/bin/ 2>/dev/null || true
           # ---- smoke exe (links the bridge import lib, exercises the full closure)
-          cl /nologo /std:c++17 /EHsc /O2 /MD \
+          clang-cl /nologo /std:c++17 /EHsc /O2 /MD \
             "$WS/bridge/smoke_test_real.cpp" \
             /Fe:artifact/bin/smoke_test_real.exe \
             /link /LIBPATH:artifact/lib krita_bridge_real.lib
@@ -497,7 +488,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/build
-          key: winengine-krbuild-v1
+          key: winengine-krbuild-v2
 
       - name: Upload Windows brush engine
         if: always()
