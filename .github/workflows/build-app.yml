@@ -277,3 +277,106 @@ jobs:
           name: feather-krita-linux-real-engine
           path: build/linux/x64/release/feather-krita-linux-real-engine.zip
           retention-days: 30
+
+  build-android-real-engine:
+    # Android build bundling the REAL Krita engine (merged libkrita_bridge.so
+    # = bridge glue + 959 krita objects in ONE image, NDK arm64-v8a, plus
+    # Qt5/KF5/icu runtime .so via jniLibs), loop-36 (roadmap c). The app's
+    # Dart FFI loader opens 'libkrita_bridge.so' by name on Android, so the
+    # real engine replaces the fallback bridge seamlessly. Krita source:
+    # real v6.0.4, never modified.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.3'
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Find latest green krita-build run
+        id: engine_run
+        run: |
+          RID=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/krita-build.yml/runs?status=success&per_page=1" \
+            | python3 -c 'import sys,json;print(json.load(sys.stdin)["workflow_runs"][0]["id"])')
+          echo "run_id=$RID" >> "$GITHUB_OUTPUT"
+          echo "Latest green krita-build run: $RID"
+
+      - name: Download real-engine artifact (arm64-v8a)
+        uses: actions/download-artifact@v4
+        with:
+          name: krita-brush-engine-android-arm64-v8a
+          run-id: ${{ steps.engine_run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: krita-engine
+
+      - name: Bundle real engine into jniLibs (arm64-v8a)
+        run: |
+          JLIB=android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p "$JLIB"
+          cp krita-engine/lib/libkrita_bridge.so "$JLIB/"
+          # runtime .so from the engine bundle (skip any x86_64-named strays)
+          find krita-engine/android/arm64-v8a -name '*.so' ! -name '*x86_64*' \
+            -exec cp {} "$JLIB/" \;
+          ls -la "$JLIB" | head -40
+          NB=$(ls "$JLIB" | wc -l)
+          echo "jniLibs: $NB files"
+          [ "$NB" -ge 5 ] || { echo 'FATAL: bundle too small'; exit 1; }
+
+      - name: DT_NEEDED audit (every dependency present in jniLibs)
+        run: |
+          JLIB=android/app/src/main/jniLibs/arm64-v8a
+          RE=$(find /usr/local/lib/android/sdk/ndk -name 'llvm-readelf' | sort | tail -1)
+          NEEDS=$("$RE" -d "$JLIB/libkrita_bridge.so" | awk '/\(NEEDED\)/{print $NF}' | tr -d '[]')
+          MISSING=0
+          for n in $NEEDS; do
+            if [ -f "$JLIB/$n" ]; then
+              echo "  bundled: $n"
+            else
+              case "$n" in
+                liblog.so|libz.so|libm.so|libdl.so|libc.so|libandroid.so)
+                  echo "  system: $n" ;;
+                *)
+                  echo "  MISSING: $n"; MISSING=$((MISSING+1)) ;;
+              esac
+            fi
+          done
+          # libc++_shared.so must ship in the APK (Qt/KF5 DT_NEEDED it)
+          test -f "$JLIB/libc++_shared.so" || {
+            echo 'FATAL: libc++_shared.so not bundled (required by Qt/KF5 at load)';
+            MISSING=$((MISSING+1));
+          }
+          [ "$MISSING" -eq 0 ] || { echo "FATAL: $MISSING missing libs"; exit 1; }
+
+      - name: Build Android APK (release, real engine)
+        run: flutter build apk --release
+
+      - name: Verify APK contains the engine + runtime
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libkrita_bridge.so' \
+            || { echo 'FATAL: engine .so not in APK'; exit 1; }
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libQt5Core_arm64-v8a.so' \
+            || { echo 'FATAL: Qt runtime not in APK'; exit 1; }
+          cp "$APK" feather-krita-android-real-engine.apk
+          ls -lh feather-krita-android-real-engine.apk
+
+      - name: Upload Android build (real engine)
+        uses: actions/upload-artifact@v4
+        with:
+          name: feather-krita-android-real-engine
+          path: feather-krita-android-real-engine.apk
+          retention-days: 30
