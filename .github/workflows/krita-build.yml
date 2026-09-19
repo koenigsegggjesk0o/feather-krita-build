@@ -774,7 +774,7 @@ jobs:
         run: |
           export ANDROID_NDK_HOME="$NDK_ROOT"
           "$VPROOT/vcpkg" install --triplet "$VPT_TRIPLET" \
-            zlib bzip2 lcms eigen3 exiv2 fribidi freetype harfbuzz libunibreak \
+            zlib bzip2 lcms zstd eigen3 exiv2 fribidi freetype harfbuzz libunibreak \
             boost-multi-array boost-icl boost-rational boost-utility boost-integer \
             boost-accumulators boost-circular-buffer boost-heap boost-math \
             boost-intrusive boost-polygon boost-geometry boost-graph \
