@@ -1249,17 +1249,19 @@ jobs:
           echo "link rc=$?"
           ls -la artifact/lib/
           "$TC/llvm-readelf" -d artifact/lib/libkrita_bridge.so | head -12 || true
-          echo "--- first dynamic symbols:"
-          "$NM" -D artifact/lib/libkrita_bridge.so 2>&1 | head -15 || true
+          echo "--- first dynamic symbols (readelf):"
+          RE="$TC/llvm-readelf"
+          # NOTE: the runner's NDK image is pruned (llvm-nm absent) — use
+          # llvm-readelf for all symbol work (proven present).
+          "$RE" --dyn-syms artifact/lib/libkrita_bridge.so 2>/dev/null | grep ' GLOBAL ' | head -12 || true
           # ---- export gate: the extern "C" bridge ABI must be visible
-          NM="$TC/llvm-nm"
-          NEXP=$("$NM" -D --defined-only artifact/lib/libkrita_bridge.so | grep -c 'krita_bridge' || true)
+          NEXP=$("$RE" --dyn-syms artifact/lib/libkrita_bridge.so 2>/dev/null | grep -c 'krita_bridge' || true)
           echo "exported krita_bridge symbols: $NEXP"
           [ "$NEXP" -ge 5 ] || { echo 'FATAL: bridge ABI exports missing'; exit 1; }
-          "$NM" -D --defined-only artifact/lib/libkrita_bridge.so | grep 'krita_bridge' | head -12
+          "$RE" --dyn-syms artifact/lib/libkrita_bridge.so 2>/dev/null | grep 'krita_bridge' | head -12
           # ---- diagnostics: unresolved symbols triage (NOT a hard gate yet;
           # bionic/log symbols are provided by the OS at dlopen time)
-          UNDEF=$("$NM" -D --undefined-only artifact/lib/libkrita_bridge.so | awk '{print $NF}' | sort -u)
+          UNDEF=$("$RE" --dyn-syms artifact/lib/libkrita_bridge.so 2>/dev/null | awk '$7 == "UND" {print $8}' | sort -u)
           NUNDEF=$(printf '%s\n' "$UNDEF" | wc -l)
           echo "undefined symbol refs: $NUNDEF (resolved at load by Qt/KF5/bionic)"
           printf '%s\n' "$UNDEF" | grep -E 'Ko[A-Z]|Kis[A-Z]|krita_bridge' | head -40 || echo 'OK: no unresolved krita-namespace refs'
