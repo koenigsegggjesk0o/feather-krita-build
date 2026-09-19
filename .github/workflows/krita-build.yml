@@ -408,6 +408,12 @@ jobs:
             -DCMAKE_PREFIX_PATH="$KF5DIR;$QTDIR;C:/vcpkg2/installed/x64-windows" \
             -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake' \
             -DVCPKG_TARGET_TRIPLET=x64-windows 2>&1 | tail -100
+          # CMAKE_CXX_FLAGS lands BEFORE /std:c++17 (whose implied
+          # /permissive- overrides it), so append /Zc:twoPhase- AFTER the
+          # std flag directly in the generated build.ninja (build-tree
+          # file — Krita source stays untouched).
+          sed -i 's#/std:c\+\+17#/std:c++17 /Zc:twoPhase-#g' "$GITHUB_WORKSPACE/build/build.ninja"
+          rg -c '/Zc:twoPhase-' "$GITHUB_WORKSPACE/build/build.ninja" || { echo 'FATAL: twoPhase flag not injected'; exit 1; }
 
       - name: Build brush engine libs (kritaimage + kritalibbrush + deps)
         run: |
