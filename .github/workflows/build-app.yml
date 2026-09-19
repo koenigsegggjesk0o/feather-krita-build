@@ -169,7 +169,7 @@ jobs:
         shell: bash
         run: |
           cd build/windows/x64/runner/Release
-          zip -qr feather-krita-windows-real-engine.zip .
+          powershell -NoProfile -Command "Compress-Archive -Path * -DestinationPath feather-krita-windows-real-engine.zip -Force"
           ls -lh feather-krita-windows-real-engine.zip
 
       - name: Upload Windows build (real engine)
