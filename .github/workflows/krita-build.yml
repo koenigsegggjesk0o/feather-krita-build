@@ -260,16 +260,6 @@ jobs:
           echo "=== Real Krita source verified ==="
           grep "KRITA_VERSION_STRING" CMakeLists.txt | head -2
 
-      - name: Apply Windows MSVC conformance shim (CI build checkout only — the krita repo itself stays untouched)
-        run: |
-          # MSVC STL eagerly compiles std::unique_lock::try_lock through the
-          # using-declaration in KisAdaptedLock; upstream never builds this
-          # TU with MSVC so the adapter lacks try_lock. One no-op member,
-          # applied ONLY to the temporary build checkout via a tracked patch
-          # file. No brush/pixel/engine code is touched in any way.
-          patch -p1 --forward -d "$GITHUB_WORKSPACE/krita" < "$GITHUB_WORKSPACE/windows-msvc-compat.patch"
-          grep -q 'bool try_lock() { return false; }' "$GITHUB_WORKSPACE/krita/libs/resources/KisDatabaseTransactionLock.h" || { echo 'FATAL: shim not applied'; exit 1; }
-
       - name: Clone bridge sources (app repo, feather-krita-flutter)
         run: |
           git clone --depth 1 --branch feather-krita-flutter \
@@ -405,8 +395,18 @@ jobs:
           export PKG_CONFIG_PATH='C:/vcpkg2/installed/x64-windows/lib/pkgconfig;C:/vcpkg2/installed/x64-windows/share/pkgconfig'
           test -x 'C:/vcpkg2/installed/x64-windows/tools/pkgconf/pkgconf.exe' || { echo 'FATAL: pkgconf.exe missing (pkgconf port not installed?)'; exit 1; }
           'C:/vcpkg2/installed/x64-windows/tools/pkgconf/pkgconf.exe' --modversion exiv2 || { echo 'FATAL: pkgconf cannot find exiv2 .pc'; exit 1; }
+          # RED LINE (loop-35 fix42): the krita source tree is NEVER modified.
+          # The former MSVC compat shims were dllexport-forced-instantiation
+          # artifacts; neutralized here via workflow-level compiler flags
+          # instead: export every krita lib's symbol table through
+          # WINDOWS_EXPORT_ALL_SYMBOLS and pre-define each export macro EMPTY
+          # so no TU compiles dllexport/dllimport semantics (which force
+          # eager member instantiation on incomplete pimpl/adapter types).
+          EMPTY_EXPORTS='-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT='
           cmake -S "$GITHUB_WORKSPACE/krita" -B "$GITHUB_WORKSPACE/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON \
+            -DCMAKE_CXX_FLAGS="$EMPTY_EXPORTS" \
             -DBUILD_TESTING=OFF -DENABLE_PYTHON=OFF \
             -DWITH_QT6=OFF \
             -DWITH_HEIF=OFF -DWITH_JPEG=OFF -DWITH_PNG=OFF -DWITH_TIFF=OFF \
@@ -446,18 +446,28 @@ jobs:
           # ---- include dirs: reuse the exact flags CMake configured for kritalibbrush
           LINE=$(cd "$BUILD" && ninja -t commands kritalibbrush | grep 'KisBrushModel' | head -1)
           [ -z "$LINE" ] && LINE=$(cd "$BUILD" && ninja -t commands kritalibbrush | head -1)
-          INCS=$(printf '%s' "$LINE" | grep -oE '(/|-)I"[^"]+"|(/|-)I[^ ]+' | sed -E 's#^(/|-)I"?([^"]+)"?$#\2#' | sort -u | head -200 | sed 's#^#/I"#; s#$#"#' | tr '\n' ' ')
+          # fix42: NO embedded double quotes in flags. Bash passes args with
+          # literal quote characters straight to clang-cl, so /I"D:\..." was
+          # parsed as a path that CONTAINS quote marks (every include dir
+          # broken -> 'kis_auto_brush.h' not found despite 192 dirs). Paths
+          # here are quote-free (no spaces), so emit bare /I<dir> flags.
+          INCS=$(printf '%s' "$LINE" | grep -oE '(/|-)I"[^"]+"|(/|-)I[^ ]+' | sed -E 's#^(/|-)I"?([^"]+)"?$#\2#' | sort -u | head -200 | sed 's#^#/I#' | tr '\n' ' ')
           echo "extracted include dirs: $(printf '%s' "$INCS" | wc -w)"
           # belt-and-braces: every lib subdir + every dir containing generated headers
-          LIBD=$(find "$WS/krita/libs" -maxdepth 2 -type d | sed 's#^#/I"#; s#$#"#' | tr '\n' ' ')
-          GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -80 | sed 's#^#/I"#; s#$#"#' | tr '\n' ' ')
-          INCS="$INCS $LIBD $GEND /I\"$WS/krita\" /I\"$BUILD\""
+          LIBD=$(find "$WS/krita/libs" -maxdepth 2 -type d | sed 's#^#/I#' | tr '\n' ' ')
+          GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -80 | sed 's#^#/I#' | tr '\n' ' ')
+          INCS="$INCS $LIBD $GEND /I$WS/krita /I$BUILD"
           echo "total include dirs: $(printf '%s' "$INCS" | wc -w)"
           # ---- import libs: locate every krita*.lib produced by the build
-          LIBPATHS=$(find "$BUILD" -name 'krita*.lib' -exec dirname {} \; | sort -u | head -10 | sed 's#^#/LIBPATH:"#; s#$#"#' | tr '\n' ' ')
+          LIBPATHS=$(find "$BUILD" -name 'krita*.lib' -exec dirname {} \; | sort -u | head -10 | sed 's#^#/LIBPATH:#' | tr '\n' ' ')
           echo "import lib dirs: $LIBPATHS"
-          # ---- bridge DLL
+          # ---- bridge DLL (consumer TU: same empty export macros as the
+          # engine libs, so krita headers never expand dllimport in it)
           clang-cl /nologo /std:c++17 /EHsc /O2 /MD /Zc:__cplusplus /permissive- \
+            -DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= \
+            -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= \
+            -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= \
+            -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= \
             $INCS \
             /I"$QT/include" /I"$QT/include/QtCore" /I"$QT/include/QtGui" /I"$QT/include/QtXml" \
             /I"$KF5/include" /I"$VP/include" \
@@ -471,7 +481,8 @@ jobs:
           # ---- collect runtime DLLs next to the smoke exe (Windows resolves from PATH/artifact dir)
           find "$BUILD" -name 'krita*.dll' -exec cp {} artifact/bin/ \;
           cp "$KF5/bin/"KF5*.dll artifact/bin/ 2>/dev/null || true
-          cp "$QT/bin/Qt5Core.dll" "$QT/bin/Qt5Gui.dll" "$QT/bin/Qt5Xml.dll" artifact/bin/
+          cp "$QT/bin/Qt5Core.dll" "$QT/bin/Qt5Gui.dll" "$QT/bin/Qt5Xml.dll" \
+             "$QT/bin/Qt5Svg.dll" "$QT/bin/Qt5Widgets.dll" artifact/bin/
           cp -r "$VP/bin/"*.dll artifact/bin/ 2>/dev/null || true
           # ---- smoke exe (links the bridge import lib, exercises the full closure)
           clang-cl /nologo /std:c++17 /EHsc /O2 /MD \
