@@ -310,7 +310,7 @@ jobs:
           # NOTE: call our vcpkg.exe explicitly — the image's C:\vcpkg lacks
           # many ports and msvc-dev-cmd overrides VCPKG_ROOT to the VS copy.
           'C:/vcpkg2/vcpkg.exe' install --triplet x64-windows \
-            'gettext[tools]' zlib bzip2 lcms eigen3 exiv2 tiff fribidi \
+            'gettext[tools]' zlib bzip2 lcms eigen3 exiv2 tiff fribidi raqm \
             freetype harfbuzz fontconfig libunibreak \
             boost-multi-array boost-icl boost-rational boost-utility boost-integer boost-accumulators boost-circular-buffer boost-heap boost-math boost-intrusive boost-polygon boost-geometry boost-graph boost-property-tree boost-random boost-format boost-function pkgconf gsl
           test -d 'C:/vcpkg2/installed/x64-windows/lib' || { echo 'FATAL: vcpkg install failed'; exit 1; }
@@ -381,6 +381,24 @@ jobs:
           find "$KF5DIR" -name 'QuaZip-Qt5*Config.cmake' | head -3
           test -n "$(find "$KF5DIR" -name 'QuaZip-Qt5*Config.cmake' | head -1)" || { echo 'FATAL: QuaZip-Qt5 config not installed'; exit 1; }
 
+      - name: Write qMin overload shim (flag-level fix for Qt5 mixed-type qMin)
+        run: |
+          # loop-35 fix45g Plan B: Qt5 containers' size()=int vs ptrdiff_t on
+          # Win64 makes upstream qMin(int, long long) a hard template
+          # deduction error (KoZoomActionState.cpp — upstream only builds
+          # this TU under Qt6). The /FI shim below adds an enable_if'd
+          # two-type qMin overload — same-type calls still resolve to Qt's
+          # own template, so semantics are untouched. Krita source untouched.
+          cat > "$GITHUB_WORKSPACE/qmin_shim.h" << 'EOH'
+          #include <type_traits>
+          template <typename A, typename B,
+                    typename = std::enable_if_t<!std::is_same<A, B>::value>>
+          constexpr auto qMin(const A &a, const B &b) -> decltype(true ? (a) : (b)) {
+            return a < b ? a : b;
+          }
+          EOH
+          ls -la "$GITHUB_WORKSPACE/qmin_shim.h"
+
       - name: Configure Krita (minimal engine build, Qt5, MSVC, unmodified source)
         run: |
           export PATH="C:/vcpkg2/installed/x64-windows/tools/gettext/bin:$PATH"
@@ -402,7 +420,7 @@ jobs:
           # WINDOWS_EXPORT_ALL_SYMBOLS and pre-define each export macro EMPTY
           # so no TU compiles dllexport/dllimport semantics (which force
           # eager member instantiation on incomplete pimpl/adapter types).
-          EMPTY_EXPORTS='-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT='
+          EMPTY_EXPORTS="-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT= -DKRITARESOURCEWIDGETS_EXPORT= /FI$GITHUB_WORKSPACE/qmin_shim.h"
           cmake -S "$GITHUB_WORKSPACE/krita" -B "$GITHUB_WORKSPACE/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON \
@@ -571,7 +589,8 @@ jobs:
             "@$BUILD/krita_objs.rsp" \
             /LD /Fe:artifact/bin/krita_bridge_real.dll /IMPLIB:artifact/lib/krita_bridge_real.lib \
             /link /LIBPATH:"$QT/lib" /LIBPATH:"$KF5/lib" /LIBPATH:"$VP/lib" \
-            Qt5Core.lib Qt5Gui.lib Qt5Xml.lib Qt5Svg.lib Qt5Widgets.lib Qt5Sql.lib Qt5Concurrent.lib Qt5Network.lib Qt5PrintSupport.lib \
+            Qt5Core.lib Qt5Gui.lib Qt5Xml.lib Qt5Svg.lib Qt5Widgets.lib Qt5Sql.lib Qt5Concurrent.lib Qt5Network.lib Qt5PrintSupport.lib 
+                        ole32.lib shell32.lib user32.lib advapi32.lib uuid.lib gdi32.lib \
             $KFLIBS \
             $VPLIBARGS
           # ---- collect runtime DLLs next to the smoke exe (Windows resolves from PATH/artifact dir)
