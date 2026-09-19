@@ -612,6 +612,10 @@ jobs:
             /link /LIBPATH:artifact/lib krita_bridge_real.lib
           echo '=== Running REAL-engine smoke test on Windows (merged MSVC engine) ==='
           export PATH="$GITHUB_WORKSPACE/artifact/bin:$QT/bin:$KF5/bin:$VP/bin:$PATH"
+          echo '=== loader audit: unresolved DLL imports ==='
+          ldd artifact/bin/krita_bridge_real.dll 2>&1 | grep -i 'not found' || echo 'OK: no missing imports for bridge dll'
+          ldd artifact/bin/smoke_test_real.exe 2>&1 | grep -i 'not found' || echo 'OK: no missing imports for smoke exe'
+          echo '=== run smoke ==='
           ./artifact/bin/smoke_test_real.exe
 
       - name: Save dependency caches
