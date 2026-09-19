@@ -1107,7 +1107,8 @@ jobs:
             -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
             -DVCPKG_TARGET_TRIPLET="$VPT_TRIPLET" \
             -DANDROID_ABI='${{ matrix.abi }}' -DANDROID_PLATFORM="android-$ANDROID_API" \
-            -DANDROID_STL=c++_shared 2>&1 | tee /tmp/krita_configure.log | tail -60
+            -DANDROID_STL=c++_shared \
+            -DTIFF_HAS_PSD_TAGS=1 -DTIFF_CAN_WRITE_PSD_TAGS=FAILED_TO_RUN 2>&1 | tee /tmp/krita_configure.log | tail -60
           # cmake|tee hides the exit code — gate on artifacts explicitly
           if grep -qE 'CMake Error|Configuring incomplete' /tmp/krita_configure.log; then
             echo '=== configure FAILED — error context: ==='
