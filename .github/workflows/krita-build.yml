@@ -786,6 +786,7 @@ jobs:
           export ANDROID_NDK_HOME="$NDK_ROOT"
           "$VPROOT/vcpkg" install --triplet "$VPT_TRIPLET" \
             zlib bzip2 lcms zstd tiff fontconfig eigen3 exiv2 fribidi freetype harfbuzz libunibreak \
+            'ffmpeg[core,avcodec,avfilter,avformat,swscale]' \
             boost-multi-array boost-icl boost-rational boost-utility boost-integer \
             boost-accumulators boost-circular-buffer boost-heap boost-math \
             boost-intrusive boost-polygon boost-geometry boost-graph \
@@ -1042,6 +1043,10 @@ jobs:
       - name: Configure Krita (minimal engine build, Qt5 android, unmodified source)
         run: |
           VPTC="$VPROOT/scripts/buildsystems/vcpkg.cmake"
+          # krita's ANDROID branch uses pkg_check_modules(LibAV REQUIRED) with
+          # the HOST pkg-config — point it at the android triplet's .pc files
+          # (cross compile: nothing is executed, only link/include paths read)
+          export PKG_CONFIG_PATH="$VPROOT/installed/$VPT_TRIPLET/lib/pkgconfig:$VPROOT/installed/$VPT_TRIPLET/share/pkgconfig"
           rm -f "$GITHUB_WORKSPACE/build/CMakeCache.txt"
           # EMPTY krita export macros: no dllexport/visibility special-casing
           # anywhere; the merged .so exports the extern "C" bridge ABI via
