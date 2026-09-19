@@ -310,7 +310,7 @@ jobs:
           # NOTE: call our vcpkg.exe explicitly — the image's C:\vcpkg lacks
           # many ports and msvc-dev-cmd overrides VCPKG_ROOT to the VS copy.
           'C:/vcpkg2/vcpkg.exe' install --triplet x64-windows \
-            'gettext[tools]' zlib bzip2 lcms eigen3 exiv2 tiff fribidi raqm \
+            'gettext[tools]' zlib bzip2 lcms eigen3 exiv2 tiff fribidi \
             freetype harfbuzz fontconfig libunibreak \
             boost-multi-array boost-icl boost-rational boost-utility boost-integer boost-accumulators boost-circular-buffer boost-heap boost-math boost-intrusive boost-polygon boost-geometry boost-graph boost-property-tree boost-random boost-format boost-function pkgconf gsl
           test -d 'C:/vcpkg2/installed/x64-windows/lib' || { echo 'FATAL: vcpkg install failed'; exit 1; }
@@ -380,6 +380,25 @@ jobs:
           cmake --build C:/kf5-build/build-quazip && cmake --install C:/kf5-build/build-quazip
           find "$KF5DIR" -name 'QuaZip-Qt5*Config.cmake' | head -3
           test -n "$(find "$KF5DIR" -name 'QuaZip-Qt5*Config.cmake' | head -1)" || { echo 'FATAL: QuaZip-Qt5 config not installed'; exit 1; }
+
+      - name: Build libraqm v0.10.1 (static; flake text engine needs it, no vcpkg port)
+        run: |
+          # loop-35 fix45h: KoSvgTextShape_p_layout.cpp (kritaflake) calls
+          # raqm_*; vcpkg 2025.06.13 has no raqm port. Build it from the
+          # official upstream source against the already-installed vcpkg
+          # freetype/harfbuzz/fribidi. Static lib -> linked into the merged
+          # engine DLL, no runtime DLL needed. Krita source untouched.
+          [ -d C:/kf5-src/raqm ] || git clone --depth 1 --branch v0.10.1 https://github.com/HOST-Oman/libraqm.git C:/kf5-src/raqm
+          cmake -S C:/kf5-src/raqm -B C:/kf5-build/build-raqm -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$KF5DIR" \
+            -DCMAKE_PREFIX_PATH='C:/vcpkg2/installed/x64-windows' \
+            -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake' \
+            -DVCPKG_TARGET_TRIPLET=x64-windows \
+            -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF
+          cmake --build C:/kf5-build/build-raqm && cmake --install C:/kf5-build/build-raqm
+          test -n "$(find "$KF5DIR/lib" -maxdepth 1 -iname 'raqm*.lib' | head -1)" || { echo 'FATAL: raqm.lib not installed'; exit 1; }
+          find "$KF5DIR/lib" -maxdepth 1 -iname 'raqm*.lib'
 
       - name: Write qMin overload shim (flag-level fix for Qt5 mixed-type qMin)
         run: |
