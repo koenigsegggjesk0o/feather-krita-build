@@ -383,38 +383,6 @@ jobs:
           find "$KF5DIR" -name 'QuaZip-Qt5*Config.cmake' | head -3
           test -n "$(find "$KF5DIR" -name 'QuaZip-Qt5*Config.cmake' | head -1)" || { echo 'FATAL: QuaZip-Qt5 config not installed'; exit 1; }
 
-      - name: Build libraqm v0.10.1 (static; flake text engine needs it, no vcpkg port)
-        run: |
-          # loop-35 fix45h: KoSvgTextShape_p_layout.cpp (kritaflake) calls
-          # raqm_*; vcpkg 2025.06.13 has no raqm port. Build it from the
-          # official upstream source against the already-installed vcpkg
-          # freetype/harfbuzz/fribidi. Static lib -> linked into the merged
-          # engine DLL, no runtime DLL needed. Krita source untouched.
-          # Krita 6 uses raqm_set_arbitrary_run_break (post-0.10.1, in
-          # master) — always clone fresh master and rebuild (cache holds the
-          # old 0.10.1 source, so rm first; ~2-3 min).
-          rm -rf C:/kf5-src/raqm C:/kf5-build/build-raqm
-          git clone --depth 1 https://github.com/HOST-Oman/libraqm.git C:/kf5-src/raqm
-          # libraqm v0.10.x builds with MESON (no CMakeLists.txt). Point it at
-          # vcpkg's pkgconf + freetype/harfbuzz/fribidi, static lib.
-          python -m pip install --quiet meson
-          export PKG_CONFIG='C:/vcpkg2/installed/x64-windows/tools/pkgconf/pkgconf.exe'
-          export PKG_CONFIG_PATH='C:/vcpkg2/installed/x64-windows/lib/pkgconfig;C:/vcpkg2/installed/x64-windows/share/pkgconfig'
-          export CC=clang-cl CXX=clang-cl
-          if [ ! -f C:/kf5-build/build-raqm/build.ninja ]; then
-            rm -rf C:/kf5-build/build-raqm
-            meson setup C:/kf5-build/build-raqm C:/kf5-src/raqm \
-              --prefix 'C:/kf5' --default-library static --buildtype release \
-              -Ddocs=false
-          fi
-          meson compile -C C:/kf5-build/build-raqm
-          meson install -C C:/kf5-build/build-raqm
-          # meson names the clang-cl static archive libraqm.a — same COFF
-          # archive content; expose it under the .lib name lld-link searches for
-          [ -f "$KF5DIR/lib/libraqm.a" ] && cp "$KF5DIR/lib/libraqm.a" "$KF5DIR/lib/raqm.lib" || true
-          test -n "$(find "$KF5DIR/lib" -maxdepth 1 -iname 'raqm*.lib' | head -1)" || { echo 'FATAL: raqm.lib not installed'; exit 1; }
-          find "$KF5DIR/lib" -maxdepth 1 -iname 'raqm*.lib'
-
       - name: Write qMin overload shim (flag-level fix for Qt5 mixed-type qMin)
         run: |
           # loop-35 fix45g Plan B: Qt5 containers' size()=int vs ptrdiff_t on
@@ -536,7 +504,7 @@ jobs:
           # graph incl. app+plugins!). Target-dir names match both / and \
           # paths via the CMakeFiles.(x).dir pattern.
           OBJS=$(ninja -t targets all | grep -E '\.obj:' \
-            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets)(_autogen)?\.dir' \
+            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets|libraqm)(_autogen)?\.dir' \
             | cut -d: -f1)
           NOBJS_PLAN=$(printf '%s\n' "$OBJS" | wc -l)
           echo "objects planned: $NOBJS_PLAN"
@@ -547,6 +515,7 @@ jobs:
           [ "$NOBJS" -gt 700 ] || { echo 'FATAL: too few objects built (compile errors?)'; exit 1; }
           [ -n "$(find . -name 'kis_auto_brush.cpp.obj' | head -1)" ] || { echo 'FATAL: kis_auto_brush.cpp.obj missing'; exit 1; }
           [ -n "$(find . -name 'KoXmlNS.cpp.obj' | head -1)" ] || { echo 'FATAL: KoXmlNS.cpp.obj missing'; exit 1; }
+          [ -n "$(find . -path '*CMakeFiles/libraqm.dir*' -name 'raqm.c.obj' | head -1)" ] || { echo 'FATAL: vendored raqm.c.obj missing'; exit 1; }
           echo 'object gates OK'
 
       - name: Build merged real-engine DLL (all krita objects + bridge glue) + smoke test
@@ -593,8 +562,8 @@ jobs:
           # ---- collect the CLOSURE krita objects into a rsp (fix45b: the
           # build/libs tree also holds stale objs from earlier over-builds —
           # filter by the same explicit target list as the build step)
-          find "$BUILD/libs" -name '*.obj' \
-            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets)(_autogen)?\.dir' \
+          find "$BUILD/libs" "$BUILD/3rdparty_vendor" -name '*.obj' \
+            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets|libraqm)(_autogen)?\.dir' \
             | sort > "$BUILD/krita_objs.rsp"
           NOBJS=$(wc -l < "$BUILD/krita_objs.rsp")
           echo "merging $NOBJS krita objects into ONE engine DLL"
