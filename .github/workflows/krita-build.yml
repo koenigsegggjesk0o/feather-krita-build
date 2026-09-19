@@ -235,7 +235,7 @@ jobs:
             C:/kf5
             C:/kf5-src
             C:/kf5-build
-          key: winengine-deps-v9
+          key: winengine-deps-v10
           restore-keys: winengine-deps-
 
       - name: Restore krita build tree (ninja incremental)
@@ -333,7 +333,7 @@ jobs:
           export PATH="C:/vcpkg2/installed/x64-windows/tools/gettext/bin:$PATH"
           TCF='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake'
           PREFIX="$KF5DIR;$QTDIR;C:/vcpkg2/installed/x64-windows"
-          for fw in kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews; do
+          for fw in kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews kwindowsystem kcodecs kauth kconfigwidgets kxmlgui; do
             echo "=== KF5 framework: $fw ==="
             [ -d "C:/kf5-src/KF5-$fw" ] || git clone --depth 1 --branch "$KFTAG" "https://invent.kde.org/frameworks/$fw.git" "C:/kf5-src/KF5-$fw"
             cmake -S "C:/kf5-src/KF5-$fw" -B "C:/kf5-build/build-$fw" -G Ninja \
@@ -645,7 +645,7 @@ jobs:
             C:/kf5
             C:/kf5-src
             C:/kf5-build
-          key: winengine-deps-v9
+          key: winengine-deps-v10
 
       - name: Save krita build tree cache
         if: always()
