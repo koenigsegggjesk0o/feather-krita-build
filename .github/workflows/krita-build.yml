@@ -418,6 +418,7 @@ jobs:
             -DCMAKE_PREFIX_PATH="$KF5DIR;$QTDIR;C:/vcpkg2/installed/x64-windows" \
             -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake' \
             -DVCPKG_TARGET_TRIPLET=x64-windows 2>&1 | tail -100
+          grep -m2 'CMAKE_PREFIX_PATH\|ECM_DIR' "$GITHUB_WORKSPACE/build/CMakeCache.txt" || echo 'DIAG: no prefix entries in CMakeCache'
 
 
       - name: Build brush engine libs (kritaimage + kritalibbrush + deps)
