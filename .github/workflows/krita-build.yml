@@ -601,7 +601,7 @@ jobs:
              "$QT/bin/Qt5Svg.dll" "$QT/bin/Qt5Widgets.dll" "$QT/bin/Qt5Sql.dll" \
              "$QT/bin/Qt5Concurrent.dll" "$QT/bin/Qt5Network.dll" "$QT/bin/Qt5PrintSupport.dll" \
              "$QT/bin/Qt5WinExtras.dll" artifact/bin/
-          cp "$KF5/bin/"KF5*.dll artifact/bin/ 2>/dev/null || true
+          cp "$KF5/bin/"*.dll artifact/bin/ 2>/dev/null || true
           cp -r "$VP/bin/"*.dll artifact/bin/ 2>/dev/null || true
           # defensive: some clang-cl versions derive the implib from /Fe
           [ -f artifact/lib/krita_bridge_real.lib ] || cp artifact/bin/krita_bridge_real.lib artifact/lib/ 2>/dev/null || true
