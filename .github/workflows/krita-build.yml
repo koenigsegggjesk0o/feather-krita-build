@@ -1192,14 +1192,18 @@ jobs:
           [ -n "$BRUSHREL" ] || { echo 'FATAL: brush obj not found for include extraction'; exit 1; }
           LINE=$(cd "$BUILD" && ninja -t commands "$BRUSHREL" | tail -1 || true)
           [ -n "$LINE" ] || { echo 'FATAL: no compile command found for' "$BRUSHREL"; exit 1; }
-          INCS=$(printf '%s' "$LINE" | grep -oE '(-I"[^"]+"|-I[^ ]+)' | sed -E 's#^-I"?([^"]+)"?$#\1#' | sort -u | head -200 | sed 's#^#-I#' | tr '\n' ' ')
+          # capture BOTH -I<dir> and -isystem <dir> (cmake marks Qt/KF5 dirs
+          # as isystem on android; missing them broke the bridge TU)
+          INCS=$(printf '%s' "$LINE" | grep -oE '(-I"[^"]+"|-I[^ ]+|-isystem [^ ]+)' \
+            | sed -E 's#^-I"?([^"]+)"?$#\1#; s#^-isystem ##' \
+            | sort -u | head -260 | sed 's#^#-I#' | tr '\n' ' ')
           echo "extracted include dirs: $(printf '%s' "$INCS" | wc -w)"
           LIBD=$(find "$WS/krita/libs" -maxdepth 2 -type d | sed 's#^#-I#' | tr '\n' ' ')
           GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -80 | sed 's#^#-I#' | tr '\n' ' ')
           QTINC=''; KFINC=''
           for d in "$QT/include"/Qt*; do [ -d "$d" ] && QTINC="$QTINC -I$d"; done
           for d in "$KF5/include/KF5"/*/; do [ -d "$d" ] && KFINC="$KFINC -I$d"; done
-          INCS="$INCS $LIBD $GEND -I$WS/krita -I$BUILD $QTINC $KFINC -I$VP/include"
+          INCS="$INCS $LIBD $GEND -I$WS/krita -I$BUILD -I$QT/include $QTINC $KFINC -I$VP/include"
           echo "total include dirs: $(printf '%s' "$INCS" | wc -w)"
           # ---- closure objects
           find "$BUILD/libs" "$BUILD/3rdparty_vendor" -name '*.o' \
