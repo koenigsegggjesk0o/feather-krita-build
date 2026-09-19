@@ -436,6 +436,7 @@ jobs:
           # removed here: pure workflow tooling, krita source untouched.
           python - << 'PYEOF'
           data = open('build.ninja','rb').read().decode('latin-1')
+          data = data.replace('\r\n', '\n')
           blocks = data.split('\n\n')
           kept = []
           dropped = 0
@@ -457,9 +458,15 @@ jobs:
               kept.append('\n'.join(nb))
           open('build.ninja','wb').write(('\n\n'.join(kept) + '\n').encode('latin-1'))
           print('dropped link edges:', dropped, '| kept blocks:', len(kept))
+          # verify: no build edge may still reference dll/lib/exp tokens
+          bad = [l for l in open('build.ninja','rb').read().decode('latin-1').split('\n')
+                 if l.startswith('build ') and any(t.endswith(('.dll','.lib','.exp')) for t in l.split(' '))]
+          print('lines still referencing dll/lib:', len(bad))
+          for l in bad[:5]: print('  BAD:', l[:120])
+          if bad:
+              raise SystemExit(3)
           PYEOF
           test "$?" -eq 0 || { echo 'FATAL: build.ninja surgery failed'; exit 1; }
-          grep -E '^build .*\.(dll|lib) ' build.ninja | head -3 || echo 'OK: no dll/lib output edges remain'
 
       - name: Build brush engine OBJECTS (kritaimage + kritalibbrush closure)
         run: |
