@@ -510,9 +510,14 @@ jobs:
           # ---- include dirs: reuse the exact flags CMake configured for kritalibbrush
           # fix45: grep -m1 + || true — pipefail + -e killed the whole step
           # silently in fix44c when this pipeline tripped SIGPIPE.
-          LINE=$(cd "$BUILD" && ninja -t commands kritalibbrush | grep -m1 'KisBrushModel' || true)
-          [ -z "$LINE" ] && LINE=$(cd "$BUILD" && ninja -t commands kritalibbrush | head -1 || true)
-          [ -n "$LINE" ] || { echo 'FATAL: no compile command found for kritalibbrush'; exit 1; }
+          # fix45b: ask for the OBJ FILE directly — the target alias chain was
+          # emptied by the link-edge prune (dll/lib inputs stripped), so
+          # -t commands <target> legitimately returns nothing.
+          BRUSHREL=$(cd "$BUILD" && find libs -name 'KisBrushModel.cpp.obj' | head -1)
+          [ -z "$BRUSHREL" ] && BRUSHREL=$(cd "$BUILD" && find libs -name 'kis_auto_brush.cpp.obj' | head -1)
+          [ -n "$BRUSHREL" ] || { echo 'FATAL: brush obj not found for include extraction'; exit 1; }
+          LINE=$(cd "$BUILD" && ninja -t commands "$BRUSHREL" | tail -1 || true)
+          [ -n "$LINE" ] || { echo 'FATAL: no compile command found for' "$BRUSHREL"; exit 1; }
           # fix42: NO embedded double quotes in flags. Bash passes args with
           # literal quote characters straight to clang-cl, so /I"D:\..." was
           # parsed as a path that CONTAINS quote marks (every include dir
@@ -525,8 +530,12 @@ jobs:
           GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -80 | sed 's#^#/I#' | tr '\n' ' ')
           INCS="$INCS $LIBD $GEND /I$WS/krita /I$BUILD"
           echo "total include dirs: $(printf '%s' "$INCS" | wc -w)"
-          # ---- collect EVERY krita object of the engine closure into a rsp
-          find "$BUILD/libs" -name '*.obj' | sort > "$BUILD/krita_objs.rsp"
+          # ---- collect the CLOSURE krita objects into a rsp (fix45b: the
+          # build/libs tree also holds stale objs from earlier over-builds —
+          # filter by the same explicit target list as the build step)
+          find "$BUILD/libs" -name '*.obj' \
+            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets)(_autogen)?\.dir' \
+            | sort > "$BUILD/krita_objs.rsp"
           NOBJS=$(wc -l < "$BUILD/krita_objs.rsp")
           echo "merging $NOBJS krita objects into ONE engine DLL"
           # ---- vcpkg import libs (over-link: unused import libs are ignored)
