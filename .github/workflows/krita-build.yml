@@ -414,9 +414,9 @@ jobs:
           # file — Krita source stays untouched).
           G="$GITHUB_WORKSPACE/build/build.ninja"
           sed -i 's#/std:c\+\+17#/std:c++17 /Zc:twoPhase-#g' "$G" || true
-          python3 -c "import sys; p=sys.argv[1]; s=open(p, encoding='utf-8').read(); f='/Zc:twoPhase-' not in s; s=s.replace('/std:c++17','/std:c++17 /Zc:twoPhase-') if f else s; open(p,'w',encoding='utf-8').write(s) if f else None; print('injected via python fallback' if f else 'already injected by sed')" "$G"
-          grep -m1 -o 'std:c++17 /Zc:twoPhase-' "$G" | head -1
-          grep -c 'Zc:twoPhase' "$G" || { echo 'FATAL: twoPhase flag not injected'; grep -m1 -n 'std:c++17' "$G" | head -c 600; exit 1; }
+          python3 -c "import sys; p=sys.argv[1]; s=open(p, encoding='utf-8').read(); f='std:c++17 /Zc:twoPhase-' not in s; s=s.replace('/std:c++17','/std:c++17 /Zc:twoPhase-') if f else s; open(p,'w',encoding='utf-8').write(s) if f else None; print('injected via python fallback' if f else 'already injected by sed')" "$G"
+          grep -m1 -o 'std:c++17 /Zc:twoPhase-' "$G" || true
+          grep -c 'std:c++17 /Zc:twoPhase-' "$G" || { echo 'FATAL: twoPhase flag not injected'; grep -m1 -n 'std:c++17' "$G" | head -c 600; exit 1; }
 
 
       - name: Build brush engine libs (kritaimage + kritalibbrush + deps)
