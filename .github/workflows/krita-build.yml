@@ -312,7 +312,7 @@ jobs:
           'C:/vcpkg2/vcpkg.exe' install --triplet x64-windows \
             'gettext[tools]' zlib bzip2 lcms eigen3 exiv2 tiff fribidi \
             freetype harfbuzz fontconfig libunibreak \
-            boost-multi-array boost-icl boost-rational boost-utility boost-integer boost-accumulators boost-circular-buffer boost-heap boost-math boost-intrusive
+            boost-multi-array boost-icl boost-rational boost-utility boost-integer boost-accumulators boost-circular-buffer boost-heap boost-math boost-intrusive pkgconf
           test -d 'C:/vcpkg2/installed/x64-windows/lib' || { echo 'FATAL: vcpkg install failed'; exit 1; }
           # ki18n's KF5I18nMacros find_package(Gettext) needs msgfmt/msgmerge
           # executables from the gettext[tools] feature on PATH:
@@ -387,9 +387,12 @@ jobs:
           # Krita's custom FindLibExiv2/Find modules get their versions via
           # pkg-config first; the runner has no pkg-config and vcpkg's .pc
           # files are not on PKG_CONFIG_PATH by default.
-          choco install pkgconfiglite -y --no-progress >/dev/null 2>&1 || true
+          # Strawberry Perl ships a broken pkg-config perl script that
+          # shadows real pkg-config on PATH — use vcpkg's pkgconf binary
+          # explicitly instead.
           export PKG_CONFIG_PATH='C:/vcpkg2/installed/x64-windows/lib/pkgconfig;C:/vcpkg2/installed/x64-windows/share/pkgconfig'
-          pkg-config --modversion exiv2 || { echo 'FATAL: pkg-config cannot find exiv2 .pc'; exit 1; }
+          test -x 'C:/vcpkg2/installed/x64-windows/tools/pkgconf/pkgconf.exe' || { echo 'FATAL: pkgconf.exe missing (pkgconf port not installed?)'; exit 1; }
+          'C:/vcpkg2/installed/x64-windows/tools/pkgconf/pkgconf.exe' --modversion exiv2 || { echo 'FATAL: pkgconf cannot find exiv2 .pc'; exit 1; }
           cmake -S "$GITHUB_WORKSPACE/krita" -B "$GITHUB_WORKSPACE/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=OFF -DENABLE_PYTHON=OFF \
@@ -400,6 +403,7 @@ jobs:
             -DWITH_WEBP=OFF -DWITH_JXL=OFF -DWITH_OCIO=OFF \
             -DWITH_OPENJPEG=OFF -DWITH_MEDIA=OFF \
             -DCMAKE_DISABLE_FIND_PACKAGE_LibMyPaint=TRUE \
+            -DPKG_CONFIG_EXECUTABLE='C:/vcpkg2/installed/x64-windows/tools/pkgconf/pkgconf.exe' \
             -DCMAKE_PREFIX_PATH="$KF5DIR;$QTDIR;C:/vcpkg2/installed/x64-windows" \
             -DCMAKE_TOOLCHAIN_FILE='C:/vcpkg2/scripts/buildsystems/vcpkg.cmake' \
             -DVCPKG_TARGET_TRIPLET=x64-windows 2>&1 | tail -100
