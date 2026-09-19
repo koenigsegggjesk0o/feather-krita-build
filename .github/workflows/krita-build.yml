@@ -1222,9 +1222,13 @@ jobs:
           # merged engine must use the SAME STL (two libc++ copies in one
           # process = ODR crash). -nostdlib++ suppresses the driver default,
           # then libc++_shared.so is linked explicitly + bundled.
-          LIBCXXSHARED=""
-          if [ -n "$LIBCXX_REAL" ] && [ -f "$LIBCXX_REAL" ]; then LIBCXXSHARED="$LIBCXX_REAL"; fi
-          echo "merge libc++ source: ${LIBCXXSHARED:-<driver default / static>}"
+          # NDK r29 on the GH runner image ships ONLY the riscv64
+          # libc++_shared.so (pruned image) — linking it into an x86_64/
+          # arm64 image is impossible. Instead: -nostdlib++ and NO libc++
+          # input — the STL symbols stay undefined in the merged .so and
+          # resolve at dlopen time from libc++_shared.so, which the app's
+          # Qt libs load first (single libc++ instance in-process, ODR-safe).
+          echo 'merge libc++ source: <undefined; resolved from libc++_shared.so at dlopen>'
           CLANG="$TC/$ABI_TRIPLE-clang++"
           $CLANG -std=c++17 -shared -fPIC -O2 -fno-operator-names -nostdlib++ $INCS \
             "$WS/bridge/krita_bridge_real.cpp" \
@@ -1234,7 +1238,7 @@ jobs:
             -l"Qt5Svg_${{ matrix.abi }}" -l"Qt5Widgets_${{ matrix.abi }}" -l"Qt5Sql_${{ matrix.abi }}" \
             -l"Qt5Concurrent_${{ matrix.abi }}" -l"Qt5Network_${{ matrix.abi }}" \
             $KFLIBS $VPLIBS \
-            $LIBCXXSHARED -lz -llog \
+            -lz -llog \
             -o artifact/lib/libkrita_bridge.so
           # ---- export gate: the extern "C" bridge ABI must be visible
           NM="$TC/llvm-nm"
@@ -1255,7 +1259,8 @@ jobs:
           cp "$QT/lib"/libQt5*_arm64-v8a.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           cp "$QT/lib"/libicu*.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           cp "$KF5/lib"/libKF5*.so* artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
-          cp "$LIBCXXSHARED" artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
+          # libc++_shared.so is intentionally NOT bundled here — the app's
+          # Qt libraries provide it (single copy per process).
           # ---- android smoke executable (links the merged engine .so; run
           # later on an x86_64 emulator via adb for the C++ end-to-end proof)
           $CLANG -std=c++17 -O2 -fPIE -pie $INCS "$WS/bridge/smoke_test_real.cpp" \
