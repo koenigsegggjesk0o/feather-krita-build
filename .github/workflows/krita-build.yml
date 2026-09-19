@@ -923,6 +923,7 @@ jobs:
               -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
               -DVCPKG_TARGET_TRIPLET="$VPT_TRIPLET" \
               -DANDROID_ABI='${{ matrix.abi }}' -DANDROID_PLATFORM="android-$ANDROID_API" \
+              -DANDROID_STL=c++_shared \
               -DBUILD_TESTING=OFF -DBUILD_HTML_DOCS=OFF -DBUILD_QTHELP_DOCS=OFF -DBUILD_DESIGNERPLUGIN=OFF \
               -DKF_IGNORE_PLATFORM_CHECK=TRUE
             cmake --build "/opt/kf5-build/and-$fw" --parallel
@@ -961,6 +962,7 @@ jobs:
             -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
             -DVCPKG_TARGET_TRIPLET="$VPT_TRIPLET" \
             -DANDROID_ABI='${{ matrix.abi }}' -DANDROID_PLATFORM="android-$ANDROID_API" \
+            -DANDROID_STL=c++_shared \
             -DQUAZIP_QT_MAJOR_VERSION=5 -DBUILD_TESTING=OFF -DQUAZIP_BUILD_TESTS=OFF
           cmake --build /opt/kf5-build/and-quazip && cmake --install /opt/kf5-build/and-quazip
           test -n "$(find "$KF5DIR" -name 'QuaZip-Qt5*Config.cmake' | head -1)" || { echo 'FATAL: QuaZip-Qt5 config not installed'; exit 1; }
@@ -1039,6 +1041,18 @@ jobs:
           PYEOF
           ls -la /opt/android_deps/include/unwindstack/ /opt/android_deps/cmake/
           test -f /opt/android_deps/include/unwindstack/Regs.h || { echo 'FATAL: unwindstack stub missing'; exit 1; }
+          # ---- krita's ANDROID STL check expects the OLD ECM sysroot layout
+          # (sysroot/usr/lib/<arch>/libc++_shared.so). NDK r29 uses full
+          # triples. Create arch-alias symlinks INSIDE the NDK (toolchain
+          # provisioning, krita untouched) so the EXISTS check passes.
+          NDKLIB="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib"
+          test -f "$NDKLIB/$ABI_TRIPLE/libc++_shared.so" || { echo "FATAL: NDK libc++_shared missing at $NDKLIB/$ABI_TRIPLE"; exit 1; }
+          for ARCH in x86_64 aarch64 arm64-v8a armeabi-v7a; do
+            sudo mkdir -p "$NDKLIB/$ARCH"
+            sudo ln -sf "$NDKLIB/$ABI_TRIPLE/libc++_shared.so" "$NDKLIB/$ARCH/libc++_shared.so"
+          done
+          echo "NDK sysroot STL aliases created:"
+          ls -la "$NDKLIB/x86_64/"
 
       - name: Configure Krita (minimal engine build, Qt5 android, unmodified source)
         run: |
@@ -1074,7 +1088,8 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$VPTC" \
             -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$NDK_ROOT/build/cmake/android.toolchain.cmake" \
             -DVCPKG_TARGET_TRIPLET="$VPT_TRIPLET" \
-            -DANDROID_ABI='${{ matrix.abi }}' -DANDROID_PLATFORM="android-$ANDROID_API" 2>&1 | tail -100
+            -DANDROID_ABI='${{ matrix.abi }}' -DANDROID_PLATFORM="android-$ANDROID_API" \
+            -DANDROID_STL=c++_shared 2>&1 | tail -100
           grep -m2 'CMAKE_PREFIX_PATH\|ANDROID' "$GITHUB_WORKSPACE/build/CMakeCache.txt" || echo 'DIAG: no cache entries matched'
 
       - name: Prune per-lib .so link edges from build.ninja (objects are the deliverable)
