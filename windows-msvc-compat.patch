@@ -41,3 +41,14 @@
  private:
      KisImageAnimationInterface *m_interface;
  };
+--- a/libs/global/KisScopedPerformanceLogger.h
++++ b/libs/global/KisScopedPerformanceLogger.h
+@@ -10,7 +10,7 @@
+ #include "kis_debug.h"
+ #include "kritaglobal_export.h"
+ 
+-class KRITAGLOBAL_EXPORT KisScopedPerformanceLogger
++class KisScopedPerformanceLogger
+ {
+     Q_DISABLE_COPY_MOVE(KisScopedPerformanceLogger)
+ public:
