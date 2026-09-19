@@ -152,7 +152,9 @@ jobs:
         shell: bash
         run: |
           REL=build/windows/x64/runner/Release
-          # single merged engine DLL + every runtime DLL next to the exe
+          # single merged engine DLL: rename to the name the app's FFI loader
+          # expects (krita_bridge.dll), plus every runtime DLL next to the exe
+          cp krita-engine/bin/krita_bridge_real.dll "$REL/krita_bridge.dll"
           cp krita-engine/bin/*.dll "$REL/"
           echo "Release dir: $(ls "$REL" | wc -l) files"
           ls "$REL" | head -12
