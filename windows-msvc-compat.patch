@@ -1,17 +1,43 @@
 --- a/libs/resources/KisDatabaseTransactionLock.h
 +++ b/libs/resources/KisDatabaseTransactionLock.h
-@@ -24,6 +24,14 @@
+@@ -23,6 +23,11 @@
+     void lock();
      void unlock();
      void commit();
++
++    // Feather-Krita Windows CI build provisioning (NOT upstream code):
++    // MSVC STL eagerly compiles std::unique_lock<Adapter>::try_lock through
++    // the using-declaration in KisAdaptedLock. Provide a safe no-op.
++    bool try_lock() { return false; }
+ 
+ private:
+     QSqlDatabase m_database;
+
+--- a/libs/flake/KoShapeBulkActionLock.h
++++ b/libs/flake/KoShapeBulkActionLock.h
+@@ -24,6 +24,11 @@
+     KoShapeBulkActionLockAdapter(const QList<KoShape*> &shapes);
+     void lock();
+     void unlock();
++
++    // Feather-Krita Windows CI build provisioning (NOT upstream code):
++    // MSVC STL requires try_lock on adapters passed to std::unique_lock;
++    // safe no-op (bulk actions are never try-locked at runtime here).
++    bool try_lock() { return false; }
+ 
+     UpdatesList takeFinalUpdatesList();
+ 
+
+--- a/libs/image/KisBlockBackgroundFrameGenerationLock.h
++++ b/libs/image/KisBlockBackgroundFrameGenerationLock.h
+@@ -28,6 +28,10 @@
+     void lock();
+     void unlock();
  
 +    // Feather-Krita Windows CI build provisioning (NOT upstream code):
-+    // MSVC STL eagerly compiles the body of
-+    // std::unique_lock<Adapter>::try_lock() through the using-declaration
-+    // in KisAdaptedLock. This adapter never try_locks at runtime; a safe
-+    // no-op keeps MSVC name resolution happy. The upstream source tree
-+    // remains unmodified; this patch exists only in the CI build checkout.
++    // see KisDatabaseTransactionLock.h shim note. Safe no-op for MSVC.
 +    bool try_lock() { return false; }
 +
  private:
-     QSqlDatabase m_database;
-     bool m_transactionStarted{false};
+     KisImageAnimationInterface *m_interface;
+ };
