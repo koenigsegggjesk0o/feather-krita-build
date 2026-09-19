@@ -1230,8 +1230,14 @@ jobs:
           # Qt libs load first (single libc++ instance in-process, ODR-safe).
           echo 'merge libc++ source: <undefined; resolved from libc++_shared.so at dlopen>'
           CLANG="$TC/$ABI_TRIPLE-clang++"
-          $CLANG -std=c++17 -shared -fPIC -O2 -fno-operator-names -nostdlib++ $INCS \
-            "$WS/bridge/krita_bridge_real.cpp" \
+          # bridge TU compiled separately: its compile errors must be
+          # visible and isolated from the big link
+          $CLANG -std=c++17 -fPIC -O2 -fno-operator-names -nostdlib++ $INCS \
+            -c "$WS/bridge/krita_bridge_real.cpp" \
+            -o "$BUILD/krita_bridge_tu.o"
+          echo "bridge TU rc=$? size=$(stat -c %s "$BUILD/krita_bridge_tu.o" 2>/dev/null)"
+          $CLANG -shared -nostdlib++ \
+            "$BUILD/krita_bridge_tu.o" \
             @"$BUILD/krita_objs.rsp" \
             -L"$QT/lib" -L"$KF5/lib" -L"$VP/lib" \
             -l"Qt5Core_${{ matrix.abi }}" -l"Qt5Gui_${{ matrix.abi }}" -l"Qt5Xml_${{ matrix.abi }}" \
@@ -1240,6 +1246,11 @@ jobs:
             $KFLIBS $VPLIBS \
             -lz -llog \
             -o artifact/lib/libkrita_bridge.so
+          echo "link rc=$?"
+          ls -la artifact/lib/
+          "$TC/llvm-readelf" -d artifact/lib/libkrita_bridge.so | head -12 || true
+          echo "--- first dynamic symbols:"
+          "$NM" -D artifact/lib/libkrita_bridge.so 2>&1 | head -15 || true
           # ---- export gate: the extern "C" bridge ABI must be visible
           NM="$TC/llvm-nm"
           NEXP=$("$NM" -D --defined-only artifact/lib/libkrita_bridge.so | grep -c 'krita_bridge' || true)
