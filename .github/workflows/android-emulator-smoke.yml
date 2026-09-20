@@ -234,13 +234,12 @@ jobs:
           # head closes the pipe -> grep SIGPIPE -> pipefail aborts the
           # step (found by run 35510330096); audit prints are best-effort
           "$TC/llvm-readelf" -d "$STAGE/libkrita_bridge.so" | grep NEEDED | sed -n '1,40p' || true
-          # gate: the shim must be the FIRST NEEDED and Core must not be
-          # a direct dependency (else the real JNI-reaching
-          # writableLocation shadows the shim and the boot SIGSEGVs)
+          # gate: the real core must not be a direct bridge dependency —
+          # under the masquerade the stub's priority comes from being the
+          # FILE behind the libQt5Core_x86_64.so name (shim -> real-core
+          # DFS), so NEEDED order is irrelevant; direct real-core NEEDING
+          # would be the only way around the stub
           AUDIT=$("$TC/llvm-readelf" -d "$STAGE/libkrita_bridge.so")
-          FIRST=$(printf '%s\n' "$AUDIT" | awk '/\(NEEDED\)/{print $NF; exit}' | tr -d '[]')
-          [ "$FIRST" = "libQt5Core_x86_64.so" ] \
-            || { echo "##[error] first NEEDED is not the Core shim (got: $FIRST)"; exit 1; }
           if printf '%s\n' "$AUDIT" | grep -qF '[libQt5Core_real_x86_64.so]'; then
             echo '##[error] real core is a direct bridge NEEDED'
             exit 1
