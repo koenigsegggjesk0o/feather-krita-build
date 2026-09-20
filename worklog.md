@@ -1499,3 +1499,17 @@ Work Log:
 Stage Summary:
 - The engine now reports WHO it is painting with: krita_brush_get_paintop_id closes the loop from the preset XML through the ABI to the UI — family badge in the panel, hardness slider auto-gated per family (Krita-parity), smoke-gated in CI on both layers.
 - NEXT: commit+push -> mirror sync -> DISPATCH krita-build.yml (wrapper changed, all 4 engine jobs recompile with the new gates) -> on green dispatch build-app.yml -> release v0.27-paintop-identity via release_v27.py (clone v26, TAG/NAME/BODY swap) -> final beacon.
+
+---
+Task ID: 5-loop-41 (beacon 2 — FINAL: paintop identity campaign CLOSED, v0.27 released)
+Agent: Z.ai Code (main, autonomous loop)
+Task: milestone lock — the engine reports its paintop family end-to-end
+
+Work Log:
+- FULL GREEN CHAIN: Android Bridge .so + Step 2 Qt Bridge auto-jobs SUCCESS (portable + Qt fallback compile the new paintopId path); krita-build dispatch 35501521278 @ bed91a8 — ALL FOUR engine jobs SUCCESS (linux, windows, android x86_64, android arm64-v8a) with the new paintop-id smoke gates; build-app dispatch 35502646204 — ALL FIVE jobs SUCCESS (the Dart FFI currentPaintopId gates passed through the app's own bindings against the NEW engine artifacts). Push-triggered build-app race cancelled (engine had to rebuild first this time; protocol followed).
+- RELEASED v0.27-paintop-identity (release id 392383771, tag on feather-krita-flutter @ 3d23356 via scripts/release_v27.py @ APP_RUN_ID 35502646204): 3 assets uploaded (201 x3) — linux real-engine zip 47.4MB, windows real-engine zip 40.1MB, android real-engine APK 115.1MB. release_v27.py re-tracked (see box-reset note below).
+- BOX RESET #4 hit right after the release: the sandbox wiped /home/z/fkr-step1, /home/z/builder-ws and /home/z/flutter BETWEEN the release publish and the final beacon. NO WORK LOST: beacon-1 commit 3d23356 + mirror bed91a8 + the published release all live on GitHub; this beacon is re-appended after a fresh clone, and release_v27.py re-created from the tracked release_v26.py (same sed/python transform). Flutter SDK rebuilt via scripts/flutter_install.sh (pin 3.35.3, matching CI).
+
+Stage Summary:
+- PAINTOP IDENTITY CAMPAIGN COMPLETE: krita_brush_get_paintop_id crosses the preset XML -> ABI -> Dart -> UI chain on every platform, the panel badges the family, and the hardness slider now behaves like Krita's own (per-family gating from an evidence-based disable list). 3 new unit tests (incl. the whitelist-vs-disable-list consistency catch that improved the design).
+- NEXT-LOOP NOTES: (1) android emulator C++/Dart smoke (loop-36 note stands — device-ready .so, gates compiled but not executed on-device); (2) the 2 flaky keyboard_shortcuts timeouts under suite parallelism (reproduced again; 6/6 in isolation — root cause still open, likely a shared binding/pump interaction worth a dedicated session); (3) candidate polish: the brush PICKER could show each preset's family badge too (data is already on the model via paintopId); (4) candidate ABI nicety: krita_brush_list_available_presets could also return each preset's family, enabling a grouped picker without re-parsing files in Dart.
