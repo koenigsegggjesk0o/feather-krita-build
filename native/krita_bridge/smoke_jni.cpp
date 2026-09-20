@@ -136,6 +136,11 @@ void* _ZNK17QAndroidJniObject10javaObjectEv(const void* /*this*/) {
 
 extern "C" JNIEXPORT jint JNICALL
 Java_FkrSmoke_run(JNIEnv* env, jclass, jobjectArray args) {
+    // Unbuffered stdout: the adb shell pipe gives C stdio a full 4KB
+    // buffer, and ART's System.exit path does NOT flush it (the whole
+    // gate output incl. the SMOKE OK banner was lost on an rc=0 run —
+    // 35524465534). Unbuffered streams every gate line live.
+    std::setbuf(stdout, nullptr);
     const jsize n = env->GetArrayLength(args);
     char** argv = static_cast<char**>(std::calloc(size_t(n) + 2, sizeof(char*)));
     if (!argv) return 2;
@@ -148,6 +153,8 @@ Java_FkrSmoke_run(JNIEnv* env, jclass, jobjectArray args) {
         env->DeleteLocalRef(js);
     }
     const int rc = smoke_main(n + 1, argv);
+    std::fflush(stdout);
+    std::fflush(stderr);
     for (jsize i = 1; i <= n; ++i) std::free(argv[i]);
     std::free(argv);
     return rc;
