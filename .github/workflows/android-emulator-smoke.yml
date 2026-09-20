@@ -309,12 +309,6 @@ jobs:
           # ---- fixtures + app_process boot classes
           cp src/stock_basic_5_size.kpp src/stock_eraser_circle.kpp "$STAGE/"
           chmod +x "$STAGE/smoke_test_real_android"
-          mkdir -p jclasses && "$JAVA_HOME/bin/javac" --release 8 -d jclasses src/FkrSmoke.java
-          BT=$(ls "$SDK_ROOT/build-tools/" | sort -V | tail -1)
-          "$SDK_ROOT/build-tools/$BT/d8" --release --min-api 24 \
-            --lib "$SDK_ROOT/platforms/android-30/android.jar" \
-            --output "$STAGE" jclasses/FkrSmoke.class
-          test -s "$STAGE/classes.dex" || { echo '##[error] dex build failed'; exit 1; }
           echo "--- staged runtime: $(du -sh "$STAGE" | cut -f1), $(ls "$STAGE" | wc -l) files"
 
       - name: Enable KVM
@@ -418,6 +412,18 @@ jobs:
             "$ADB" shell getprop ro.build.version.sdk
             "$ADB" shell getprop ro.build.fingerprint
           } | tee /tmp/device_identity.txt
+
+      - name: Build FkrSmoke dex (needs android.jar from the boot step)
+        run: |
+          set -euo pipefail
+          mkdir -p jclasses
+          "$JAVA_HOME/bin/javac" --release 8 -d jclasses src/FkrSmoke.java
+          BT=$(ls "$SDK_ROOT/build-tools/" | sort -V | tail -1)
+          "$SDK_ROOT/build-tools/$BT/d8" --release --min-api 24 \
+            --lib "$SDK_ROOT/platforms/android-30/android.jar" \
+            --output stage jclasses/FkrSmoke.class
+          test -s stage/classes.dex || { echo '##[error] dex build failed'; exit 1; }
+          echo "dex built: $(stat -c %s stage/classes.dex) bytes"
 
       - name: Push runtime to device
         timeout-minutes: 15
