@@ -38,7 +38,11 @@ static int g_failures = 0;
         }                                                                 \
     } while (0)
 
-int main(int argc, char** argv) {
+// smoke_main — the full gate set. Runs standalone via main() (linux /
+// windows engine CI jobs) and ON-DEVICE via the JNI wrapper
+// (smoke_jni.cpp + FkrSmoke.java: app_process boots an ART VM so the
+// Qt/KF5 android statics see a JavaVM; loop-43).
+int smoke_main(int argc, char** argv) {
     std::printf("version: %s\n", krita_brush_version());
     KritaBrushContext* b = krita_brush_init();
     CHECK(b != nullptr, "init returns handle");
@@ -341,4 +345,10 @@ int main(int argc, char** argv) {
     }
     std::printf("SMOKE FAILED — %d failure(s)\n", g_failures);
     return 1;
+}
+
+// Standalone entry point (linux / windows engine CI jobs). The on-device
+// run goes through smoke_jni.cpp's JNI wrapper instead.
+int main(int argc, char** argv) {
+    return smoke_main(argc, argv);
 }
