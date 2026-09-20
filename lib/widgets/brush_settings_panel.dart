@@ -6,6 +6,8 @@
 // A glassmorphism side panel that exposes the active brush parameters:
 //   - Size (1 – 500 px)
 //   - Opacity (0 – 100 %)
+//   - Flow (0 – 100 %, 5-loop-40 — per-dab build-up rate, engine ABI)
+//   - Hardness (0 – 100 %, 5-loop-40 — mask fade, engine ABI rebuild)
 //   - Spacing (0 – 100 %)
 //   - Smudge (0 – 100 %)
 //   - Colour swatch (opens [showGlassColorPicker])
@@ -86,6 +88,38 @@ class BrushSettingsPanel extends StatelessWidget {
                         icon: Icons.opacity_rounded,
                         accent: AppTheme.toolSelect,
                         onChanged: state.setBrushOpacity,
+                        valueFormatter: (v) => '${(v * 100).round()}%',
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Flow (5-loop-40): per-dab application rate through
+                      // the real engine (set_flow ABI). Low flow builds
+                      // paint up gradually, airbrush-style.
+                      GlassSlider(
+                        value: state.brushFlow,
+                        min: 0,
+                        max: 1,
+                        divisions: 100,
+                        label: 'Flow',
+                        icon: Icons.gradient_rounded,
+                        accent: AppTheme.toolShape,
+                        onChanged: state.setBrushFlow,
+                        valueFormatter: (v) => '${(v * 100).round()}%',
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Hardness (5-loop-40): mask fade through the real
+                      // engine (set_hardness ABI rebuilds the mask
+                      // generator). 0 = fully soft gaussian, 1 = hard disk.
+                      GlassSlider(
+                        value: state.brushHardness,
+                        min: 0,
+                        max: 1,
+                        divisions: 100,
+                        label: 'Hardness',
+                        icon: Icons.adjust_rounded,
+                        accent: AppTheme.toolLight,
+                        onChanged: state.setBrushHardness,
                         valueFormatter: (v) => '${(v * 100).round()}%',
                       ),
                       const SizedBox(height: 12),

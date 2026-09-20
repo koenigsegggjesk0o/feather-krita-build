@@ -185,6 +185,11 @@ class EditorState extends ChangeNotifier {
   double _brushSpacing = 0.10;
   double _brushSmudge = 0.0;
   double _brushSmoothing = 0.0; // loop-25: 0 = off, 1 = max stabilizer.
+  // 5-loop-40: flow (per-dab application rate) and hardness (mask fade).
+  // Defaults match the native bridge: flow 1.0 (full build-up), hardness
+  // 0.85 (the real wrapper's default auto-brush hardness).
+  double _brushFlow = 1.0;
+  double _brushHardness = 0.85;
   int _brushColor = 0xFF1A1A1A;
   String _brushPresetName = 'Basic Round';
 
@@ -211,6 +216,19 @@ class EditorState extends ChangeNotifier {
   double get brushSpacing => _brushSpacing;
   double get brushSmudge => _brushSmudge;
   double get brushSmoothing => _brushSmoothing;
+
+  /// The brush flow (per-dab application rate) in [0, 1] (5-loop-40).
+  /// Flow < 1 scales every dab's alpha so paint builds up gradually —
+  /// orthogonal to [brushOpacity], which scales the whole stroke at the
+  /// compositor level (Krita's flow-vs-opacity semantics).
+  double get brushFlow => _brushFlow;
+
+  /// The brush hardness in [0, 1] (5-loop-40). 0 = fully soft gaussian
+  /// falloff, 1 = hard-edged disk. Setting it rebuilds the real engine's
+  /// mask generator (explicit override supersedes the preset brush until
+  /// the next preset load).
+  double get brushHardness => _brushHardness;
+
   int get brushColor => _brushColor;
   String get brushPresetName => _brushPresetName;
 
@@ -251,6 +269,18 @@ class EditorState extends ChangeNotifier {
       ..spacing = _brushSpacing
       ..smudge = _brushSmudge
       ..color = BrushColor.fromPacked(_brushColor);
+    // Flow/hardness (5-loop-40) are newer ABI entry points than the rest:
+    // a bridge library built before them lacks the symbols, and the FFI
+    // bindings are deliberately strict so the CI smoke gates catch that.
+    // The UI, however, must never crash on an older bridge — degrade
+    // gracefully (engine keeps its built-in values).
+    try {
+      e
+        ..flow = _brushFlow
+        ..hardness = _brushHardness;
+    } catch (_) {
+      // Pre-flow/hardness bridge — ignore.
+    }
   }
 
   // ----- Preset library -------------------------------------------------
@@ -410,6 +440,38 @@ class EditorState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Sets the brush flow (per-dab application rate) in [0, 1] (5-loop-40).
+  /// Syncs to the native engine, where flow scales each dab's alpha
+  /// (mask_alpha × pressure × flow) — the opacity slider stays
+  /// orthogonal at the compositor level.
+  void setBrushFlow(double value) {
+    final v = value.clamp(0.0, 1.0);
+    if (_brushFlow == v) return;
+    _brushFlow = v;
+    try {
+      _brushEngine?.flow = v;
+    } catch (_) {
+      // Older bridge without the flow ABI — state stays authoritative.
+    }
+    notifyListeners();
+  }
+
+  /// Sets the brush hardness in [0, 1] (5-loop-40). Syncs to the native
+  /// engine, which rebuilds its mask generator with fade (1 - hardness)
+  /// — an explicit user override that supersedes the preset brush until
+  /// the next preset load re-seeds the slider.
+  void setBrushHardness(double value) {
+    final v = value.clamp(0.0, 1.0);
+    if (_brushHardness == v) return;
+    _brushHardness = v;
+    try {
+      _brushEngine?.hardness = v;
+    } catch (_) {
+      // Older bridge without the hardness ABI — state stays authoritative.
+    }
+    notifyListeners();
+  }
+
   /// Sets the brush-smoothing (stabilizer) strength in [0, 1]. Loop-25.
   /// 0 disables smoothing (raw stroke path); 1 applies the maximum
   /// symmetric moving-average window. The value is read by
@@ -510,10 +572,37 @@ class EditorState extends ChangeNotifier {
           if (e.currentSpacing > 0) {
             _brushSpacing = e.currentSpacing.clamp(0.0, 1.0);
           }
+          // Flow + hardness seeding (5-loop-40). Flow: the pure-Dart
+          // [BrushPreset.flowValue] parse is authoritative (mirrors the
+          // engine's FlowValue mapping, works without a native engine and
+          // in tests); it is pushed back to the engine so UI and engine
+          // agree even if the two parses ever diverge. Hardness: the
+          // ENGINE is authoritative — it resolved the real brush
+          // definition (fade / hardness / Softness variants) — so the
+          // slider is seeded from the engine's effective value. Both
+          // engine round-trips are guarded: an older bridge library
+          // without these symbols must not crash the preset load.
+          _brushFlow = preset.flowValue.clamp(0.0, 1.0);
+          try {
+            e.flow = _brushFlow;
+          } catch (_) {}
+          try {
+            _brushHardness = e.currentHardness.clamp(0.0, 1.0);
+          } catch (_) {}
+        } else {
+          // Engine present but preset rejected: still seed flow from the
+          // preset XML (pure Dart) so the slider tracks the selection.
+          _brushFlow = preset.flowValue.clamp(0.0, 1.0);
         }
       } catch (_) {
         // Ignore — the synthetic dab fallback still works.
       }
+    }
+
+    // Engine absent (synthetic-dab fallback): flow still seeds from the
+    // preset XML so the slider tracks the selection (5-loop-40).
+    if (_brushEngine == null) {
+      _brushFlow = preset.flowValue.clamp(0.0, 1.0);
     }
 
     // Auto-switch the tool to match the preset's eraser mode (5-loop-38).
