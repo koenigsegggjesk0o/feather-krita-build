@@ -12,7 +12,6 @@ on:
       - 'tool/**'
       - 'pubspec.yaml'
       - 'native/krita_bridge/**'
-      - '.github/workflows/build-app.yml'
 
 jobs:
   build-windows:
