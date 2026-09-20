@@ -41,8 +41,11 @@ static int g_failures = 0;
 // smoke_main — the full gate set. Runs standalone via main() (linux /
 // windows engine CI jobs) and ON-DEVICE via the JNI wrapper
 // (smoke_jni.cpp + FkrSmoke.java: app_process boots an ART VM so the
-// Qt/KF5 android statics see a JavaVM; loop-43).
-int smoke_main(int argc, char** argv) {
+// Qt/KF5 android statics see a JavaVM; loop-43). C linkage is REQUIRED:
+// smoke_jni.cpp declares and resolves it as an unmangled C symbol —
+// run 35520311991 ("cannot locate symbol smoke_main") was the latent
+// mismatch that surfaced once the JNI_ERR load-order bug was fixed.
+extern "C" int smoke_main(int argc, char** argv) {
     std::printf("version: %s\n", krita_brush_version());
     KritaBrushContext* b = krita_brush_init();
     CHECK(b != nullptr, "init returns handle");
