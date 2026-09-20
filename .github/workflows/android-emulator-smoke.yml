@@ -136,13 +136,19 @@ jobs:
             done < <(find "$N" -name libc++_shared.so -path '*sysroot/usr/lib/x86_64-linux-android/*' 2>/dev/null | head -5)
           done
           if [ -z "$LIBCXX_SRC" ]; then
-            echo 'no local NDK exports the modern symbol — downloading NDK r27c runtime'
-            curl -sfL --retry 3 -o /tmp/ndk27.zip \
-              https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
-            unzip -j -o -q /tmp/ndk27.zip \
-              'android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so' \
-              -d /tmp/ndk27lib
-            LIBCXX_SRC=/tmp/ndk27lib/libc++_shared.so
+            # NOTE: the pairing-correct runtime is r29 (the bridge was
+            # compiled by the r29 clang). r27c's sysroot runtime (1.6MB)
+            # genuinely LACKS __cxa_init_primary_exception — proven by
+            # run 35507751331 (CANNOT LINK on-device) + byte-size match
+            # with the artifact copy. Gate greps use llvm-readelf, which
+            # prints FULL symbol names (GNU readelf truncates them).
+            echo 'no local NDK exports the modern symbol — downloading NDK r29 runtime'
+            curl -sfL --retry 3 -o /tmp/ndk29.zip \
+              https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+            unzip -j -o -q /tmp/ndk29.zip \
+              'android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so' \
+              -d /tmp/ndk29lib
+            LIBCXX_SRC=/tmp/ndk29lib/libc++_shared.so
           fi
           test -s "$LIBCXX_SRC" || { echo '##[error] no usable modern libc++_shared.so found'; exit 1; }
           cp "$LIBCXX_SRC" "$STAGE/libc++_shared.so"
