@@ -173,18 +173,20 @@ jobs:
           # self-contained within the staged set). The engine merge step
           # must eventually do the exact link (APK campaign note).
           sudo apt-get install -y patchelf >/dev/null 2>&1 || sudo apt-get install -y patchelf
-          NEEDS=$("$TC/llvm-readelf" -d "$STAGE/libkrita_bridge.so" | awk '/\(NEEDED\)/{print $NF}' | tr -d '[]')
+          # raw dynamic output once; dedupe via exact '[name]' substring
+          # match (field parsing proved brittle across readelf flavors)
+          DYNOUT=$("$TC/llvm-readelf" -d "$STAGE/libkrita_bridge.so")
           for lib in "$STAGE"/lib*.so; do
             name=$(basename "$lib")
             [ "$name" = "libkrita_bridge.so" ] && continue
             [ "$name" = "libc++_shared.so" ] && continue
-            case " $NEEDS " in
-              *" $name "*) continue ;;
-            esac
+            if printf '%s\n' "$DYNOUT" | grep -qF "[$name]"; then continue; fi
             patchelf --add-needed "$name" "$STAGE/libkrita_bridge.so"
             echo "added DT_NEEDED: $name"
           done
-          "$TC/llvm-readelf" -d "$STAGE/libkrita_bridge.so" | grep NEEDED | head -40
+          # head closes the pipe -> grep SIGPIPE -> pipefail aborts the
+          # step (found by run 35510330096); audit prints are best-effort
+          "$TC/llvm-readelf" -d "$STAGE/libkrita_bridge.so" | grep NEEDED | sed -n '1,40p' || true
           # ---- relink the smoke exe: the artifact exe's NEEDED entry is
           # the absolute builder path (recorded at link time) and cannot
           # resolve on-device. Relink from the same source against the
