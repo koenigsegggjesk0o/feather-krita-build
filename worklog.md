@@ -1688,3 +1688,19 @@ Stage Summary:
 - The engine can now ENUMERATE brush presets and report each preset's declared paintop family through the thin C ABI — parsed by the real Krita container path, zero Krita source changes.
 - NEXT (after 35539069506 green): mirror-sync wrapper/Dart to builder repo (fires build-app auto-run whose android job fetches the NEW green engine artifact — benign now), wait build-app green, then release v0.30-preset-families with the 3 platform assets.
 - If the engine run FAILS: pull ##[error] from the failing job log; the likeliest suspects are NDK/MSVC compile of the new code (QDirIterator include, size_t casts) — fix wrapper only, NEVER Krita source.
+
+---
+Task ID: 5-loop-47 (beacon 2 — FINAL: preset-families ABI campaign CLOSED, v0.30 released)
+Agent: Z.ai Code (main, autonomous loop)
+Task: engine-side preset enumeration with paintop families through the thin C ABI + rebuild + full gate proof + release v0.30
+
+Work Log:
+- ENGINE REBUILD GREEN: krita-build 35539069506 — ALL FOUR jobs success (linux, windows, android x86_64, android arm64-v8a) compiling the new scan wrapper; the linux+windows engine jobs run the C++ smoke INCLUDING the new scan gate (fixture-dir scan, family assertions, load_preset round-trip) — green.
+- MIRROR PUSH 9987289 (wrapper + Dart + gates, 7 files) fired EXACTLY the expected trigger matrix (loop-46 hygiene validated again in production): android-bridge 35540521390 SUCCESS (portable bridge compiles against the extended header — its preset_count/name are documented stubs, no parity debt), step2-qt-bridge 35540521418 SUCCESS (Qt/MSVC path), build-app 35540521398 SUCCESS (all 5 jobs; android fetches the NEW green engine artifact).
+- DART GATE PROOF (from the build-app linux job log, through the app's own FFI bindings vs the real engine artifact): "preset scan ... -> 2 / scannedPresets() count matches scan (2) / scan sees stock_basic_5_size.kpp / scan sees stock_eraser_circle.kpp / scanned basic-5 family == paintbrush / scanned eraser-circle family == paintbrush / scanned display name populated / scanned path round-trips through loadPreset / round-trip paintop id matches scanned family" — all ok.
+- RELEASED v0.30-preset-families (release id 392592115, scripts/release_v30.py @ APP_RUN_ID 35540521398): 3 assets uploaded (201 x3) — linux real-engine zip 47.4MB, windows real-engine zip 40.1MB, android real-engine APK 118.8MB. Release scratch cleaned.
+- Analyze FINAL: 0 errors / 0 warnings (72 info-level deprecations, pre-existing). Full test suite 112/112 green locally before the push. Krita source byte-identical upstream throughout.
+
+Stage Summary:
+- THE PRESET-FAMILIES CAMPAIGN IS CLOSED END-TO-END: the real engine enumerates .kpp preset folders (recursive, robust, capped) and reports each preset's engine-parsed display name + declared paintop family + loadable path through the thin C ABI; the app's preset library consumes the engine-authoritative families with a defensive Dart fallback; proven at the engine layer (C++ smoke), the bindings layer (Dart smoke), the unit layer (4 new tests), and shipped on all three platforms.
+- Handoff notes for 5-loop-48: (1) the [m display-eating bug remains live — arbitrate bracket content with Read/od -c/wc -c; (2) box wipes now arrive every ~20-30 min — commit+push early, keep beacons granular; (3) candidate next campaigns: preset picker UI grouping by the engine families (the ABI + state are ready; widgets/brush picker already shows family badges from the Dart parse), Feather-3D engine start, or the emulator-smoke re-run to prove the scan gates on-device (the harness relinks the new smoke from the engine run's commit automatically).
