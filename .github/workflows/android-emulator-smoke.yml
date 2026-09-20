@@ -157,8 +157,19 @@ jobs:
           set -euo pipefail
           SM="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           AVDM="$SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
-          yes | "$SM" --licenses >/dev/null 2>&1 || true
-          yes | "$SM" "system-images;android-30;google_apis;x86_64" >/dev/null
+          java -version 2>&1 | head -1 || true
+          "$SM" --version || true
+          df -h / | tail -1
+          echo '--- accepting licenses'
+          yes | "$SM" --licenses > /tmp/lic.log 2>&1 \
+            || { echo '##[error] license acceptance failed'; tail -30 /tmp/lic.log; exit 1; }
+          echo '--- installing system image (API 30 google_apis x86_64)'
+          if ! "$SM" "system-images;android-30;google_apis;x86_64" > /tmp/img.log 2>&1; then
+            echo '##[error] system-image install failed'
+            tail -40 /tmp/img.log
+            exit 1
+          fi
+          tail -3 /tmp/img.log
           echo no | "$AVDM" create avd -n fkr-smoke \
             -k "system-images;android-30;google_apis;x86_64"
           "$SDK_ROOT/emulator/emulator" -avd fkr-smoke \
