@@ -1,0 +1,262 @@
+name: Android Emulator Smoke (real engine on-device)
+
+# On-device proof for the REAL Krita brush engine on Android (loop-43;
+# closes the long-standing loop-36 note: the per-ABI merged engine .so was
+# device-ready, but the smoke gates had never been EXECUTED on an Android
+# system).
+#
+# What this proves, end-to-end on a booted Android system:
+#   - the merged real-engine libkrita_bridge.so (bridge glue + the full
+#     krita object closure built from UNMODIFIED krita source by NDK)
+#     dlopens and runs under bionic;
+#   - dab generation, flow, hardness and paintop-identity ABI gates pass;
+#   - the two real Krita stock preset fixtures (legacy PNG preset
+#     containers, zTXt-compressed XML) load through the engine's own
+#     container parser on-device.
+#
+# The engine is NEVER rebuilt here: artifacts are downloaded from a green
+# krita-build run (workflow_dispatch input, default latest successful), so
+# emulator bring-up can iterate without re-paying the engine build.
+# The smoke executable is RELINKED in this workflow from the same source at
+# the engine run's commit because the artifact binary carries an absolute
+# builder-path DT_NEEDED entry (link-time artifact), which cannot resolve
+# on-device; the relink produces the portable bare "libkrita_bridge.so"
+# NEEDED + $ORIGIN runpath form. The bridge .so itself is used EXACTLY as
+# built and uploaded by krita-build (a stripped COPY is pushed to keep the
+# adb transfer fast — stripping does not change dynamic behavior; the
+# unstripped original is what the real-engine APK ships).
+#
+# Krita source is NEVER modified — this workflow only tests it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      engine_run_id:
+        description: 'krita-build run id (default: latest successful)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-emulator-smoke
+  cancel-in-progress: false
+
+jobs:
+  on-device-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SDK_ROOT: /usr/local/lib/android/sdk
+      REPO: koenigsegggjesk0o/feather-krita-build
+      TOKEN: ${{ secrets.KRITA_SOURCE_TOKEN }}
+    steps:
+      - name: Resolve engine run (id + commit)
+        id: resolve
+        run: |
+          set -euo pipefail
+          AUTH="Authorization: token ${TOKEN}"
+          RID="${{ github.event.inputs.engine_run_id }}"
+          if [ -z "$RID" ]; then
+            RID=$(curl -sf -H "$AUTH" \
+              "https://api.github.com/repos/${REPO}/actions/workflows/krita-build.yml/runs?status=success&per_page=1" \
+              | python3 -c 'import sys,json;print(json.load(sys.stdin)["workflow_runs"][0]["id"])')
+          fi
+          SHA=$(curl -sf -H "$AUTH" \
+            "https://api.github.com/repos/${REPO}/actions/runs/$RID" \
+            | python3 -c 'import sys,json;print(json.load(sys.stdin)["head_sha"])')
+          echo "engine run: $RID @ $SHA"
+          echo "run_id=$RID" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Download engine artifacts (x86_64)
+        run: |
+          set -euo pipefail
+          AUTH="Authorization: token ${TOKEN}"
+          AID=$(curl -sf -H "$AUTH" \
+            "https://api.github.com/repos/${REPO}/actions/runs/${{ steps.resolve.outputs.run_id }}/artifacts" \
+            | python3 -c '
+              import sys, json
+              arts = json.load(sys.stdin)["artifacts"]
+              m = [a for a in arts if a["name"] == "krita-brush-engine-android-x86_64"]
+              assert m, "artifact krita-brush-engine-android-x86_64 not found on engine run"
+              print(m[0]["id"])')
+          echo "artifact id: $AID"
+          curl -sfL -H "$AUTH" -o engine.zip \
+            "https://api.github.com/repos/${REPO}/actions/artifacts/$AID/zip"
+          mkdir engine && unzip -q engine.zip -d engine
+          test -f engine/lib/libkrita_bridge.so \
+            || { echo '##[error] bridge .so missing from artifact'; exit 1; }
+          test -f engine/android/x86_64/libc++_shared.so \
+            || { echo '##[error] libc++_shared missing from artifact bundle'; exit 1; }
+          echo "engine artifact unpacked: $(du -sh engine | cut -f1)"
+
+      - name: Fetch bridge + smoke sources and fixtures (mirror @ engine sha)
+        run: |
+          set -euo pipefail
+          BASE="https://raw.githubusercontent.com/${REPO}/${{ steps.resolve.outputs.head_sha }}"
+          mkdir -p src
+          for f in native/krita_bridge/krita_bridge.h \
+                   native/krita_bridge/smoke_test_real.cpp \
+                   test/fixtures/stock_basic_5_size.kpp \
+                   test/fixtures/stock_eraser_circle.kpp; do
+            curl -fsSL "$BASE/$f" -o "src/$(basename "$f")" \
+              || { echo "##[error] fetch failed: $f"; exit 1; }
+          done
+          head -3 src/krita_bridge.h
+          ls -la src/
+
+      - name: Stage runtime + relink on-device smoke (bare NEEDED, $ORIGIN rpath)
+        run: |
+          set -euo pipefail
+          NDK=$(ls -d "${SDK_ROOT}"/ndk/* 2>/dev/null | sort -V | tail -1)
+          test -n "$NDK" || { echo '##[error] no NDK on runner'; exit 1; }
+          TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "NDK: $NDK"
+          STAGE=stage
+          mkdir -p "$STAGE"
+          # ---- runtime .so set (what the bridge + Qt closure DT_NEEDED)
+          cp engine/lib/libkrita_bridge.so "$STAGE/"
+          cp engine/android/x86_64/libQt5*_x86_64.so "$STAGE/"
+          cp engine/android/x86_64/libKF5*.so* "$STAGE/"
+          cp engine/android/x86_64/libquazip*.so "$STAGE/"
+          cp engine/android/x86_64/libc++_shared.so "$STAGE/"
+          # stripped COPY for fast adb push (dynamic behavior unchanged;
+          # the unstripped original ships in the real-engine APK)
+          "$TC/llvm-strip" "$STAGE/libkrita_bridge.so"
+          echo "bridge after strip: $(stat -c %s "$STAGE/libkrita_bridge.so") bytes"
+          # ---- relink the smoke exe: the artifact exe's NEEDED entry is
+          # the absolute builder path (recorded at link time) and cannot
+          # resolve on-device. Relink from the same source against the
+          # shipped bridge .so so DT_NEEDED is the portable bare name.
+          "$TC/x86_64-linux-android24-clang++" -std=c++17 -O2 -fPIE -pie \
+            -Isrc src/smoke_test_real.cpp \
+            "-L$PWD/$STAGE" -lkrita_bridge \
+            -Wl,-rpath,'$ORIGIN' \
+            -o "$STAGE/smoke_test_real_android"
+          echo '--- relinked smoke ELF audit'
+          "$TC/llvm-readelf" -d "$STAGE/smoke_test_real_android" | grep -E 'NEEDED|RUNPATH'
+          "$TC/llvm-readelf" -d "$STAGE/smoke_test_real_android" \
+            | grep -q 'Shared library: \[libkrita_bridge.so\]' \
+            || { echo '##[error] smoke NEEDED is not the bare bridge name'; exit 1; }
+          "$TC/llvm-readelf" -d "$STAGE/smoke_test_real_android" \
+            | grep -q 'Library runpath: \[\$ORIGIN\]' \
+            || { echo '##[error] smoke RUNPATH is not $ORIGIN'; exit 1; }
+          # ---- fixtures ride along (real Krita stock PNG containers)
+          cp src/stock_basic_5_size.kpp src/stock_eraser_circle.kpp "$STAGE/"
+          chmod +x "$STAGE/smoke_test_real_android"
+          echo "--- staged runtime: $(du -sh "$STAGE" | cut -f1), $(ls "$STAGE" | wc -l) files"
+
+      - name: Enable KVM
+        run: |
+          set -euo pipefail
+          test -e /dev/kvm || { echo '##[error] /dev/kvm unavailable on runner'; exit 1; }
+          sudo chmod 666 /dev/kvm
+          echo "KVM: $(ls -l /dev/kvm)"
+
+      - name: Create AVD + boot emulator (API 30, google_apis, x86_64)
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          SM="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          AVDM="$SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
+          yes | "$SM" --licenses >/dev/null 2>&1 || true
+          yes | "$SM" "system-images;android-30;google_apis;x86_64" >/dev/null
+          echo no | "$AVDM" create avd -n fkr-smoke \
+            -k "system-images;android-30;google_apis;x86_64"
+          "$SDK_ROOT/emulator/emulator" -avd fkr-smoke \
+            -no-window -no-audio -no-boot-anim \
+            -gpu swiftshader_indirect -accel on \
+            -memory 3072 -no-snapshot -wipe-data \
+            > /tmp/emulator.log 2>&1 &
+          echo $! > /tmp/emulator.pid
+          ADB="$SDK_ROOT/platform-tools/adb"
+          "$ADB" wait-for-device
+          for i in $(seq 1 90); do
+            B=$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+            if [ "$B" = "1" ]; then
+              echo "emulator boot completed after ~$((i * 10))s"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo '##[error] emulator boot timeout (15 min)'
+          tail -60 /tmp/emulator.log || true
+          exit 1
+
+      - name: Capture device identity
+        run: |
+          ADB="$SDK_ROOT/platform-tools/adb"
+          {
+            echo '--- device identity'
+            "$ADB" shell getprop ro.product.cpu.abi
+            "$ADB" shell getprop ro.build.version.release
+            "$ADB" shell getprop ro.build.version.sdk
+            "$ADB" shell getprop ro.build.fingerprint
+          } | tee /tmp/device_identity.txt
+
+      - name: Push runtime to device
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          ADB="$SDK_ROOT/platform-tools/adb"
+          "$ADB" shell "rm -rf /data/local/tmp/fkr && mkdir -p /data/local/tmp/fkr"
+          "$ADB" push stage/. /data/local/tmp/fkr/
+          "$ADB" shell "chmod 755 /data/local/tmp/fkr/smoke_test_real_android"
+          echo '--- device-side listing'
+          "$ADB" shell "ls -la /data/local/tmp/fkr | head -12"
+
+      - name: Run on-device smoke (REAL engine ABI gates + stock fixtures)
+        run: |
+          set -euo pipefail
+          ADB="$SDK_ROOT/platform-tools/adb"
+          set -o pipefail
+          "$ADB" shell "cd /data/local/tmp/fkr && LD_LIBRARY_PATH=/data/local/tmp/fkr ./smoke_test_real_android stock_basic_5_size.kpp stock_eraser_circle.kpp" \
+            2>&1 | tee /tmp/smoke_output.txt
+          grep -q 'SMOKE OK' /tmp/smoke_output.txt \
+            || { echo '##[error] SMOKE OK banner missing — on-device gates failed'; exit 1; }
+
+      - name: Diagnostics (on failure)
+        if: failure()
+        run: |
+          ADB="$SDK_ROOT/platform-tools/adb"
+          {
+            echo '--- device identity'
+            cat /tmp/device_identity.txt 2>/dev/null || true
+            echo '--- smoke output (if any)'
+            cat /tmp/smoke_output.txt 2>/dev/null || true
+            echo '--- emulator log tail'
+            tail -60 /tmp/emulator.log 2>/dev/null || true
+            echo '--- logcat crash tail'
+            "$ADB" logcat -d 2>/dev/null | grep -E 'DEBUG|Fatal|CRASH|linker' | tail -80 || true
+          } > diag.txt || true
+          cat diag.txt || true
+          mkdir -p diagout
+          cp diag.txt diagout/
+          cp /tmp/smoke_output.txt diagout/ 2>/dev/null || true
+          cp /tmp/emulator.log diagout/ 2>/dev/null || true
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-smoke-diagnostics
+          path: diagout/
+          retention-days: 14
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '## Real-engine on-device smoke (x86_64 emulator)'
+            echo ""
+            echo "- Engine run: ${{ steps.resolve.outputs.run_id }} @ ${{ steps.resolve.outputs.head_sha }}"
+            echo "- Device: $(tr '\n' ' ' < /tmp/device_identity.txt 2>/dev/null || echo 'n/a')"
+            echo ""
+            if [ -f /tmp/smoke_output.txt ]; then
+              echo '```'
+              cat /tmp/smoke_output.txt
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
