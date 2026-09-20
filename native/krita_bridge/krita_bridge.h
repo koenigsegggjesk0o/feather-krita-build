@@ -151,6 +151,11 @@ KRITA_BRIDGE_API double krita_brush_get_opacity(KritaBrushContext* handle);
 KRITA_BRIDGE_API double krita_brush_get_spacing(KritaBrushContext* handle);
 KRITA_BRIDGE_API double krita_brush_get_hardness(KritaBrushContext* handle);
 KRITA_BRIDGE_API double krita_brush_get_smudge(KritaBrushContext* handle);
+/// True when the loaded preset is an eraser preset (settings-level
+/// Krita/erase, EraserMode or CompositeOp=erase). Callers should switch
+/// their stroke compositing to destination-out. Added by roadmap (f);
+/// back-compat: new function, no struct layout change.
+KRITA_BRIDGE_API bool krita_brush_get_eraser(KritaBrushContext* handle);
 KRITA_BRIDGE_API const char* krita_brush_get_preset_name(KritaBrushContext* handle);
 
 // ---------------------------------------------------------------------------

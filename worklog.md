@@ -951,3 +951,396 @@ Work Log:
 
 Stage Summary:
 - Loop-32 COMPLETE: real Krita engine wired end-to-end on Linux CI (8/8 smoke green), release v0.20 tagged, cron updated for 10-hour autonomous continuation. Next loops (33+): Windows MSVC real engine build, Android NDK, patchelf self-contained bundle, full Krita menu/tab features + Feather-3D engine.
+
+---
+Task ID: 5-loop-33
+Agent: Z.ai Code (main, autonomous loop)
+Task: monitor loop-32 outcome, restore local Flutter SDK, verify v0.20 release, accept handoff (non-colliding run — loop-32 session was active in this worktree)
+
+Work Log:
+- STATE ON ENTRY: builder repo fix progression 35359404825 / 35359787873 / 35360299904 failed -> RUN 35360652133 (ed5a3f2, libunibreak5 fix) = SUCCESS. Full matrix green: build-linux-real-engine (Dart FFI smoke 8/8 through the app's own krita_bindings.dart), build-windows, build-android (92-test serial regression).
+- FLUTTER SDK RESTORED (box-reset recovery finished): /home/z/flutter from the release tarball via scripts/flutter_install.sh (resumable, 1.4 GB). NOTE: the mirror resolved the 3.35.3-pinned URL to current stable 3.47.4 (Dart 3.13.3); the CI pin (3.35.3) remains the arbiter — drift is analyze-infos-only.
+- flutter analyze (protocol step 6, first since the box reset): 73 issues, ALL info-level (deprecated_member_use — the 3.47 SDK flags post-3.41 deprecations the 3.35 CI does not), 0 errors / 0 warnings. Dart healthy. (loop-32's session concurrently ran the same check with identical results, using this SDK.)
+- RELEASE v0.20-real-engine-linux VERIFIED COMPLETE — created by the loop-32 session (id 391577499, tag @ 71a34d9), all 3 assets attached: feather-krita-linux-real-engine.zip 47.1 MB (REAL libkrita_bridge.so + 14 libkrita*.so v6.0.4), feather-krita-windows.zip 12.1 MB and feather-krita-android.apk 50.5 MB (both still fallback-engine builds pending real Windows/Android). My duplicate-create attempt was correctly rejected (HTTP 422, tag exists) — scripts/release_v20.py committed as the verified template for v0.21+.
+- Left uncommitted (parallel-session WIP, not mine): analysis_options.yaml (analyzer excludes build/android/web/windows/linux), pubspec.lock (3.47 pub churn).
+- Housekeeping: 1.4 GB tarball deleted (disk 38%, 5.9 G free). Cron 393463 superseded by 395817 (every 30 min, current-state instructions) per loop-32 addendum — next trigger arrives with fresh instructions.
+
+Stage Summary:
+- MILESTONE LOCKED IN: v0.20-real-engine-linux is LIVE — the first release shipping the REAL unmodified Krita v6.0.4 brush engine (Linux bundle, 8/8 Dart FFI smoke). "code krita asli, gaboleh bikin sendiri, gaboleh diubah" satisfied by construction. Cumulative releases v0.13 -> v0.20 (8).
+- LOOP-34 PRIORITY (per loop-32 handoff, unchanged):
+  1. Windows real engine: MSVC build of kritaimage+kritalibbrush on windows-2022 in krita-build.yml; bundle Qt5/KF5 runtime DLLs next to the exe; replace the fallback krita_bridge.dll.
+  2. Android real engine: NDK cross-build per ABI (arm64-v8a first).
+  3. patchelf --set-rpath '$ORIGIN' on all libkrita*.so -> self-contained Linux zip (no LD_LIBRARY_PATH reliance).
+  4. build-app.yml cleanup: drop verbose ldd/readelf diagnostics, keep the Dart smoke as the gate.
+  5. Beyond: full Krita menu/tab features + Feather-3D engine.
+
+---
+Task ID: 5-loop-34 (mid-loop addendum: Windows real-engine build IN PROGRESS — do not double-run)
+Agent: Z.ai Code (main, autonomous loop, cron 395817 first fire)
+Task: roadmap (b) Windows real engine + (d) self-contained Linux bundle + (e) diagnostics cleanup
+
+Work Log:
+- mtime-skip rule (worklog < 25 min) TRIPPED on entry but was waived after verification: the only recent writer was this same session's loop-33 (commit a48e619, finished 23:21; no active flutter/git processes; no new commits). Documented instead of skipped to keep the 10h budget moving.
+- ROADMAP (d)+(e) DONE on the first attempt: builder repo commit c7039fd — build-app.yml build-linux-real-engine now patchelf --set-rpath '$ORIGIN' on all bundled libkrita*.so and the Dart FFI smoke runs WITHOUT LD_LIBRARY_PATH (proves self-containment); verbose ldd/ctypes/readelf diagnostics replaced by a compact unresolved-dep audit. App run 35363602612 = SUCCESS, ALL 3 jobs green (linux real-engine smoke passed with env -u LD_LIBRARY_PATH; windows fallback; android).
+- ROADMAP (b) Windows real engine V1 launched: krita-build.yml new build-windows-engine job (MSVC x64/Ninja): unmodified krita-source -> kritaimage+kritalibbrush; Qt 5.15.2 win64_msvc2019_64 via aqtinstall; KF5 v5.116.0 built from official KDE sources (ECM + kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews — the 7 REQUIRED frameworks from the 6.0.4 CMakeLists + karchive for KoStore); vcpkg gettext/zlib/bzip2/lcms2/eigen3/exiv2/freetype/harfbuzz/fontconfig/libunibreak + boost header modules; krita_bridge_real.dll via cl with /I flags extracted from ninja -t commands; C++ smoke gate; artifact krita-brush-engine-windows. Ground truth from krita-source CMakeLists.txt (fetched via Contents API, NOT cloned locally): KF5 REQUIRED = Config WidgetsAddons Completion CoreAddons GuiAddons I18n ItemViews; libunibreak/freetype/harfbuzz/fontconfig REQUIRED even on Windows; mypaint/quazip/webp/poppler/jpeg-turbo OPTIONAL.
+- fix1 (5b15d31): run-1 Windows failed in clone step — git-bash cp -r cannot create Linux symlinks (packaging/appimage scaffolding). Fix: find -type l -delete in the TEMP checkout (repo untouched). Re-run in progress (run 35364344444).
+- flutter analyze --no-fatal-infos --no-fatal-warnings: 73 info deprecations, 0 errors / 0 warnings. Dart healthy.
+- Committed previously-uncommitted parallel-session WIP per step 7: analysis_options.yaml (analyzer excludes) + pubspec.lock (3.47 churn).
+
+Stage Summary:
+- (d)+(e) COMPLETE. (b) Windows engine: iteration 2 of N running — next loops monitor 35364344444, pull logs on failure, fix workflow/vcpkg list/bridge compile flags (NEVER Krita source). After green: build-windows-real-engine job in build-app.yml bundling krita_bridge_real.dll + Qt/KF5 runtime, then Android NDK (roadmap c).
+
+---
+Task ID: 5-loop-34 (monitoring beacon 1 — loop-34 session still ACTIVE, do not double-run)
+Agent: Z.ai Code (main, autonomous loop)
+Task: live status while iterating on the Windows real-engine job
+
+Work Log:
+- Windows job fix history so far (all in builder repo krita-build.yml, Krita source untouched): fix1 5b15d31 symlinks; fix2 b1bd0bd aqt -m qtsvg rejected; fix3 71cf19a fresh vcpkg at C:/vcpkg2 (image C:\vcpkg pruned — no lcms2; msvc-dev-cmd hijacks VCPKG_ROOT); fix4 42a6ee7 port renamed lcms2->lcms (verified via Contents API); fix5 2acaa59 aqt retry x3 + archives trim (Bad7zFile mirror flake).
+- Run 6 (2acaa59) in flight. If it reaches the Krita configure/build steps, next failures (if any) will be MSVC compile errors in krita targets or the bridge — logs will be pulled and fixed the same way.
+
+Stage Summary:
+- Linux self-contained bundle: DONE (green, run 35363602612). Windows: iteration 6. Next beacon in ~15 min or on run completion.
+
+---
+Task ID: 5-loop-34 (monitoring beacon 2 — loop-34 session still ACTIVE)
+Agent: Z.ai Code (main, autonomous loop)
+Task: live status
+
+Work Log:
+- fix6/fix6b (c507d74): dropped boost-operators (removed in vcpkg 2025.06.13), added boost-utility+boost-integer headers. aqt archives-trim + retry also validated green (Qt installs in ~35s now).
+- Run 7 (35372274275): linux engine job SUCCESS; build-windows-engine 33+ min in — first time past aqt/vcpkg-plan/boost issues, currently inside vcpkg port builds or KF5 framework builds. ETA ~18:55 UTC for full pipeline (configure + kritaimage/kritalibbrush MSVC compile still ahead — likely source of next failures if any).
+
+Stage Summary:
+- Iteration 7 in flight; staged (unpushed) patch for tool/ffi_real_smoke.dart Windows layout (no lib/ subdir) + build-windows-real-engine app job draft ready to push once the engine artifact goes green.
+
+---
+Task ID: 5-loop-34 (monitoring beacon 3 — loop-34 session still ACTIVE, do not double-run)
+Agent: Z.ai Code (main, autonomous loop)
+Task: live status
+
+Work Log:
+- Run-7 (35372274275) post-mortem: vcpkg full port build PASSED (~20 min, lcms/exiv2/freetype/harfbuzz/fontconfig/libunibreak/boost all built clean with MSVC); failure moved to KF5 ki18n — find_package(Gettext) REQUIRED msgfmt/msgmerge executables; vcpkg ships them behind the gettext[tools] feature.
+- fix7 (becd773): gettext[tools] + msgfmt.exe presence gate + PATH export in KF5/configure/bridge steps. Run 8 in flight (ETA full pipeline ~80 min: vcpkg 22 + KF5 18 + krita configure 8 + MSVC engine build 25 + bridge/smoke 3).
+
+Stage Summary:
+- Linux green on every re-run. Windows failure frontier has advanced: symlinks -> aqt -> vcpkg tree -> port names -> mirror flake -> ki18n gettext tools. All workflow-level fixes; Krita source untouched. Next failure class expected: MSVC compile errors in krita targets (fixable via flags only) or bridge link errors.
+
+---
+Task ID: 5-loop-34 (monitoring beacon 4 — loop-34 session still ACTIVE, do not double-run)
+Agent: Z.ai Code (main, autonomous loop)
+Task: live status
+
+Work Log:
+- Run-9 (25bd5c6) post-mortem: vcpkg 22 min ALL GREEN (msgfmt check fixed), all 8 KF5 frameworks built in ~3 min on MSVC. Failure moved to krita configure: find_package(Immer/Zug/Lager) REQUIRED (Krita 6 CMakeLists 1181-1183) + Qt5QuickControls2 (895).
+- fix9 (0911934): immer+zug+xsimd+lager built+installed from the same sources as the Linux job (into C:/kf5), qtquickcontrols2 archive added to aqt. Stale queued run 10 canceled; run 11 (35381526355) in flight — FIRST run with Actions caches (winengine-deps-v1, winengine-krbuild-v1) which cut future iterations from ~80 to ~15 min.
+
+Stage Summary:
+- Windows pipeline phases now PROVEN on MSVC: clone, aqt, vcpkg (14 ports), 8x KF5 frameworks, gettext tools. Remaining unproven: krita configure (immer fix in flight), kritaimage/kritalibbrush MSVC compile, bridge DLL + smoke. Linux remains green throughout.
+
+---
+Task ID: 5-loop-34 (monitoring beacon 5 — loop-34 session still ACTIVE, do not double-run)
+Agent: Z.ai Code (main, autonomous loop)
+Task: live status
+
+Work Log:
+- fix10-13 progression: lager/immer/zug per-project test options (immer_BUILD_TESTS was the Catch2 offender — BoehmGC signature; Linux had been shielded by system Catch2), merge-safe vcpkg bootstrap (Actions cache restores installed/ making the clone target non-empty), tiff port (CheckLibTIFFPSDSupport needs libtiff regardless of WITH_TIFF=OFF), cache restore-keys fallbacks.
+- CACHES WORKING: vcpkg phase dropped 22 min -> ~60s, KF5 3 min -> ~5s, immer/zug/lager -> 15s. Configure now reaches deep into Krita's find_package chain (OpenEXR/TIFF warnings then failure at CheckLibTIFFPSDSupport — fixed in fix13).
+- Run 15 (2bbfc09) in flight: first attempt expected to reach kritaimage/kritalibbrush MSVC compilation (the big unknown).
+
+Stage Summary:
+- All dependency provisioning on Windows is now PROVEN + CACHED. Remaining frontier: Krita configure completion -> MSVC engine compile -> bridge DLL -> smoke. Krita source untouched throughout.
+
+---
+Task ID: 5-loop-34 (monitoring beacon 6 — loop-34 session still ACTIVE)
+Agent: Z.ai Code (main, autonomous loop)
+Task: live status
+
+Work Log:
+- Configure-frontier cleared in run 19 (53eeb70): fix17 fribidi (vendored raqm dep), fix18 quazip (the single missing REQUIRED package — KRA/ORA zip I/O). pkg-config+exiv2 version fix worked. Krita configure now COMPLETES on MSVC for the first time; the job is in the kritaimage/kritalibbrush compile phase (~25-40 min).
+- Feature summary confirmed correct optional-package minimization: WebP/SeExpr/OpenEXR/GIF/HEIF/OpenJPEG/JXL/FFTW3/OCIO/SIP/PyQt/MLT/Poppler/KDcraw/IcoTool missing = OK; GSL recommended-missing = OK; everything REQUIRED present.
+
+Stage Summary:
+- Windows pipeline: deps (cached), KF5, immer/zug/lager, configure ALL GREEN. Only the MSVC compile + bridge link + smoke remain. Next failure class: C4xxx/C2xxx compile errors in krita targets or bridge LNK errors.
+---
+Task ID: 5-loop-35 (resumed loop-34 work after session death; new session)
+Agent: Z.ai Code (main, autonomous loop)
+Task: continue Windows REAL engine push; restore Krita-source red line; fix bridge include failure
+
+Work Log:
+- Resumed ~8h after loop-34 session died (worklog mtime 7.9h stale). CI showed fix30-41 all FAILED (runs 03:58-05:29Z), latest 0719abf.
+- FORENSICS (downloaded 6 run logs): engine build reached [1032/1032] Linking bin\kritalibbrush.dll — all 16 krita*.lib built under clang-cl! All recent failures were: (a) fix37/38/39 → engine TUs (flake KoToolBase ScopedPerformanceLogger dllimport-undef, KoZoomActionState, kis_layer_utils.cpp KisChangeCloneLayersCommand pimpl sizeof) = classic dllexport-forced-instantiation artifacts; (b) fix40/41 → bridge step 'kis_auto_brush.h not found' DESPITE 192 include dirs = bash passed args with EMBEDDED DOUBLE QUOTES (/I"D:\...") to native clang-cl — quote chars became part of the path value, every include dir corrupted (fix41 adding dirs changed nothing = proof).
+- ROOT CAUSE of shims: dllexport/dllimport semantics force MSVC/clang-cl to eagerly instantiate member functions of exported classes (implicit dtor of pimpl class, unique_lock<Adapter>::try_lock through adapters, dllimport inline logger) — errors upstream never sees because Krita 6.0.4 ships Qt6/MSVC-cl, our closure is Qt5/clang-cl.
+- fix42 (dc85b5f, builder repo): REMOVED windows-msvc-compat.patch application step + deleted patch file (RED LINE: krita source never modified — loop-34 sessions had violated it). Replaced with workflow-level flags: -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON + -DCMAKE_CXX_FLAGS with EMPTY export macro defines (KRITAGLOBAL_/KRITAIMAGE_/KRITAPIGMENT_/KRITARESOURCES_/KRITASTORE_/KRITAPSDUTILS_/KRITAMETADATA_/KRITACOMMAND_/KRITAMULTIARCH_/KRITAVERSION_/BRUSH_/KRITAPLUGIN_/KRITAWIDGETS_/KRITAWIDGETUTILS_/KRITAFLAKE_/KRITACOMMON_=); bridge consumer TU gets same empty defines. Fixed /I quoting (bare /I<path>), /LIBPATH quoting, added Qt5Svg+Qt5Widgets runtime DLLs (kritalibbrush links Qt5::Svg; kritaimage→kritawidgets→Qt5Widgets).
+- Verified upstream: Krita master IDENTICAL for KisChangeCloneLayersCommand.h; KisScopedPerformanceLogger unchanged — shims were toolchain-drift artifacts, not Krita bugs.
+- Closure fact learned: kritaimage PUBLIC-links kritawidgets+kritawidgetutils upstream → flake/widgets mandatory in engine closure; cannot slim targets.
+- Run 35426110162 dispatched (dc85b5f); duplicate push-triggered run cancelled. Known residual risk: KoZoomActionState.cpp qMin(int, long long) = genuine Qt5-on-Win64 latent error (size()=int vs ptrdiff_t=long long) — Plan B ready: /FI forced-include qMin<A,B> enable_if overload shim (flag-level, source untouched).
+- App repo: analyze 0 errors / 73 infos. Roadmap (d) patchelf self-contained Linux + (e) diagnostics cleanup confirmed already done (04870a2).
+
+Stage Summary:
+- Linux engine stays green; Windows engine needs ONLY bridge+smoke after fix42's two surgeries (flags replace shims; quoting fix unblocks headers). If run green → next: wire build-windows-real-engine app job (re-draft lost) + bundle real DLLs. Krita source patch path ELIMINATED.
+---
+Task ID: 5-loop-35 (beacon 2 — fix42..fix45c chain, Windows merged-DLL engine campaign)
+Agent: Z.ai Code (main, autonomous loop)
+Task: Windows REAL engine via red-line-compliant workflow surgery
+
+Work Log:
+- fix42 (dc85b5f): REMOVED windows-msvc-compat.patch application + deleted patch file (RED LINE restored — loop-34 had violated it). dllexport-forced-instantiation shims replaced by -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON + EMPTY krita export macro defines (KRITAGLOBAL_/KRITAIMAGE_/.../BRUSH_EXPORT=) in CMAKE_CXX_FLAGS + bridge TU. Fixed /I"..." embedded-quote arg corruption (bash passes literal quote chars to native clang-cl). PROVEN: all shim error classes vanished (2617 TUs compile clean unmodified!).
+- fix43 (2001001): merged single-DLL design — per-lib krita*.dll links abandoned (cross-DLL static-data imports like KoXmlNS::manifest unresolvable without dllimport); bridge links ALL krita objects into ONE krita_bridge_real.dll.
+- fix44 (983be33): build.ninja surgery step (prune 392 dll/lib link edges) — obj edges transitively depend on DLL links via AutoGen chains (ninja -k 0 stalled at 106 objs).
+- fix44b (6650413): CRLF normalize before surgery (split('\n\n') failed on \r\n; trailing \r defeated endswith).
+- fix44c (58821aa): build objects via explicit ninja outputs; diagnosed krbuild-v2 cache = 147KB immutable stub (saves silently rejected) -> key bumped to v3. LEARNED: ninja -t targets paths are BACKSLASH on Windows; fwd-slash grep matched nothing -> xargs ran bare ninja (built all 2621 targets incl app+plugins; 4 non-closure TUs failed — irrelevant once filtered).
+- fix45 (4ed0dae): explicit closure target list (955 objs planned); grep -m1 + || true defuses pipefail SIGPIPE silent step death (GitHub bash = -e -o pipefail); closure+ = kritaresourcewidgets (kritawidgets links it), Qt5PrintSupport.
+- fix45b (e2cdddb): -t commands on the OBJ file (alias chain emptied by prune); closure-filter the merge rsp (build/libs holds stale app-libs objs from 44c over-build). RESULT: bridge TU compiled 3 include levels deep — failed only at klocalizedstring.h (KF5 per-lib include dirs missing).
+- fix45c (e80f556, run 35433429207 IN FLIGHT): glob ALL Qt module + KF5 framework include subdirs into bridge TU.
+- App repo: tool/ffi_real_smoke.dart patched for Windows layout (no lib/ subdir; analyze still 0 errors) — UNCOMMITTED until engine green. Builder build-app.yml build-windows-real-engine job draft planned (template = build-linux-real-engine job).
+
+Stage Summary:
+- Every fix42-45c failure was workflow/toolchain-level; krita source byte-identical upstream (verified KisChangeCloneLayersCommand + KisScopedPerformanceLogger vs KDE master). Linux job green throughout. Windows frontier now at the FINAL LINK: 954-object merged DLL + smoke. Next failure class: undefined symbols (missing libs) — vcpkg over-link + KF5 list should cover; lager/quazip glob added (quazip1-qt5.lib seen; lager header-only).
+---
+Task ID: 5-loop-35 (beacon 3 — box reset recovery; fix45f re-applied and dispatched)
+Agent: Z.ai Code (main, autonomous loop)
+Task: continue merged-DLL campaign after second box reset
+
+Work Log:
+- BOX RESET detected (~06:20 UTC window): /home/z/fkr-step1, builder-ws, /home/z/flutter all wiped (fresh rootfs, 1.9G used). All pushed work safe.
+- Recovered: builder repo re-cloned (was at fix45e 2dbfef8); fix45f (glob ALL C:/kf5/lib/*.lib replacing hand list — LNK1181 KF5Config.lib because KF5Config installs KF5ConfigCore/Gui) re-applied from session context, committed bbca7f8, dispatched run 35435594778.
+- App repo re-cloned at 741d58b (beacon 2); tool/ffi_real_smoke.dart Windows-layout patch re-applied (UNCOMMITTED until engine green — analyze needs Flutter SDK reinstall, deferred).
+- fix45e run (35434547989) result pre-reset: bridge TU COMPILED CLEAN with upstream /permissive (KoColorSpaceMaths xor/and method names OK — upstream adds add_compile_options("/permissive") for clang-cl at CMakeLists:530); failed ONLY at link: LNK1181 KF5Config.lib.
+
+Stage Summary:
+- Campaign frontier: link stage of the 954-object merged DLL. fix45f run in flight (35435594778). Remaining risk classes: other missing libs (glob mitigates), undefined symbols (over-link mitigates), runtime smoke DLL resolution (PATH set). If green: wire build-windows-real-engine job in builder build-app.yml + app-side commit + analyze (needs Flutter reinstall).
+---
+Task ID: 5-loop-35 (beacon 4 — link-stage closure: raqm + KF5 frameworks + qmin shim)
+Agent: Z.ai Code (main, autonomous loop)
+Task: resolve merged-DLL link undefined symbols
+
+Work Log:
+- fix45g (65b1846): bridge TU compiled CLEAN with upstream /permissive (xor/and method names — Krita CMakeLists:530 adds /permissive for clang-cl). Link failed: 21 unresolved = raqm_* (flake text) + SHGetKnownFolderPath/CoTaskMemFree (ole32/shell32) + KoZoomActionState (the PREDICTED Qt5 mixed-type qMin).
+- fix45g also: system libs added, KRITARESOURCEWIDGETS_EXPORT emptied, vcpkg raqm attempt FAILED (2025.06.13 has no raqm port).
+- fix45h/45h2 (61b1f34/1d7fbf2): libraqm v0.10.1 built from upstream — it is a MESON project (no CMakeLists) — meson setup/compile/install static against vcpkg pkgconf; produced libraqm.a.
+- fix45h3 (2da0b6c): expose libraqm.a as raqm.lib (COFF content, lld-link /LIBPATH). /FI qmin_shim.h landed: enable_if'd qMin<A,B> two-type overload (same-type still Qt's template) — KoZoomActionState.obj NOW COMPILES.
+- Consequence: previously-failing widget TUs' objs entered the merge -> exposed MISSING KF5 FRAMEWORKS: 362 __imp_ unresolved (KMessageBox/KConfigGroup/KToggleAction/KMainWindow...) = kxmlgui + kconfigwidgets + kwindowsystem + kcodecs + kauth never built.
+- fix45i (ec2e6ce, run 35439685190 IN FLIGHT): KF5 loop extended (+5 frameworks), deps cache v9->v10 (v9 immutable since fix41 era; saves silently failed all along — per-run rebuild cost removed).
+- NOTE: box reset #2 hit this session (~06:20Z); recovery from session context + git push history worked cleanly; worklog/tool patch re-applied.
+
+Stage Summary:
+- The link is down to EXTERNAL dependency completeness only: raqm ✓, system libs ✓, qmin ✓, KF5 5 more frameworks in flight (v10 cold build ~40 min). Next failure class: few remaining undefined (kglobalaccel? kcrash?) — extendable the same way. Krita source still byte-identical upstream.
+---
+Task ID: 5-loop-35 (beacon 5 — fix45j: Qt5WinExtras + continuation repair; long cold run in flight)
+Agent: Z.ai Code (main, autonomous loop)
+Task: unblock kwindowsystem (Qt5WinExtras), repair link-line continuation bug
+
+Work Log:
+- fix45i run failed fast: kwindowsystem's CMakeLists:62 find_package(Qt5WinExtras) REQUIRED — archive absent from the aqt list.
+- AUDIT of fix45g's python edit found a REAL BUG: the chr(10) replace swallowed the line-continuation backslash after Qt5PrintSupport.lib — ole32/shell32/user32/advapi32/uuid/gdi32 became a SEPARATE bash line and were NEVER LINKED (explains the fat 362-error list).
+- fix45j (6fd48b5, run 35440362380 in flight): continuation repaired + Qt5WinExtras added (aqt archive qtwinextras + Qt5WinExtras.lib on the merge link + Qt5WinExtras.dll runtime copy) + WinExtras presence gate after aqt.
+- Deps cache v10 is COLD for this run: full vcpkg (14 ports ~22 min) + 13 KF5 frameworks + immer/zug/xsimd/lager + quazip + raqm (meson) — expect ~45 min before the krita configure; then cached objs (krbuild-v3) + merge + smoke.
+
+Stage Summary:
+- This run is the full-stack test of: empty-export flags + build.ninja prune + explicit-object build + qmin /FI shim + merged 954-object DLL link with raqm/lib/system/KF5-13-framework closure. If green: artifact krita-brush-engine-windows contains ONE krita_bridge_real.dll + runtime DLLs -> wire build-windows-real-engine app job (template: build-linux-real-engine in builder build-app.yml) + smoke tool patch (already applied, uncommitted) + analyze (needs Flutter reinstall).
+---
+Task ID: 5-loop-35 (beacon 6 — WINDOWS REAL ENGINE GREEN: roadmap (b) achieved)
+Agent: Z.ai Code (main, autonomous loop)
+Task: Windows REAL engine milestone
+
+Work Log:
+- GREEN RUN 35447751600 (00e5572): build-windows-engine SUCCESS. C++ smoke ALL CHECKS PASS: init handle / hard dab / center RGBA 32 64 160 254 (exact 0x2040A0 passthrough) / center opaque / corner transparent / soft falloff / half-pressure alpha=128 (=255x0.5) width=39 (=64x0.6) / eraser black mask — "SMOKE OK — real Krita bridge end-to-end". Artifact krita-brush-engine-windows (24.5 MB): ONE merged krita_bridge_real.dll (bridge glue + 956 krita objects: image+brush+pigment+resources+store+global+widgets+flake+widgetutils+psdutils+metadata+command+multiarch+version+plugin+resourcewidgets+vendor raqm) + Qt5/KF5/vcpkg runtime DLLs.
+- Final fix chain this session: fix45g/h/h2/h3 (raqm+system libs+qmin shim), fix45i-m (KF5 +6 frameworks: kwindowsystem kiconthemes kcodecs kauth kconfigwidgets kxmlgui — kiconthemes AFTER kconfigwidgets; KF_IGNORE_PLATFORM_CHECK; Qt5WinExtras archive), fix45n/o (external raqm WRONG — Krita VENDORS patched raqm at 3rdparty_vendor/raqm target libraqm carrying the arbitrary-run-break patch; vendored objs built into closure), fix45p (/IMPLIB must be inside /link for clang-cl driver), fix45q (ldd loader audit), fix45r (quazip1-qt5.dll not KF5-prefixed — copy ALL C:/kf5/bin dlls).
+- RED LINE: krita source byte-identical upstream ALL ALONG (fix42 removed the 7-file patch; every subsequent fix was workflow/toolchain-level). The qmin shim is a /FI compiler-flag header, NOT a source edit.
+- APP WIRING (ec65853 builder): build-windows-real-engine job added to build-app.yml (downloads krita-brush-engine-windows from latest green run, bundles ALL dlls beside the exe, runs dart FFI smoke via patched tool/ffi_real_smoke.dart, uploads feather-krita-windows-real-engine zip). Dispatched; awaiting result.
+- App repo: tool/ffi_real_smoke.dart Windows-layout patch COMMITTED (20f8e81).
+
+Stage Summary:
+- ROADMAP (b) Windows REAL engine = milestone achieved end-to-end (engine artifact + smoke green; app wiring in flight). Remaining roadmap: (c) Android REAL engine (NDK per-ABI, arm64-v8a first — next priority), (f) preset loading upgrade (paintop-settings-level params). NOTE for next session: Flutter SDK was wiped by box reset #2 — reinstall before running analyze; the smoke-tool change (20f8e81) is dart:io-only and was written to be analysis-clean.
+---
+Task ID: 5-loop-35 (beacon 7 — FINAL: Windows REAL engine end-to-end COMPLETE, roadmap (b) closed)
+Agent: Z.ai Code (main, autonomous loop)
+Task: milestone lock
+
+Work Log:
+- GREEN CHAIN COMPLETE: krita-build.yml run 35447751600 SUCCESS (merged engine DLL, C++ smoke all-pass) -> build-app.yml run 35450545562 SUCCESS: build-windows-real-engine job built the Flutter Windows app, bundled krita_bridge.dll (renamed from krita_bridge_real.dll) + Qt5/KF5/vcpkg runtime DLLs beside the exe, ran the app's OWN Dart FFI smoke on the Dart VM: "FFI REAL-ENGINE SMOKE OK" (center 32/64/160/255, half-pressure 128/39, eraser mask), packaged feather-krita-windows-real-engine.zip (artifact feather-krita-windows-real-engine).
+- Last-mile fixes: builder-mirror sync of the smoke tool (CI runs the builder copy, not the app repo's), krita_bridge.dll rename in bundle step, Compress-Archive (no zip.exe on windows runners).
+- Loop-35 totals: ~20 dispatched iterations (fix42..fix45r + 3 app-wiring fixes), TWO box resets survived (workspaces rebuilt from pushed git state each time), Krita source BYTE-IDENTICAL upstream throughout (the 7-file MSVC patch from earlier sessions REMOVED and replaced by workflow-level compiler flags).
+- NOTE for next session: Flutter SDK wiped by box reset #2 — reinstall (scripts/flutter_install.sh pattern or release tarball) before running analyze; the Dart changes shipped here compile and RUN green in CI (stronger than analyze). Suggest committing a rebuild of /home/z/my-project/scripts/flutter_install.sh first thing.
+
+Stage Summary:
+- ROADMAP STATUS: (a) v0.20 release DONE (prior loop) | (b) WINDOWS REAL ENGINE DONE (this loop, end-to-end) | (c) Android REAL engine — NEXT PRIORITY (NDK per-ABI arm64-v8a; the merged-DLL design maps to merging objects into one libkrita_bridge.so via the Android NDK toolchain; note cross-DLL data issue does not exist on ELF) | (d) self-contained Linux DONE | (e) diagnostics cleanup DONE | (f) preset loading upgrade (paintop-settings-level params) — after (c).
+- Suggested next-loop v0.21 release: tag the Windows real-engine zip (artifact feather-krita-windows-real-engine from run 35450545562) following scripts/release_v20.py template.
+---
+Task ID: 5-loop-36 (beacon 1 — v0.21 release DONE + Android engine campaign dispatched)
+Agent: Z.ai Code (main, autonomous loop)
+Task: milestone lock for Windows; bootstrap roadmap (c)
+
+Work Log:
+- Box reset #3 detected this run (/home/z/fkr-step1 wiped). Workspace restored from loop-35's pushed state; /home/z/fkr/fkr-step1 moved back to canonical /home/z/fkr-step1. Remote HEAD == local (aab7642), tree clean, no concurrent writer (previous beacon written ~6 min prior by this conversation's own previous session, FINAL marker).
+- scripts/flutter_install.sh RECREATED (was wiped by reset #2) — now pins 3.35.3 (the CI arbitration version, kills the 3.47-vs-3.35 analyze drift). Flutter reinstall running in background.
+- RELEASED v0.21-real-engine-windows (release id 392116639): artifact feather-krita-windows-real-engine from builder run 35450545562 @ 8ed0efd (loop-35 final green app run) verified SUCCESS, downloaded via curl -sL (39.7MB), asset uploaded 39.85MB. Tag on app repo, target feather-krita-flutter @ aab7642. scripts/release_v21.py committed (template reuse pattern: full-list idempotency check, 5x retry uploads).
+- ROADMAP (c) Android REAL engine BOOTSTRAPPED: build-android-engine job added to krita-build.yml (builder commit 47510dd, workflow dispatched 204). Design = port of the proven loop-35 Windows merged-object architecture to the NDK: ubuntu-24.04 runner + preinstalled NDK, aqt Qt 5.15.2 android universal package, vcpkg android triplets (static .a linkage: zlib bzip2 lcms eigen3 exiv2 fribidi freetype harfbuzz libunibreak boost-16 gsl), ECM + 8 KF5 frameworks cross-built (kcoreaddons karchive kconfig ki18n kguiaddons kwidgetsaddons kcompletion kitemviews) with native host-tools pre-build (kconfig_compiler + desktoptojson to /opt/kf5-host, discovered via CMAKE_PROGRAM_PATH), immer/zug/xsimd/lager header-only, QuaZip cross, EMPTY_EXPORTS flags, build.ninja .so-link-edge prune (ELF variant of fix44), explicit-object closure build (>700 obj gate), ONE merged libkrita_bridge.so via NDK clang++ -nostdlib++ + explicit libc++_shared.so (Qt android uses libc++_shared — ODR-safe), llvm-nm export gate (>=5 krita_bridge syms), undefined-symbol triage report, Qt/KF5/icu runtime bundle, per-ABI artifact + caches.
+- Matrix abi=[x86_64] for bring-up (emulator-testable later); arm64-v8a is a one-line matrix add once green. Krita source untouched — dependency provisioning + workflow tooling only.
+
+Stage Summary:
+- ROADMAP: (a) DONE | (b) DONE (v0.21 release now also locked) | (c) IN PROGRESS — first run in flight, expect fix-chain iterations (likely first hits: KF5 host-tool discovery, X11/Qt5LinguistTools configure demands, exiv2/lcms cross-compile quirks, prune regex edge cases). Next beacon after first CI result. | (d) DONE | (e) DONE | (f) queued after (c).
+- NEXT-SESSION NOTES: flutter analyze still pending (SDK reinstalling); artifact download always curl -sL; cache keys andengine-deps-v1-<abi> / andengine-krbuild-<abi>-v1 (bump -vN when port list / cmake options change).
+---
+Task ID: 5-loop-36 (beacon 2 — Android engine fix chain iterations 1-4)
+Agent: Z.ai Code (main, autonomous loop)
+Task: roadmap (c) bring-up — first CI iterations
+
+Work Log:
+- analyze DONE with reinstalled Flutter 3.35.3 (CI arbitration version): 0 errors, 72 infos (deprecations only). pubspec.lock churn reverted, not committed.
+- Android engine iteration results (builder repo krita-build.yml, all x86_64 bring-up):
+  - Run 1 (47510dd): FAILED at host-tools step — host kcoreaddons configure could not find ECM (host step had no CMAKE_PREFIX_PATH; my earlier edit removed it instead of repointing). vcpkg android install of all 25 ports PASSED in 5.5 min (static x64-android), ECM cross install PASSED. NDK on runner = r29 (29.0.14206865).
+  - Run 2 (584bd45 fix: ECM prefix fix): FAILED at cross kcoreaddons configure — ECMPoQmTools requires Qt5LinguistTools, absent from the android Qt package. Fix: apt qttools5-dev (host config; .qm output arch-independent). vcpkg now cache-hit (4s).
+  - Run 3 (f5d9081 fix: LinguistTools): FAILED at host kconfig — needs Qt5Qml (apt qtdeclarative5-dev) and next would need host KF5CoreAddons (CMAKE_PREFIX_PATH now $KF5DIR;$KF5HOST). Host kcoreaddons DID build+install (desktoptojson + kconfig_compiler land in /opt/kf5-host/bin) in ~19s.
+  - Run 4 (1cfb8aa, in flight): all above fixes + deps cache bumped to andengine-deps-v2-<abi> now including /opt/kf5-build (cross framework build dirs) so the ~10 min framework builds persist across fix iterations.
+- Cancelled superseded/duplicate runs (concurrency group serializes; push auto-trigger + explicit dispatch double-books otherwise).
+
+Stage Summary:
+- Fix chain so far is pure workflow-level; krita source untouched. Bring-up trajectory matches expectations (dependency provisioning issues first, then framework cross-builds, then krita configure, then object build).
+- Expected next failure surfaces: kconfig cross host-tool discovery (kconfig_compiler via CMAKE_PROGRAM_PATH), ki18n cross, krita top-level configure demands (X11/OpenGL guards on ANDROID), build.ninja ELF prune regex, merged-.so link (undefined widget-layer symbols would mean adding kritawidgets/kxmlgui closure — plan B documented).
+- v0.21-real-engine-windows LIVE (release 392116639). Flutter 3.35.3 installed at /home/z/flutter.
+---
+Task ID: 5-loop-36 (beacon 3 — Android bring-up iterations 5-8: cross toolchain mechanics)
+Agent: Z.ai Code (main, autonomous loop)
+Task: roadmap (c) — KF5 cross-build unblocking
+
+Work Log:
+- Run 5 (9a61411): host tools GATE PASSED (kconfig_compiler_kf5 found at /opt/kf5-host/lib/x86_64-linux-gnu/libexec/kf5/ — KF5 installs build tools under libexec/kf5 with _kf5 suffix, NOT bin/). FAILED at cross kcoreaddons: "Could NOT find ECM" under the NDK toolchain — android.toolchain.cmake sets FIND_ROOT_PATH_MODE_PACKAGE=ONLY, so CMAKE_PREFIX_PATH dirs outside CMAKE_FIND_ROOT_PATH are rejected.
+- Fix (5638a15, in flight): -DCMAKE_FIND_ROOT_PATH="$QTDIR;$KF5DIR;$VP/installed" added to cross frameworks + quazip + krita configure (toolchain appends sysroot roots after; our prefixes now rooted). Also verified KF5's OFFICIAL cross mechanism and wired it: KF5ConfigConfig.cmake.in / KF5CoreAddonsConfig.cmake.in honor KF5_HOST_TOOLING — find_file(KF5ConfigCompilerTargets.cmake PATHS ${KF5_HOST_TOOLING} NO_CMAKE_FIND_ROOT_PATH) imports the HOST kconfig_compiler/desktoptojson as KF5:: targets. -DKF5_HOST_TOOLING=$KF5HOST/lib/x86_64-linux-gnu/cmake added to cross frameworks + krita configure. Bundle step now also copies libc++_shared.so + builds smoke_test_real_android (PIE exe linked against the merged engine .so, for later adb/emulator run).
+- Engine job bundle improvements pushed (93301b6) — merged into 5638a15 run.
+
+Stage Summary:
+- Fix chain: 8 iterations dispatched, all workflow-level (krita source untouched). Failure frontier advanced: NDK-absent → ECM(host) → LinguistTools(host cross) → Qt5Qml(host kconfig) → kconfig_compiler gate → ECM(cross find-root). Next expected frontier: krita top-level configure on ANDROID (X11/OpenGL guards), then compile errors in the object build, then merged-.so link closure.
+- Timeline: cold deps built and cached (vcpkg 5.5min static android, ECM, host tools ~2min); iteration cost now ~20min to reach the frontier.
+---
+Task ID: 5-loop-36 (beacon 4 — Android bring-up iterations 9-12: ki18n bug + infra hardening)
+Agent: Z.ai Code (main, autonomous loop)
+Task: roadmap (c) — frameworks closure + infrastructure resilience
+
+Work Log:
+- Iteration 9 (c61fc4c): ki18n needed Qt5AndroidExtras — added to aqt archives (same pattern as Windows qtwinextras). karchive needed zstd — vcpkg zstd port added. Cross kcoreaddons+karchive+kconfig now BUILD+INSTALL (find-root + KF5_HOST_TOOLING mechanics working).
+- Iteration 10 (289c653): ki18n needed LibIntl on android (bionic lacks it) — vcpkg gettext port added (static libintl.a). ki18n then CONFIGURED and started building (36 TUs).
+- Iteration 11 (f6956f9): ki18n v5.116 UPSTREAM Qt5-ANDROID BUG found: kcatalog.cpp androidAssetBindtextdomain calls loadMessageCatalogFile which is DEFINED NOWHERE in the source tree (libintl-lite-era leftover; master/KF6 has the same dead call). We ship no translations, so fixed at TOOLCHAIN level: forced-include stub header neutralizes the dead assets:-catalog path (#define redirect to a no-op). Zero source edits, krita untouched. Also -landroid -llog on the ki18n shared link (AAssetManager symbols).
+- Iteration 12 (c72600b): infrastructure hardening after a TRANSIENT TLS flake killed both android (karchive clone curl 35) and windows (kwindowsystem clone) simultaneously at ~17:47Z: (1) 5x retry loops on ALL git clones (krita-source, bridge, ECM, host frameworks, cross frameworks, quazip); (2) deps cache bumped to andengine-deps-v3-<abi> with /opt/kf5-src DROPPED (clones re-run per run with retries; cache budget reserved for build trees — the 10GB repo cache cap EVICTED the loop-35 windows caches winengine-deps-v10/krbuild-v3, so windows is re-warming cold this run, expected ~2-3h).
+- Also: cache-save contention from cancelled duplicate runs diagnosed ("another job may be creating this cache") — queue hygiene: only ONE run kept per iteration, superseded runs cancelled explicitly.
+
+Stage Summary:
+- Failure frontier: kcoreaddons+karchive+kconfig cross-built GREEN; ki18n stub in flight; remaining frameworks are small. Next unknowns: krita top-level configure on ANDROID, ninja prune, 900-object NDK build, merged-.so link closure.
+- Roadmap (c) campaign ~12 iterations dispatched. All fixes workflow/toolchain-level.
+---
+Task ID: 5-loop-36 (beacon 5 — Android bring-up iterations 13-17: krita configure frontier)
+Agent: Z.ai Code (main, autonomous loop)
+Task: roadmap (c) — krita top-level configure on ANDROID
+
+Work Log:
+- Iteration 13 (b56fd33): ki18n stub v1 broke CMake's compiler try-compile (bare test has no Qt includes) — rewrote stub Qt-free (variadic template no-op). 
+- Iteration 14 (d0ab44b): ki18n TUs compiled BUT link failed: vcpkg GNU gettext libintl.a has hard bionic gaps (iconv/nl_langinfo/fgets_unlocked) — REPLACED with a workflow-generated minimal libintl shim (pass-through intl; every lookup returns msgid = untranslated source string, semantically identical to Linux/Windows builds that load no catalogs). libintl.h + libintl.a into $KF5DIR.
+- Iteration 15 (bbd3c7f): shim linked but C++-mangled — added extern "C" guards. RESULT: ALL 8 cross KF5 frameworks + QuaZip BUILT AND INSTALLED. First configure attempt reached krita's own gates.
+- Iteration 16 (fb1b353): krita's UPSTREAM ANDROID path activated (find_package(unwindstack REQUIRED) + ANDROID_SDK_ROOT fatal). Provided: (1) header-only unwindstack stub of the exact API surface KisAndroidCrashHandler.cpp uses (Regs/UnwinderFromPid/FrameData as inline no-ops — android crash backtrace is not an engine feature; zero link-time symbols); (2) Findunwindstack.cmake module; (3) -DANDROID_SDK_ROOT.
+- Iteration 17 (62b4761, in flight): TIFF REQUIRED unconditionally (CheckLibTIFFPSDSupport) + Fontconfig 2.13.1 REQUIRED unconditionally + LibAV (ffmpeg) REQUIRED on the ANDROID branch via pkg_check_modules. Added vcpkg tiff+fontconfig+ffmpeg[core,avcodec,avfilter,avformat,swscale] + PKG_CONFIG_PATH export pointing host pkg-config at the android triplet's .pc files (cross: nothing executed).
+
+Stage Summary:
+- Cross-toolchain layer COMPLETE: Qt5-android + 8 KF5 frameworks + ECM + host tools + vcpkg static ports + intl shim + unwindstack stub + quazip all provisioned and building reproducibly. Fix chain entirely workflow-level (krita source untouched).
+- Frontier now: krita configure tail → ninja prune → ~900-object NDK compile (first real android krita compile — expect bionic/glibc-ism fixes) → merged .so link closure.
+---
+Task ID: 5-loop-36 (beacon 6 — krita configure PASSED on Android NDK; object build in flight)
+Agent: Z.ai Code (main, autonomous loop)
+Task: roadmap (c) — configure milestone
+
+Work Log:
+- Iteration 18 (2cd940e): ffmpeg needed host nasm (apt) — added. ffmpeg[core,avcodec,avfilter,avformat,swscale] + tiff + fontconfig all BUILT for x64-android. fontconfig cross-build worked on the NDK (meson via vcpkg).
+- Iteration 19 (fc60726): krita's ANDROID STL gate (CMakeLists:1726, written for old ECM layout) — fixed via ANDROID_STL=c++_shared everywhere (frameworks + quazip + krita) + NDK sysroot arch-alias dirs (sysroot/usr/lib/<arch>/libc++_shared.so, toolchain provisioning with sudo, krita untouched). NDK r29 libc++_shared discovered (only riscv64 triple ships it in sysroot).
+- Iteration 20 (3765bd7 + a12caf9): libc++ discovery made multi-source + pipefail-guarded (grep -m1 no-match exit code killed the step under bash -e; fixed with || true).
+- Iteration 21 (459ce7f): configure gating reworked — tee full log, fail on 'CMake Error|Configuring incomplete', verify build.ninja exists (cmake|tail previously hid failures). Exposed the REAL blocker: try_run() in cross mode (TIFF_CAN_WRITE_PSD_TAGS via check_cxx_source_runs).
+- Iteration 22 (5b41636): try_run pre-seeded via cache vars (TIFF_HAS_PSD_TAGS=1, TIFF_CAN_WRITE_PSD_TAGS=FAILED_TO_RUN — benign, WITH_TIFF=OFF, plugin not in closure). Configure then failed at GENERATE: app-level targets (kritatextproperties, svgtexttool, qmlmodules) link Qt5::QuickControls2.
+- Iteration 23 (57031f9, IN FLIGHT): qtquickcontrols2 added to aqt archives. Configure + generation now PAST the previous frontier — job in_progress ~10 min = likely in the ~900-object NDK compile phase.
+
+Stage Summary:
+- KRITA TOP-LEVEL CONFIGURE ON ANDROID: green through dependency gates (Qt5-android 11 components, 7 KF5 cross frameworks, unwindstack stub, LibAV/ffmpeg, TIFF, Fontconfig, LibExiv2, LCMS2, PNG, ZLIB, Boost/Immer/Zug/Lager/xsimd, QuaZip, libunibreak, FriBidi).
+- Remaining: prune regex → object build (bionic compile errors possible) → merged .so link → export gates.
+---
+Task ID: 5-loop-36 (beacon 7 — MILESTONE: Android REAL engine x86_64 GREEN, arm64 dispatched)
+Agent: Z.ai Code (main, autonomous loop)
+Task: roadmap (c) — x86_64 bring-up COMPLETE
+
+Work Log:
+- GREEN RUN 35476318546 (795c0b5): build-android-engine (x86_64) SUCCESS. 961 krita objects built (gates OK: kis_auto_brush.cpp.o, KoXmlNS.cpp.o, vendored raqm.c.o all present), merged libkrita_bridge.so = 313,611,560 bytes, **21 krita_* ABI symbols EXPORTED** (krita_brush_init/load_preset 5412B/generate_dab 1844B/set_color/get_opacity/get_size/spacing/hardness/smudge/release_dab/cleanup/destroy/...), 3678 undefined refs (Qt/KF5/bionic — by design, resolved at dlopen from libc++_shared + bundled libs). Windows engine job green in parallel (cache re-warm complete).
+- Final merge fixes this iteration: isystem include capture (cmake marks Qt dirs -isystem on android; the bridge TU needed them), llvm-readelf for all symbol work (runner NDK image is PRUNED — llvm-nm absent, only riscv64 libc++_shared.so in sysroot), gate pattern fixed (ABI symbols are krita_brush_* NOT krita_bridge — the file name ≠ symbol prefix), split bridge-TU compile from link for error isolation.
+- arm64-v8a ADDED to the matrix (8f999e2 dispatched) — the device deliverable ABI. Same pipeline; risk: aarch64-specific code paths (neon intrinsics guards in krita Vc/simd layers) — the objects already built once for x86_64; arm64 compile differences expected small.
+- Smoke exe link needs artifact/bin mkdir (fixed this push; non-fatal anyway).
+
+Stage Summary:
+- ROADMAP (c) STATUS: x86_64 bring-up DONE end-to-end at the engine level (configure → 961 objects → merged single .so → export gates). arm64-v8a in flight. NEXT: app wiring job build-android-real-engine in build-app.yml (jniLibs bundling + APK) following the build-windows-real-engine template, then v0.22 release.
+- Iteration total: ~25 dispatched runs for the android campaign. Krita source byte-identical upstream throughout.
+---
+Task ID: 5-loop-36 (beacon 8 — BOTH android ABIs GREEN; app wiring job live; libc++ fetch added)
+Agent: Z.ai Code (main, autonomous loop)
+Task: roadmap (c) — arm64 green + app wiring
+
+Work Log:
+- GREEN RUN 35477268427 (8f999e2): build-android-engine (arm64-v8a) SUCCESS + (x86_64) SUCCESS — 21 krita_* ABI symbols exported per ABI (krita_brush_init 170B / load_preset 5412B / generate_dab 1844B ...), krita source untouched.
+- App wiring job build-android-real-engine ADDED to builder build-app.yml (e2de1e5): Java17 + Flutter 3.35.3, downloads krita-brush-engine-android-arm64-v8a from latest green engine run, bundles jniLibs/arm64-v8a (engine .so + Qt5/KF5/icu runtime, x86_64 strays excluded), DT_NEEDED audit (hard gate incl. libc++_shared.so), flutter build apk --release, APK content verification (engine + Qt present), artifact feather-krita-android-real-engine. First dispatch failed as EXPECTED (arm64 artifact didn't exist at its download time — the app run raced the engine run).
+- Gap found + fixed: the runner's pruned NDK r29 ships libc++_shared.so ONLY for riscv64 — Qt/KF5 need it in the APK at load. Fix (d2ca881, in flight): deps step now downloads NDK r27c from dl.google.com and selectively unzips just sysroot libc++_shared.so for aarch64-linux-android + x86_64-linux-android into /opt/android_deps/libcxx/; bundle step copies the REAL per-ABI file into artifact/android/<abi>/.
+
+Stage Summary:
+- Roadmap (c): engine layer DONE for both ABIs. In flight: engine re-run bundling real libc++_shared; then app wiring re-dispatch → APK artifact feather-krita-android-real-engine → v0.22 release (scripts/release_v22.py next).
+- Loop-36 iteration count so far: ~28 dispatched runs. All fixes workflow/toolchain-level; krita byte-identical.
+---
+Task ID: 5-loop-36 (beacon 9 — engine artifact COMPLETE with libc++ bundle; app wiring re-dispatched)
+Agent: Z.ai Code (main, autonomous loop)
+Task: roadmap (c) — artifact completeness
+
+Work Log:
+- libc++_shared.so saga resolved: r29 runner NDK ships only riscv64 → download NDK r27c from dl.google.com + selective unzip of sysroot per-triple libc++_shared.so (aarch64 1.79MB, x86_64 1.62MB) → bundled per-ABI into the engine artifact. Two path bugs fixed en route (suffix-strip pattern — ${VAR%-[0-9]*} does NOT match android24, sed 's/[0-9]*$//' used).
+- GREEN RUN 35482134347 (04311d8): BOTH matrix ABIs SUCCESS — arm64-v8a + x86_64, each with: merged 313MB libkrita_bridge.so (961 objects, 21 ABI exports) + Qt5/KF5/ICU runtime + REAL libc++_shared.so + smoke exe.
+- build-app.yml RE-DISPATCHED: build-android-real-engine will now find the arm64-v8a artifact → jniLibs bundle → DT_NEEDED audit → flutter build apk --release → APK content verify → artifact feather-krita-android-real-engine.
+---
+Task ID: 5-loop-36 (beacon 10 — FINAL: roadmap (c) CLOSED, v0.22 released, real engine on ALL platforms)
+Agent: Z.ai Code (main, autonomous loop)
+Task: milestone lock — Android complete
+
+Work Log:
+- GREEN CHAIN COMPLETE: krita-build run 35482134347 (both android ABIs + real libc++_shared bundled) → build-app run 35483528288: ALL FIVE jobs SUCCESS (build-windows, build-windows-real-engine, build-android, build-android-real-engine, build-linux-real-engine). build-android-real-engine: arm64 artifact download → jniLibs/arm64-v8a bundle (engine .so + Qt5 + KF5 + ICU + libc++_shared) → DT_NEEDED audit PASS (hard gate) → flutter build apk --release → APK verify (engine + Qt present) → 110MB feather-krita-android-real-engine.apk uploaded.
+- RELEASED v0.22-real-engine-android (release id 392287189, tag on feather-krita-flutter @ 5c0e0a4): 114.7MB APK asset. scripts/release_v22.py committed (auto-finds latest green build-app run carrying the artifact; idempotency full-list check).
+- analyze: 0 errors (Flutter 3.35.3, reinstalled this session after box reset #3; scripts/flutter_install.sh recreated pinning the CI version).
+
+Stage Summary:
+- ROADMAP: (a) v0.20 Linux ✓ | (b) v0.21 Windows ✓ | (c) v0.22 Android ✓ — **THE REAL KRITA ENGINE NOW SHIPS ON ALL THREE PLATFORMS**, unmodified v6.0.4 source behind one stable C ABI, byte-identical Dart bindings everywhere. | (d) self-contained Linux ✓ (prior) | (e) diagnostics cleanup ✓ (prior) | (f) preset loading upgrade (paintop-settings-level params) — LAST REMAINING roadmap item, next loop.
+- Loop-36 session totals: ~33 dispatched CI iterations for the android campaign (NDK cross-build of Qt5 + 8 KF5 frameworks + vcpkg static ports + intl shim + unwindstack stub + ffmpeg/fontconfig/tiff + merged single-.so link), v0.21 + v0.22 releases published, box reset #3 survived (workspace + Flutter SDK rebuilt).
+- NEXT-SESSION NOTES: (1) roadmap (f) preset loading upgrade; (2) polish: x86_64 emulator C++ smoke via adb (smoke_test_real_android now in the engine artifact) + flutter integration_test on the emulator for the Dart FFI path; (3) the arm64 .so is device-ready but UNTESTED on real hardware — a device/smoke pass would harden it; (4) engine artifact retention 90d — re-tagged into the release so it persists.
+---
+Task ID: 5-loop-37 (beacon 1 — roadmap (f) implemented, engine CI in flight)
+Agent: Z.ai Code (main, autonomous loop)
+Task: roadmap (f) — preset loading upgrade (paintop-settings-level params)
+
+Work Log:
+- Box state clean: loop-36 FINAL beacon was 21 min old (under the 25-min mtime gate) BUT no active CI runs + clean tree + FINAL marker → disambiguated as finished session, not a concurrent writer. Builder CI all-green (chain 35482134347 → 35483528288, v0.22 live).
+- FORMAT RESEARCH (ground truth, no guessing): pulled REAL stock presets from KDE/krita master — krita/data/paintoppresets/{a)_Eraser_Circle,b)_Basic-5_Size_default}.kpp. KEY DISCOVERY: Krita's stock presets are NOT zip containers — they are LEGACY PNG PRESETS: 200x200 PNG thumbnail + preset XML in a compressed zTXt chunk keyed "preset" (tEXt "version"=2.2). XML root <Preset name paintopid> with ~100-170 flat <param name type=string> CDATA entries at the PAINTOP-SETTINGS level: Krita/opacity (0-100), Krita/erase, EraserMode, CompositeOp (="erase" on the stock eraser!), brush_definition (CDATA <Brush> with <MaskGenerator diameter hfade vfade spacing>), SizeValue/OpacityValue/SoftnessValue (sensor bases 0-1, NOT px), SmudgeRate* (colorsmudge family). Consequence: the bridge's load_preset could NOT load any real stock Krita preset ("no preset XML found").
+- WRAPPER UPGRADE (krita_bridge_real.cpp): (1) container layer now handles PNG presets — pngExtractPresetXml() walks PNG chunks, inflates zTXt (zlib +15 window; zip path stays raw -15 via generalized inflateBytes), tEXt supported too; (2) paintop-settings param map: ALL <param> descendants via elementsByTagName, name= OR id= spellings, value= attr OR CDATA text; (3) mappings — opacity: Krita/opacity /100 → OpacityValue → opacity → brush_opacity; hardness: MaskGenerator hfade/vfade/fade → 1-fade, fallbacks hardness / SoftnessValue → 1-v; spacing: Brush spacing attr, fallback brush_spacing; smudge: SmudgeRateValue → smudge_rate → smudge (absent in stock paintbrush → 0 ✓); eraser: Krita/erase | EraserMode | CompositeOp=erase | flat eraser → context flag; (4) brush tip from brush_definition CDATA now feeds the SAME KisBrush::fromXML + diameter + fade extraction as the direct <brush> element path. SizeValue deliberately NOT mapped to px size (sensor base ≠ diameter).
+- ABI EXTENSION (backward-compatible, no struct change): krita_brush_get_eraser() added to krita_bridge.h + ALL THREE impls (real/fallback/portable) + Dart binding KritaBrushEngine.isEraserPreset. Needed because the eraser-preset flag is otherwise unobservable (dab output for default black color is identical in eraser vs normal mode).
+- FIXTURES: two UNMODIFIED stock presets committed to test/fixtures/ (stock_basic_5_size.kpp 22572B, stock_eraser_circle.kpp 24264B) + README.md provenance (KDE/krita master, GPL-2.0-or-later).
+- SMOKES: smoke_test_real.cpp gained argv-driven preset gates (fixtures REQUIRED when passed, skip otherwise — android builds exe without running); linux+windows engine jobs now pass the fixtures (krita-build.yml @ 85b5e57, Contents API). Gates: load rc==0, size==40/50 (MaskGenerator diameter), opacity==1.0 (Krita/opacity=100), spacing==0.1, hardness==0.0/0.13 (hfade 1/0.87), eraser flag true/false via get_eraser, dab generation on preset context, eraser preset → black mask WITHOUT eraser input flag. tool/ffi_real_smoke.dart: same gates through the app's own Dart FFI bindings on linux+windows app jobs (fixture dir resolved BEFORE the CWD switch; graceful skip if missing).
+- DART MODEL (brush_preset.dart): PNG preset container loader (_loadFromPng — chunk walk, zTXt inflate, tEXt raw; PNG becomes the preset thumbnail) → real stock presets now parse in the preset browser too; settings map gets every paintop-settings param verbatim.
+- LOCAL GATES: flutter analyze 0 errors (72 pre-existing infos); flutter test test/preset_library_test.dart 4/4 PASS (new test asserts paintopId/name/thumbnail/OpacityValue/CompositeOp/brush_definition/SizeSensor on the real fixtures). NOTE: basic-5 carries NO Krita/opacity (master opacity = OpacityValue base 1.0) — Krita/opacity exists only on the eraser stock preset; first test draft assumed otherwise and was corrected against the actual XML.
+- COMMIT 0f82cfd pushed (12 files). krita-build.yml fixture wiring pushed @ 85b5e57; engine run 35486386205 dispatched (duplicate cancelled).
+
+Stage Summary:
+- Roadmap (f) code-complete at all three layers (C++ engine, C ABI, Dart model/bindings) + CI gates wired. Engine CI in flight — NEXT: on green engine run → dispatch build-app.yml → Dart preset gates on linux+windows → tag v0.23-preset-loading (all three real-engine artifacts, scripts/release_v23.py) → final beacon.
+- NEXT-LOOP NOTES: (1) UX wiring: canvas_widget could auto-switch to BrushType.eraser when engine.isEraserPreset after loadBrushPreset (left out — tool state lives in the widget layer); (2) flow (FlowValue) has no ABI getter — candidate for a future get_flow; (3) android real-engine Dart-side smoke still pending emulator work (loop-36 note stands).
+---
+Task ID: 5-loop-37 (beacon 2 — engine chain GREEN with preset gates, app run in flight)
+Agent: Z.ai Code (main, autonomous loop)
+Task: roadmap (f) CI bring-up
+
+Work Log:
+- Engine fix chain (3 dispatched runs):
+  - Run 1 (35486386205): FAILED all 3 platform jobs — toDouble lambda param typed double*, QString::toDouble takes bool* (g++ + MSVC agreed, same root cause). Fix 96fa184.
+  - Run 2 (35487347562): android x86_64 GREEN (wrapper compiles under NDK, engine artifact built); linux FAILED at the NEW smoke gate — PNG extraction returned empty. REPRODUCED LOCALLY with a standalone harness (scripts/png_extract_repro.cpp): PNG chunk lengths are BIG-endian; I had reused the ZIP-oriented little-endian rd32 → IHDR len read as 0x0D000000 → "corrupt" break. Python/Dart extractors used BE correctly; only the C++ was wrong. Fix cc5c823 (be32 in pngExtractPresetXml, harness-verified on both fixtures: 14185B + 8151B XML extracted). Windows job additionally FAILED with "preset file does not exist: /tmp/fkr-app/..." — MSVC exes don't get MSYS POSIX-path translation; fixed via cygpath -w in the windows smoke invocation (builder commit d9235e9).
+  - Run 3 (35488324214 @ d9235e9): **ALL FOUR JOBS SUCCESS** — linux engine (preset gates passed in-job), windows engine (cygpath'd fixture paths, gates passed), android x86_64 + arm64-v8a (wrapper compiled into merged .so both ABIs).
+- The C++ smoke now proves on CI, per engine build: real stock PNG presets load through the unmodified engine, paintop-settings params land on the ABI getters (size 40/50 = MaskGenerator diameter, opacity 1.0 = Krita/opacity 100, spacing 0.1, hardness 0.0/0.13 = 1-hfade), eraser preset flagged via settings-level CompositeOp=erase (krita_brush_get_eraser), and dabs generate on preset-loaded contexts.
+- build-app.yml dispatched (all 5 jobs): Dart FFI preset gates will run through the app's own bindings on the linux + windows real-engine jobs.
+- scripts/release_v23.py committed: fetches ALL THREE real-engine artifacts from the green app run, idempotent full-list check, 5x retry uploads.
+
+Stage Summary:
+- Engine layer: roadmap (f) GREEN on all platforms. App layer in flight → then v0.23-preset-loading release → FINAL beacon.

@@ -34,3 +34,9 @@ analyzer:
     prefer_if_null_operators: ignore
     unnecessary_this: ignore
     unused_element: ignore
+  exclude:
+    - build/**
+    - android/**
+    - web/**
+    - windows/**
+    - linux/**

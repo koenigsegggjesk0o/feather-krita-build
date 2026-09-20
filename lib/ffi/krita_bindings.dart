@@ -297,6 +297,9 @@ typedef _KritaBrushGetSpacingDart = double Function(Pointer<Void> handle);
 typedef _KritaBrushGetHardnessNative = Double Function(Pointer<Void> handle);
 typedef _KritaBrushGetHardnessDart = double Function(Pointer<Void> handle);
 
+typedef _KritaBrushGetEraserNative = Bool Function(Pointer<Void> handle);
+typedef _KritaBrushGetEraserDart = bool Function(Pointer<Void> handle);
+
 typedef _KritaBrushGetPresetNameNative = Pointer<Utf8> Function(
     Pointer<Void> handle);
 typedef _KritaBrushGetPresetNameDart = Pointer<Utf8> Function(
@@ -467,6 +470,9 @@ class KritaBrushEngine {
   late final _KritaBrushGetHardnessDart _getHardness =
       _lib.lookupFunction<_KritaBrushGetHardnessNative, _KritaBrushGetHardnessDart>(
           'krita_brush_get_hardness');
+  late final _KritaBrushGetEraserDart _getEraser =
+      _lib.lookupFunction<_KritaBrushGetEraserNative, _KritaBrushGetEraserDart>(
+          'krita_brush_get_eraser');
   late final _KritaBrushGetPresetNameDart _getPresetName =
       _lib.lookupFunction<_KritaBrushGetPresetNameNative, _KritaBrushGetPresetNameDart>(
           'krita_brush_get_preset_name');
@@ -493,6 +499,14 @@ class KritaBrushEngine {
   double get currentHardness {
     _checkAlive();
     return _getHardness(_handle);
+  }
+
+  /// Whether the loaded preset is an eraser preset (settings-level
+  /// Krita/erase, EraserMode or CompositeOp=erase). Stroke compositing
+  /// should switch to destination-out while this is true.
+  bool get isEraserPreset {
+    _checkAlive();
+    return _getEraser(_handle);
   }
 
   /// The name of the last successfully loaded preset, or '' if none.

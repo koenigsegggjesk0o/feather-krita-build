@@ -423,6 +423,9 @@ double krita_brush_get_hardness(KritaBrushContext* handle) {
 double krita_brush_get_smudge(KritaBrushContext* handle) {
     return handle ? handle->smudge : 0.0;
 }
+bool krita_brush_get_eraser(KritaBrushContext* handle) {
+    return handle ? handle->eraser : false;
+}
 const char* krita_brush_get_preset_name(KritaBrushContext* handle) {
     if (!handle) return "";
     handle->presetNameBuffer = handle->presetName.toStdString();

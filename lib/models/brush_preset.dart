@@ -256,6 +256,18 @@ class BrushPreset {
       return _loadFromZip(bytes, id: id, filePath: filePath);
     }
 
+    // Detect the legacy PNG preset container: Krita's stock presets are
+    // PNG thumbnails whose preset XML lives in a compressed zTXt chunk
+    // keyed "preset" (format version "2.2"). The PNG itself doubles as
+    // the preset thumbnail.
+    if (bytes.length >= 8 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47) {
+      return _loadFromPng(bytes, id: id, filePath: filePath);
+    }
+
     // Otherwise try parsing as plain XML.
     final xmlString = utf8.decode(bytes, allowMalformed: true);
     return _loadFromXmlString(xmlString, id: id, filePath: filePath);
@@ -290,6 +302,54 @@ class BrushPreset {
     }
     final preset = _loadFromXmlString(presetXml, id: id, filePath: filePath);
     preset.thumbnail = thumbnail;
+    return preset;
+  }
+
+  /// Parses a legacy PNG preset container (Krita's own stock presets):
+  /// the preset XML is carried in a zTXt chunk with the keyword "preset"
+  /// (one compression-method byte 0 + zlib stream) or a tEXt chunk with
+  /// the same keyword (raw). The PNG image itself is used as the preset
+  /// thumbnail.
+  static BrushPreset _loadFromPng(
+    Uint8List bytes, {
+    required String id,
+    String? filePath,
+  }) {
+    String? presetXml;
+    var pos = 8; // skip the PNG signature
+    while (pos + 8 <= bytes.length) {
+      final length =
+          (bytes[pos] << 24) | (bytes[pos + 1] << 16) |
+          (bytes[pos + 2] << 8) | bytes[pos + 3];
+      final type = String.fromCharCodes(bytes.sublist(pos + 4, pos + 8));
+      if (pos + 12 + length > bytes.length) break; // corrupt chunk
+      final data = bytes.sublist(pos + 8, pos + 8 + length);
+      if (type == 'zTXt' || type == 'tEXt') {
+        final nul = data.indexOf(0);
+        if (nul > 0) {
+          final keyword = String.fromCharCodes(data.sublist(0, nul));
+          if (keyword.toLowerCase() == 'preset') {
+            if (type == 'tEXt') {
+              presetXml = utf8.decode(data.sublist(nul + 1), allowMalformed: true);
+            } else if (data.length > nul + 2 && data[nul + 1] == 0) {
+              // zTXt: method byte 0 (zlib) then the zlib-wrapped stream.
+              final inflated = ZLibDecoder().decodeBytes(
+                data.sublist(nul + 2),
+              );
+              presetXml = utf8.decode(inflated, allowMalformed: true);
+            }
+          }
+        }
+      }
+      if (type == 'IEND') break;
+      pos += 12 + length; // length + type + data + crc
+    }
+    if (presetXml == null || presetXml.isEmpty) {
+      throw const FormatException(
+          'PNG preset container has no "preset" zTXt/tEXt chunk');
+    }
+    final preset = _loadFromXmlString(presetXml, id: id, filePath: filePath);
+    preset.thumbnail = bytes;
     return preset;
   }
 

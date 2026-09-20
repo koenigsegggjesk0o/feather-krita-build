@@ -8,7 +8,7 @@
 // dart:ffi/dart:io/dart:typed_data + package:ffi).
 //
 // Usage:
-//   dart run tool/ffi_real_smoke.dart <bundleDir>
+//   dart run tool/ffi_real_smoke.dart <bundleDir> [fixtureDir]
 //
 // <bundleDir> is the Flutter Linux bundle directory (containing lib/).
 // The bridge (lib/libkrita_bridge.so, renamed from libkrita_bridge_real.so)
@@ -19,6 +19,11 @@
 // skipped there. The script switches the process CWD to the bundle so the
 // loader's relative candidates resolve, and the bridge's own rpath ($ORIGIN)
 // finds the bundled Krita libraries on Linux.
+//
+// [fixtureDir] (default: <launch CWD>/test/fixtures, resolved BEFORE the
+// CWD switch) holds real Krita stock presets. When present, paintop-
+// settings-level preset gates run (roadmap (f)); failures there are fatal.
+// Missing fixtures only downgrade the smoke to the base dab gates.
 
 import 'dart:io';
 
@@ -42,9 +47,16 @@ int _centerPixelIndex(int width, int height, int stride) {
 
 void main(List<String> args) {
   if (args.isEmpty) {
-    stderr.writeln('usage: dart run tool/ffi_real_smoke.dart <bundleDir>');
+    stderr.writeln('usage: dart run tool/ffi_real_smoke.dart <bundleDir> [fixtureDir]');
     exit(2);
   }
+  // Resolve the preset fixture dir BEFORE the CWD switch below (the CI
+  // launches this script from the repo root).
+  final fixtureDirPath = args.length > 1
+      ? args[1]
+      : '${Directory.current.absolute.path}/test/fixtures';
+  final fixtureDir = Directory(fixtureDirPath);
+
   final bundle = Directory(args[0]).absolute.path;
   final libDir = Directory('$bundle/lib');
   // Windows layout: DLLs next to the exe, no lib/ subdir (merged engine DLL).
@@ -92,6 +104,69 @@ void main(List<String> args) {
     _check(half.width < dab.width, 'half pressure shrinks dab');
   } else {
     _check(false, 'half-pressure dab generated');
+  }
+
+  // ------------------------------------------------------------------
+  // Paintop-settings-level preset gates (roadmap (f)).
+  //
+  // Real Krita stock presets (PNG preset containers with settings-level
+  // params) live in test/fixtures (or argv[1]). When the fixture dir is
+  // absent the gates are skipped with a note; when present, failures are
+  // FATAL. The C++ smoke (smoke_test_real.cpp) runs the same gates at the
+  // engine layer; this section proves the values cross the app's own Dart
+  // FFI bindings.
+  // ------------------------------------------------------------------
+  const basicFixtureName = 'stock_basic_5_size.kpp';
+  const eraserFixtureName = 'stock_eraser_circle.kpp';
+  final basicFixture = File('${fixtureDir.path}/$basicFixtureName');
+  final eraserFixture = File('${fixtureDir.path}/$eraserFixtureName');
+  if (!basicFixture.existsSync() || !eraserFixture.existsSync()) {
+    stdout.writeln('  PRESET GATES SKIPPED (fixtures not found in '
+        '${fixtureDir.path})');
+  } else {
+    // --- stock_basic_5_size: paintbrush, soft auto tip -------------------
+    final p1 = KritaBrushEngine();
+    _check(p1.loadPreset(basicFixture.absolute.path),
+        'loadPreset($basicFixtureName) succeeds');
+    if (p1.lastError().isNotEmpty) stdout.writeln('  err: ${p1.lastError()}');
+    stdout.writeln('  basic-5: size=${p1.currentSize} '
+        'opacity=${p1.currentOpacity} spacing=${p1.currentSpacing} '
+        'hardness=${p1.currentHardness} name=${p1.currentPresetName}');
+    _check(p1.currentSize == 40.0, 'basic-5 size == 40 (MaskGenerator diameter)');
+    _check(p1.currentOpacity == 1.0, 'basic-5 opacity == 1.0 (Krita/opacity = 100)');
+    _check((p1.currentSpacing - 0.1).abs() < 1e-9,
+        'basic-5 spacing == 0.1 (Brush spacing attr)');
+    _check(p1.currentHardness == 0.0, 'basic-5 hardness == 0 (hfade = 1)');
+    _check(!p1.isEraserPreset, 'basic-5 NOT flagged eraser');
+    final pdab = p1.generateDab(const BrushInput(x: 0, y: 0, pressure: 1.0));
+    _check(pdab.width >= 36 && pdab.width <= 44,
+        'basic-5 dab extent from preset tip (got ${pdab.width})');
+    p1.dispose();
+
+    // --- stock_eraser_circle: eraser via settings-level CompositeOp ------
+    final p2 = KritaBrushEngine();
+    _check(p2.loadPreset(eraserFixture.absolute.path),
+        'loadPreset($eraserFixtureName) succeeds');
+    if (p2.lastError().isNotEmpty) stdout.writeln('  err: ${p2.lastError()}');
+    stdout.writeln('  eraser: size=${p2.currentSize} '
+        'opacity=${p2.currentOpacity} spacing=${p2.currentSpacing} '
+        'hardness=${p2.currentHardness}');
+    _check(p2.currentSize == 50.0, 'eraser size == 50 (MaskGenerator diameter)');
+    _check(p2.currentOpacity == 1.0, 'eraser opacity == 1.0 (Krita/opacity = 100)');
+    _check((p2.currentHardness - 0.13).abs() < 1e-9,
+        'eraser hardness == 0.13 (hfade = 0.87)');
+    _check(p2.isEraserPreset,
+        'eraser preset flagged via settings (CompositeOp=erase)');
+    final edab = p2.generateDab(const BrushInput(x: 0, y: 0, pressure: 1.0));
+    if (edab.pixels.isNotEmpty) {
+      final i = _centerPixelIndex(edab.width, edab.height, edab.stride);
+      _check(edab.pixels[i] == 0 && edab.pixels[i + 1] == 0 &&
+              edab.pixels[i + 2] == 0,
+          'eraser preset dab is black mask WITHOUT eraser flag');
+    } else {
+      _check(false, 'eraser preset dab generated');
+    }
+    p2.dispose();
   }
 
   engine.dispose();

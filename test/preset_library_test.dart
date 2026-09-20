@@ -10,6 +10,7 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:feather_krita/models/brush_preset.dart';
 import 'package:feather_krita/state/editor_state.dart';
 
 /// Builds a Krita-shaped .kpp (ZIP + XML) at [dir]/[name].
@@ -95,5 +96,44 @@ void main() {
     // the test host, so the three bundled presets still land there).
     expect(state.presets.length, EditorState.kBundledPresetAssets.length);
     Directory(missing).deleteSync(recursive: true);
+  });
+
+  test('real stock Krita presets (PNG preset containers) parse end-to-end',
+      () async {
+    // These are UNMODIFIED stock presets from the Krita project — the
+    // legacy PNG container format (preset XML in a zTXt chunk). See
+    // test/fixtures/README.md for provenance and the expected values.
+    final basic = BrushPreset.loadFromBytes(
+      File('test/fixtures/stock_basic_5_size.kpp').readAsBytesSync(),
+      filePath: 'test/fixtures/stock_basic_5_size.kpp',
+    );
+    expect(basic.paintopId, 'paintbrush');
+    expect(basic.name, 'b)_Basic-5_Size');
+    // The PNG itself doubles as the preset thumbnail.
+    expect(basic.thumbnail, isNotNull);
+    expect(basic.thumbnail!.length, greaterThan(20000));
+    // Paintop-settings-level params land in the settings map verbatim.
+    // (basic-5 carries its master opacity via the OpacityValue sensor base;
+    // only the eraser stock preset writes a Krita/opacity master entry.)
+    expect(basic.settings.containsKey('OpacityValue'), isTrue);
+    expect(basic.settings['OpacityValue']!.value, '1');
+    expect(basic.settings.containsKey('CompositeOp'), isTrue);
+    expect(basic.settings['CompositeOp']!.value, 'normal');
+    expect(basic.settings.containsKey('brush_definition'), isTrue);
+    expect(basic.settings['brush_definition']!.value, contains('<MaskGenerator'));
+
+    final eraser = BrushPreset.loadFromBytes(
+      File('test/fixtures/stock_eraser_circle.kpp').readAsBytesSync(),
+      filePath: 'test/fixtures/stock_eraser_circle.kpp',
+    );
+    expect(eraser.paintopId, 'paintbrush');
+    expect(eraser.thumbnail, isNotNull);
+    // The stock eraser marks eraser mode via CompositeOp=erase.
+    expect(eraser.settings['CompositeOp']!.value, 'erase');
+    expect(eraser.settings['Krita/opacity']!.value, '100');
+    expect(eraser.settings['Krita/erase']!.value, 'false');
+    // Sensor curves survive as string settings (not scalars).
+    expect(eraser.settings.containsKey('SizeSensor'), isTrue);
+    expect(eraser.settings['SizeSensor']!.type, BrushSettingType.string);
   });
 }
