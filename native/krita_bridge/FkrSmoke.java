@@ -19,15 +19,23 @@ public class FkrSmoke {
         //    glue. If it loaded transitively (via the shim's DT_NEEDED)
         //    the explicit load below would be a no-op and JNI_OnLoad would
         //    never run -> VM never registered (run 35514055979).
+        System.out.println("load: real core...");
         System.load("/data/local/tmp/fkr/libQt5Core_real_x86_64.so");
+        System.out.println("load: real core OK");
         // 2. masquerade Core (1-symbol QStandardPaths shim carrying the
         //    libQt5Core_x86_64.so name every consumer NEEDs); the real
         //    core is already in the solist, so its NEEDED is satisfied
+        System.out.println("load: core shim...");
         System.load("/data/local/tmp/fkr/libQt5Core_x86_64.so");
+        System.out.println("load: core shim OK");
         // 3. AndroidExtras (QAndroidJniObject/Environment used by KF5I18n)
+        System.out.println("load: androidextras shim...");
         System.load("/data/local/tmp/fkr/libQt5AndroidExtras_x86_64.so");
+        System.out.println("load: androidextras shim OK");
         // 4. the JNI smoke (pulls the real bridge + engine closure)
+        System.out.println("load: smoke_jni (bridge chain)...");
         System.load("/data/local/tmp/fkr/libsmoke_jni.so");
+        System.out.println("load: smoke_jni OK");
         sLoaded = true;
     }
 
