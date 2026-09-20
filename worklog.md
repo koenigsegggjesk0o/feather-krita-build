@@ -1668,3 +1668,23 @@ Stage Summary:
 - Builder repo now at 418f8c3 (self-path hygiene landed, zero side-effect CI validated). App repo unchanged at 41972c1 plus this beacon. Krita source byte-identical upstream throughout.
 - The phantom-typo postmortem is the key transfer: display-layer "[m" eating can fabricate workflow "defects" out of correct files — future loops must arbitrate with od -c/wc -c/Read before editing bracket-bearing strings anywhere (workflows, YAML lists, markdown).
 - NEXT (5-loop-47): preset-list families via ABI — enumerate brush presets grouped by paintop family through a new thin-C-ABI method (krita_brush_preset_families*), reusing the proven .kpp container parse path; needs 1 engine rebuild (krita-build dispatch) + build-app gates + Dart-side list wiring. Mirror-sync lib/** pushes firing build-app remain BY DESIGN (latest-green artifact is correct when engine unchanged); do not "fix" that race beyond the self-path now removed.
+
+---
+Task ID: 5-loop-47 (beacon 1 — preset-families ABI campaign committed, engine rebuild 35539069506 dispatched)
+Agent: Z.ai Code (main, autonomous loop)
+Task: preset-list families via ABI — engine-side directory scan + paintop-family identity per preset
+
+Work Log:
+- BOX RESET #8 on entry (third wipe in ~4h; wipe cadence now ~20-30 min). Recovery drill: fresh shallow clones (app@866096c, builder@2dd25d8) + Flutter 3.35.3 foreground reinstall. All work below committed+pushed immediately after green, per the checkpoint-to-GitHub posture.
+- NATIVE CAMPAIGN (app repo commit 60942bf; wrapper sources flow to CI from the APP repo clone — krita-build.yml clones feather-krita-flutter HEAD into /tmp/fkr-app and compiles native/krita_bridge/* from there):
+  - krita_bridge.h: new krita_brush_preset_scan(handle, dir) + krita_brush_preset_family(handle, i) + krita_brush_preset_path(handle, i); preset_count doc updated to scan-result semantics.
+  - krita_bridge_real.cpp: extractPresetXml() factored out of load_preset (identical container handling — ZIP KoStore / legacy PNG zTXt / bare XML — and identical error codes 6/4); probePresetFile() light-parses name+family with NO engine object construction; krita_brush_preset_scan walks the dir recursively (QDirIterator, *.kpp, cap 512, sorted, robust — unparsable files skipped); count/name now serve the scan result; family/path expose the parsed entries; PresetScanEntry vector replaces the old bare-filename availablePresets (legacy cwd-relative auto-scan retired).
+  - smoke_test_real.cpp: scan gate — derives the fixture dir from argv[1], scans, asserts both stock fixtures present with family == paintbrush, count consistency, and a scanned-path -> load_preset round-trip with matching paintop id.
+- DART CAMPAIGN (same commit): strict bindings scanPresetFamilies/scannedPresets + KritaPresetInfo (name/family/path); tool/ffi_real_smoke.dart scan gates mirroring the C++ smoke through the app's own bindings; EditorState.loadPresetLibrary now upgrades preset.paintopId with the ENGINE-declared family when the real engine is available (matched by file base name, Qt '/' vs Dart separator safe; defensive try/catch — Dart-parse values stand without the engine, CI strict bindings stay covered by the smoke gates).
+- VALIDATION (local, fresh box): flutter analyze 0 errors / 0 warnings (72 pre-existing info deprecations); NEW test/preset_families_ux_test.dart 4/4 (family authority semantics, bundled seeding contract, garbage-skip, recursive scan); FULL suite 112/112 green.
+- CI: krita-build workflow_dispatch run 35539069506 dispatched @ builder 2dd25d8 (clones app @ 60942bf for the wrapper). android-bridge auto-fire is NOT expected (its paths list krita_bridge_portable.cpp + .h — untouched; NOTE the [m display-eating rule: verify with Read/API, not bash grep).
+
+Stage Summary:
+- The engine can now ENUMERATE brush presets and report each preset's declared paintop family through the thin C ABI — parsed by the real Krita container path, zero Krita source changes.
+- NEXT (after 35539069506 green): mirror-sync wrapper/Dart to builder repo (fires build-app auto-run whose android job fetches the NEW green engine artifact — benign now), wait build-app green, then release v0.30-preset-families with the 3 platform assets.
+- If the engine run FAILS: pull ##[error] from the failing job log; the likeliest suspects are NDK/MSVC compile of the new code (QDirIterator include, size_t casts) — fix wrapper only, NEVER Krita source.
