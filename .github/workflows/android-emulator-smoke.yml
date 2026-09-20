@@ -102,7 +102,11 @@ jobs:
                    native/krita_bridge/FkrSmoke.java \
                    test/fixtures/stock_basic_5_size.kpp \
                    test/fixtures/stock_eraser_circle.kpp; do
-            curl -fsSL "$BASE/$f" -o "src/$(basename "$f")" \
+            # retry-with-backoff: raw.githubusercontent served a transient
+            # 404 seconds after a push (run 35520504547) — single-shot
+            # fetches race the CDN; retries absorb it
+            curl -fsSL --retry 6 --retry-delay 3 --retry-all-errors \
+              "$BASE/$f" -o "src/$(basename "$f")" \
               || { echo "##[error] fetch failed: $f"; exit 1; }
           done
           head -3 src/krita_bridge.h
