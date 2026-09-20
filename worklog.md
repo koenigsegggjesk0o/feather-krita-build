@@ -1513,3 +1513,19 @@ Work Log:
 Stage Summary:
 - PAINTOP IDENTITY CAMPAIGN COMPLETE: krita_brush_get_paintop_id crosses the preset XML -> ABI -> Dart -> UI chain on every platform, the panel badges the family, and the hardness slider now behaves like Krita's own (per-family gating from an evidence-based disable list). 3 new unit tests (incl. the whitelist-vs-disable-list consistency catch that improved the design).
 - NEXT-LOOP NOTES: (1) android emulator C++/Dart smoke (loop-36 note stands — device-ready .so, gates compiled but not executed on-device); (2) the 2 flaky keyboard_shortcuts timeouts under suite parallelism (reproduced again; 6/6 in isolation — root cause still open, likely a shared binding/pump interaction worth a dedicated session); (3) candidate polish: the brush PICKER could show each preset's family badge too (data is already on the model via paintopId); (4) candidate ABI nicety: krita_brush_list_available_presets could also return each preset's family, enabling a grouped picker without re-parsing files in Dart.
+
+---
+Task ID: 5-loop-42 (beacon 1 — picker family polish + flake hardening implemented, local gates green)
+Agent: Z.ai Code (main, autonomous loop)
+Task: NEXT-LOOP NOTES #3+#2 from loop-41 — picker family badges/sort; keyboard_shortcuts flake hardening
+
+Work Log:
+- Session start (cron 17:48 tick): worklog tail = my own loop-41 beacon 2 FINAL (17:48:58) — no concurrent writer; builder CI idle-green (v0.27 chain). Proceeded as 5-loop-42.
+- PRIMARY (note #3): brush picker family polish (lib/screens/brush_picker_screen.dart): (1) every preset card now renders a paintop FAMILY BADGE chip (accent-soft, mirrors the loop-41 panel chip; hidden when a preset declares no family); (2) new Sort toggle row (Name | Family) — Family groups presets by paintop family alphabetically, name-ordered within a family, undeclared families last (sort key 0xFFFF sentinel so they never break the grouping); default stays Name (library order).
+- New test/brush_picker_test.dart (3 widget tests): badge presence per declared family (paintbrush x2, spraybrush, eraser; none for the undeclared fixture); Family sort ordering asserted via rendered card x-positions (eraser leads, name order within family, undeclared last); pick callback still fires. Viewport sized 900x900 to fit the 640-high dialog without RenderFlex overflow.
+- SECONDARY (note #2, time-boxed): keyboard_shortcuts flake investigation. Fresh-box reproduction: run1 = both Ctrl+N + Ctrl+S hang ("did not complete" at suite end, bodies never finish, no exception/stack available); run2 (--timeout 45s) = ALL PASS; runs 3+4 = ALL PASS; run5 (with hardening) = ALL PASS. Rate ~1 hang in 4 suite runs — consistent with runner contention starving the two HEAVIEST tests (full stroke through the native engine + real file I/O), not a deterministic deadlock. HARDENING applied: explicit timeout: Timeout(Duration(minutes: 2)) on those two testWidgets calls + a NOTE documenting the evidence; a true deadlock still fails, contention gets absorbed. Root cause remains open (no stack available from "did not complete" — a dedicated session could try --concurrency=1 whole-suite bisect or test-runner instrumentation).
+- analyze: 0 errors / 0 warnings. flutter test FULL suite: 108 passed / 0 failed (105 prior + 3 picker; the hardened shortcut tests passed under parallelism in run5).
+
+Stage Summary:
+- The picker now exposes the paintop identity work end-to-end: family badges on every card and a Family grouping toggle — Krita-parity browsing backed by the same model data the engine ABI reports.
+- NEXT: commit+push -> mirror sync -> build-app dispatch (engine UNCHANGED this loop; push-triggered run usable directly per loop-40 precedent) -> release v0.28-brush-picker-families via release_v28.py (clone v27, TAG/NAME/BODY swap) -> final beacon.

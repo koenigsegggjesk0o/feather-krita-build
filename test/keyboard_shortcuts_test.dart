@@ -169,6 +169,14 @@ void main() {
           reason: 'Delete must remove the selected stroke');
     });
 
+    // NOTE (5-loop-42): these two are the heaviest tests in the suite —
+    // full paint strokes through the native engine plus real file I/O —
+    // and under full-suite parallelism a loaded runner can starve them
+    // past the default window (observed as suite-end "did not complete"
+    // flakes in loops 39-41; they always pass in isolation and complete
+    // fine given room — fresh-box reruns: 1 hang in 4 suite runs). A
+    // generous explicit window absorbs runner contention without masking
+    // real regressions — a true deadlock still fails, just later.
     testWidgets('Ctrl+N creates a fresh document', (tester) async {
       final state = EditorState();
       addTearDown(state.dispose);
@@ -192,7 +200,7 @@ void main() {
           reason: 'Ctrl+N must clear the strokes');
       expect(state.texture.isEmpty, isTrue,
           reason: 'Ctrl+N must clear the texture');
-    });
+    }, timeout: const Timeout(Duration(minutes: 2)));
 
     testWidgets('Ctrl+S quick-saves a .feather file', (tester) async {
       final state = EditorState();
@@ -231,6 +239,6 @@ void main() {
           if (File(p).existsSync()) File(p).deleteSync();
         }
       });
-    });
+    }, timeout: const Timeout(Duration(minutes: 2)));
   });
 }

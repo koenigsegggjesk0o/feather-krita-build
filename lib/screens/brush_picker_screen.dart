@@ -8,6 +8,9 @@
 //   - Searchable grid of preset cards (thumbnail + name + category).
 //   - Category filter chips: Basic, Dry Media, Wet Media, Markers, Erasers,
 //     Custom.
+//   - Sort toggle (5-loop-42): Name (library order) or Family — family
+//     sort groups every preset of the same paintop together (Krita-parity
+//     browsing; each card also carries the paintop family badge).
 //   - Import .kpp button (delegates to [onImport]).
 //   - Selecting a preset calls [onPick] and closes the sheet.
 
@@ -40,6 +43,12 @@ class BrushPickerScreen extends StatefulWidget {
 class _BrushPickerScreenState extends State<BrushPickerScreen> {
   String _query = '';
   String _category = 'All';
+
+  /// Active sort: 'Name' keeps the library order (file scan), 'Family'
+  /// groups presets by paintop family (5-loop-42).
+  String _sort = 'Name';
+
+  static const _sorts = ['Name', 'Family'];
 
   static const _categories = [
     'All',
@@ -74,13 +83,30 @@ class _BrushPickerScreenState extends State<BrushPickerScreen> {
 
   List<BrushPreset> get _filtered {
     final q = _query.toLowerCase();
-    return widget.presets.where((p) {
+    final list = widget.presets.where((p) {
       if (_category != 'All' && _classify(p) != _category) return false;
       if (q.isEmpty) return true;
       return p.name.toLowerCase().contains(q) ||
           p.paintopId.toLowerCase().contains(q) ||
           p.description.toLowerCase().contains(q);
     }).toList();
+    if (_sort == 'Family') {
+      // Group by paintop family: declared families alphabetically, then
+      // name within a family. Undeclared families sort last so presets
+      // without a root attribute never break the grouping up.
+      list.sort((a, b) {
+        final fa = _familyKey(a);
+        final fb = _familyKey(b);
+        if (fa != fb) return fa.compareTo(fb);
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+    }
+    return list;
+  }
+
+  String _familyKey(BrushPreset p) {
+    final f = p.paintopId.trim().toLowerCase();
+    return f.isEmpty ? '￿' : f;
   }
 
   @override
@@ -107,6 +133,12 @@ class _BrushPickerScreenState extends State<BrushPickerScreen> {
               categories: _categories,
               selected: _category,
               onSelected: (c) => setState(() => _category = c),
+            ),
+            const SizedBox(height: 10),
+            _SortRow(
+              sorts: _sorts,
+              selected: _sort,
+              onSelected: (s) => setState(() => _sort = s),
             ),
             const SizedBox(height: 12),
             Expanded(
@@ -199,8 +231,8 @@ class _SearchBar extends StatelessWidget {
       onChanged: onChanged,
       style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
       decoration: InputDecoration(
-        prefixIcon:
-            const Icon(Icons.search_rounded, size: 18, color: AppTheme.textTertiary),
+        prefixIcon: const Icon(Icons.search_rounded,
+            size: 18, color: AppTheme.textTertiary),
         suffixIcon: value.isNotEmpty
             ? IconButton(
                 icon: const Icon(Icons.clear_rounded,
@@ -279,6 +311,70 @@ class _CategoryRow extends StatelessWidget {
   }
 }
 
+/// Sort toggle (5-loop-42): Name keeps the library order, Family groups
+/// presets by paintop family.
+class _SortRow extends StatelessWidget {
+  const _SortRow({
+    required this.sorts,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final List<String> sorts;
+  final String selected;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Text(
+          'Sort',
+          style: TextStyle(
+            color: AppTheme.textTertiary,
+            fontSize: 10,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(width: 8),
+        ...sorts.map(
+          (s) => Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: GestureDetector(
+              onTap: () => onSelected(s),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: s == selected
+                      ? AppTheme.accentSoft
+                      : AppTheme.darkGlassLight,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusCircular),
+                  border: Border.all(
+                    color:
+                        s == selected ? AppTheme.accent : AppTheme.glassBorder,
+                    width: s == selected ? 1.0 : 0.5,
+                  ),
+                ),
+                child: Text(
+                  s,
+                  style: TextStyle(
+                    color:
+                        s == selected ? AppTheme.accent : AppTheme.textTertiary,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _PresetCard extends StatelessWidget {
   const _PresetCard({
     required this.preset,
@@ -337,14 +433,46 @@ class _PresetCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 1),
-                  Text(
-                    '$category · ${preset.paintopId}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppTheme.textTertiary,
-                      fontSize: 9,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          category,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppTheme.textTertiary,
+                            fontSize: 9,
+                          ),
+                        ),
+                      ),
+                      // Paintop family badge (5-loop-42) — mirrors the
+                      // panel chip; hidden for presets without a
+                      // declared family.
+                      if (preset.paintopId.trim().isNotEmpty) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: AppTheme.accentSoft,
+                            borderRadius:
+                                BorderRadius.circular(AppTheme.radiusSmall),
+                          ),
+                          child: Text(
+                            preset.paintopId.trim(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppTheme.accent,
+                              fontSize: 8,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),
@@ -377,7 +505,8 @@ class _Thumbnail extends StatelessWidget {
     return Container(
       color: const Color(0xFF1A1A22),
       child: const Center(
-        child: Icon(Icons.brush_rounded, color: AppTheme.textTertiary, size: 28),
+        child:
+            Icon(Icons.brush_rounded, color: AppTheme.textTertiary, size: 28),
       ),
     );
   }
