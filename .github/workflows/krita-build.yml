@@ -622,10 +622,14 @@ jobs:
           ldd artifact/bin/smoke_test_real.exe 2>&1 | grep -i 'not found' || echo 'OK: no missing imports for smoke exe'
           echo '=== run smoke ==='
           # Preset fixtures from the app-repo clone (roadmap (f) gates).
-          FIXDIR=/tmp/fkr-app/test/fixtures
+          # The MSVC exe needs a WINDOWS path: git-bash does NOT translate
+          # POSIX args passed to native executables.
+          FIXDIR=$(cygpath -w /tmp/fkr-app/test/fixtures)
+          echo "fixture dir: $FIXDIR"
+          ls -la /tmp/fkr-app/test/fixtures/
           ./artifact/bin/smoke_test_real.exe \
-            $FIXDIR/stock_basic_5_size.kpp \
-            $FIXDIR/stock_eraser_circle.kpp
+            "$FIXDIR/stock_basic_5_size.kpp" \
+            "$FIXDIR/stock_eraser_circle.kpp"
 
       - name: Save dependency caches
         if: always()
