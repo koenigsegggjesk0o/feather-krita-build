@@ -1463,3 +1463,18 @@ Work Log:
 Stage Summary:
 - Flow + hardness are now USER-CONTROLLABLE end-to-end: real engine ABI (set_flow/set_hardness/get_flow/get_hardness, v0.25) <-> Dart bindings <-> EditorState <-> panel sliders. Preset load re-seeds both sliders (flow from preset XML, hardness from the engine's resolved brush). Opacity stays orthogonal (compositor-level) — no double application (flow lives inside dab alpha only, per the v0.25 smoke proof).
 - NEXT: commit+push -> rsync mirror -> dispatch build-app.yml (engine artifacts already green, no engine rebuild needed) -> on green release v0.26-flow-hardness-ux via release_v26.py (clone v25, TAG/NAME swap, APP_RUN_ID explicit) -> final beacon.
+
+---
+Task ID: 5-loop-40 (beacon 2 — FINAL: flow/hardness UX wiring CLOSED, v0.26 released)
+Agent: Z.ai Code (main, autonomous loop)
+Task: milestone lock — flow + hardness user-controllable from the editor
+
+Work Log:
+- GREEN CHAIN: build-app run 35499808554 @ 09694ae (mirror of app@1798b64) — ALL FIVE jobs SUCCESS (build-windows, build-windows-real-engine, build-android, build-android-real-engine, build-linux-real-engine). The Dart FFI flow/hardness gates passed against the CURRENT engine artifacts; the UX-wired app builds on all three platforms. This run was the push-triggered one, used directly per protocol since the engine was unchanged (no old-artifact race; manual dispatch would have been identical).
+- RELEASED v0.26-flow-hardness-ux (release id 392368638, tag on feather-krita-flutter @ 1798b64 via scripts/release_v26.py @ APP_RUN_ID 35499808554): 3 assets uploaded (201 x3) — linux real-engine zip 47.4MB, windows real-engine zip 40.1MB, android real-engine APK 115.0MB. Release scratch cleaned by script convention (out_dir under build/).
+- release_v26.py committed (v25 template clone; TAG/NAME/BODY swapped for the UX campaign; idempotency full-list check + auto-find + APP_RUN_ID override preserved).
+
+Stage Summary:
+- FLOW/HARDNESS UX CAMPAIGN COMPLETE: v0.25's live ABI is now exposed in the editor UI — Flow + Hardness sliders in the brush panel, preset-load re-seeding (flow from preset FlowValue, hardness from the engine's resolved brush), clamped setters with change notification, and a backward-compat guard so older bridge libraries degrade gracefully instead of crashing editor construction. 6 new unit tests; full suite green (except the 2 pre-existing keyboard_shortcuts parallelism flakes, re-verified 6/6 in isolation).
+- Loop-40 session totals: 2 UI/state files (+123 lines) + 1 new test file + refreshed tracked fallback .so (rebuilt from current portable source) + release script; 1 build-app run (5/5 green) + 1 release; krita source byte-identical upstream throughout.
+- NEXT-LOOP NOTES: (1) android emulator C++/Dart smoke (loop-36 note stands — arm64 .so device-ready, gates compiled but not executed on-device); (2) optional ABI nicety: expose paintop id via get_ so the UI can show which family a preset belongs to (panel could badge eraser/deform/etc.); (3) the 2 flaky keyboard_shortcuts timeouts under suite parallelism still deserve a dedicated look (reproduced again this loop, pass in isolation); (4) candidate UX polish: hardness slider currently has no per-paintop clamp — some Krita paintops (spray, sketch) ignore hardness; consider greying the slider out when the loaded preset's paintop has no hardness dimension.
