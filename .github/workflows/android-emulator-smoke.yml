@@ -162,6 +162,38 @@ jobs:
           # the unstripped original ships in the real-engine APK)
           "$TC/llvm-strip" "$STAGE/libkrita_bridge.so"
           echo "bridge after strip: $(stat -c %s "$STAGE/libkrita_bridge.so") bytes"
+          # ---- JVM-less boot shim: Krita's (unmodified)
+          # KisAndroidCrashHandler.cpp static init calls
+          # QStandardPaths::writableLocation, which on Android reaches for
+          # the JavaVM via JNI — absent in a shell executable -> SIGSEGV
+          # in the linker's call_constructors (run 35510837084,
+          # tombstone: _GLOBAL__sub_I_KisAndroidCrashHandler.cpp:35 ->
+          # QJNIEnvironmentPrivate -> null deref).
+          # Surgical fix, NO Krita/Qt changes: a 1-symbol shim that
+          # answers writableLocation with a real writable dir. The shim is
+          # put FIRST in the bridge's NEEDED order (replace Qt5Core with
+          # the shim, then re-append Qt5Core) so the bridge's UNDEF lookup
+          # resolves to the shim deterministically (local-group order).
+          cat > /tmp/qsp_shim.cpp <<'SHIMEOF'
+          // 16-bit literal; QChar is 2 bytes on Qt5 (char16_t-compatible)
+          static const char16_t kPath[] = u"/data/local/tmp/fkr";
+          extern "C" {
+          void _ZN7QStringC1EPK5QChari(void* self, const char16_t* s, int len);
+          // QStandardPaths::writableLocation(StandardLocation) -> QString
+          // (non-trivial return: hidden sret pointer is param 1)
+          void _ZN14QStandardPaths16writableLocationENS_16StandardLocationE(void* sret, int type) {
+              (void)type;
+              _ZN7QStringC1EPK5QChari(sret, kPath, 19);
+          }
+          }
+          SHIMEOF
+          "$TC/x86_64-linux-android24-clang++" -std=c++17 -O2 -fPIC -shared -nostdlib++ \
+            /tmp/qsp_shim.cpp -o "$STAGE/libqsp_shim.so" \
+            "-L$PWD/$STAGE" -lQt5Core_x86_64
+          test -s "$STAGE/libqsp_shim.so" || { echo '##[error] shim build failed'; exit 1; }
+          patchelf --replace-needed libQt5Core_x86_64.so libqsp_shim.so "$STAGE/libkrita_bridge.so"
+          patchelf --add-needed libQt5Core_x86_64.so "$STAGE/libkrita_bridge.so"
+          echo 'shim wired into bridge NEEDED order'
           # ---- dynamic-closure completion: the engine merge link
           # OVER-LINKS (the krita object closure references symbols from
           # libraries that never enter the NEEDED chain — e.g. QuaZip via
@@ -180,6 +212,7 @@ jobs:
             name=$(basename "$lib")
             [ "$name" = "libkrita_bridge.so" ] && continue
             [ "$name" = "libc++_shared.so" ] && continue
+            [ "$name" = "libqsp_shim.so" ] && continue
             if printf '%s\n' "$DYNOUT" | grep -qF "[$name]"; then continue; fi
             patchelf --add-needed "$name" "$STAGE/libkrita_bridge.so"
             echo "added DT_NEEDED: $name"
