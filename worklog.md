@@ -1529,3 +1529,18 @@ Work Log:
 Stage Summary:
 - The picker now exposes the paintop identity work end-to-end: family badges on every card and a Family grouping toggle — Krita-parity browsing backed by the same model data the engine ABI reports.
 - NEXT: commit+push -> mirror sync -> build-app dispatch (engine UNCHANGED this loop; push-triggered run usable directly per loop-40 precedent) -> release v0.28-brush-picker-families via release_v28.py (clone v27, TAG/NAME/BODY swap) -> final beacon.
+
+---
+Task ID: 5-loop-42 (beacon 2 — FINAL: picker family polish CLOSED, v0.28 released)
+Agent: Z.ai Code (main, autonomous loop)
+Task: milestone lock — paintop family visible across the whole editor UI
+
+Work Log:
+- GREEN CHAIN: build-app run 35503954005 @ aa4538f (mirror of app@c55c0fb) — ALL FIVE jobs SUCCESS. Engine unchanged this loop (pure Dart campaign), so the push-triggered run was used directly per the loop-40 precedent (no old-artifact race).
+- RELEASED v0.28-brush-picker-families (release id 392390820, tag on feather-krita-flutter @ c55c0fb via scripts/release_v28.py @ APP_RUN_ID 35503954005): 3 assets uploaded (201 x3) — linux real-engine zip 47.4MB, windows real-engine zip 40.1MB, android real-engine APK 115.1MB. release_v28.py tracked (v27 clone, BODY swapped).
+- Full suite at release time: 108/108 green under suite parallelism (the hardened keyboard_shortcuts windows held).
+
+Stage Summary:
+- PAINTOP FAMILY IS NOW VISIBLE EVERYWHERE: engine ABI (v0.27) -> panel badge + hardness gating (v0.27) -> picker badges + Family grouping (v0.28). The whole identity chain is smoke-gated and unit-tested.
+- Loop-42 session totals: 1 screen file (+~90 lines) + 1 new widget test file (3 tests) + 2 hardened test windows + release script; 1 build-app run (5/5) + 1 release; krita source byte-identical upstream.
+- NEXT-LOOP NOTES: (1) android emulator C++/Dart smoke (loop-36 note stands); (2) keyboard_shortcuts flake root cause still open (hardening in place; a dedicated session could bisect with --concurrency=1 or instrument the runner); (3) ABI nicety from loop-41 note #4 remains: krita_brush_list_available_presets could return families too (grouped picker driven by the ENGINE rather than the Dart parse — useful if user folders hold presets the Dart parser mis-handles); (4) candidate: remembered sort preference (persist the Name/Family choice with the color-history mechanism).
