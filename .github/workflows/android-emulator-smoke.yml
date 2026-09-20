@@ -74,14 +74,10 @@ jobs:
         run: |
           set -euo pipefail
           AUTH="Authorization: token ${TOKEN}"
-          AID=$(curl -sf -H "$AUTH" \
-            "https://api.github.com/repos/${REPO}/actions/runs/${{ steps.resolve.outputs.run_id }}/artifacts" \
-            | python3 -c '
-              import sys, json
-              arts = json.load(sys.stdin)["artifacts"]
-              m = [a for a in arts if a["name"] == "krita-brush-engine-android-x86_64"]
-              assert m, "artifact krita-brush-engine-android-x86_64 not found on engine run"
-              print(m[0]["id"])')
+          # NOTE: keep the python one-liner on ONE line — a multi-line -c
+          # source inherits the YAML block indent and dies with
+          # IndentationError (found by bring-up run 35505669591).
+          AID=$(curl -sf -H "$AUTH" "https://api.github.com/repos/${REPO}/actions/runs/${{ steps.resolve.outputs.run_id }}/artifacts" | python3 -c 'import sys,json; arts=json.load(sys.stdin)["artifacts"]; m=[a for a in arts if a["name"]=="krita-brush-engine-android-x86_64"]; assert m, "artifact krita-brush-engine-android-x86_64 not found on engine run"; print(m[0]["id"])')
           echo "artifact id: $AID"
           curl -sfL -H "$AUTH" -o engine.zip \
             "https://api.github.com/repos/${REPO}/actions/artifacts/$AID/zip"
@@ -220,7 +216,15 @@ jobs:
       - name: Diagnostics (on failure)
         if: failure()
         run: |
+          # adb BLOCKS forever when no device is attached (e.g. failure
+          # before boot) — guard every adb call with get-state + timeout
+          # (found by bring-up run 35505669591: logcat -d hung ~6 min).
           ADB="$SDK_ROOT/platform-tools/adb"
+          if timeout 10 "$ADB" get-state >/dev/null 2>&1; then
+            LOGCAT=$(timeout 20 "$ADB" logcat -d 2>/dev/null | grep -E 'DEBUG|Fatal|CRASH|linker' | tail -80 || true)
+          else
+            LOGCAT='(no device attached)'
+          fi
           {
             echo '--- device identity'
             cat /tmp/device_identity.txt 2>/dev/null || true
@@ -229,7 +233,7 @@ jobs:
             echo '--- emulator log tail'
             tail -60 /tmp/emulator.log 2>/dev/null || true
             echo '--- logcat crash tail'
-            "$ADB" logcat -d 2>/dev/null | grep -E 'DEBUG|Fatal|CRASH|linker' | tail -80 || true
+            printf '%s\n' "$LOGCAT"
           } > diag.txt || true
           cat diag.txt || true
           mkdir -p diagout
