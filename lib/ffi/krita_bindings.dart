@@ -269,6 +269,16 @@ typedef _KritaBrushSetSmudgeNative = Void Function(
 typedef _KritaBrushSetSmudgeDart = void Function(
     Pointer<Void> handle, double smudge);
 
+typedef _KritaBrushSetFlowNative = Void Function(
+    Pointer<Void> handle, Double flow);
+typedef _KritaBrushSetFlowDart = void Function(
+    Pointer<Void> handle, double flow);
+
+typedef _KritaBrushSetHardnessNative = Void Function(
+    Pointer<Void> handle, Double hardness);
+typedef _KritaBrushSetHardnessDart = void Function(
+    Pointer<Void> handle, double hardness);
+
 typedef _KritaBrushGenerateDabNative = Bool Function(Pointer<Void> handle,
     Pointer<BrushInputNative> input, Pointer<BrushDabNative> outDab);
 typedef _KritaBrushGenerateDabDart = bool Function(Pointer<Void> handle,
@@ -296,6 +306,9 @@ typedef _KritaBrushGetSpacingDart = double Function(Pointer<Void> handle);
 
 typedef _KritaBrushGetHardnessNative = Double Function(Pointer<Void> handle);
 typedef _KritaBrushGetHardnessDart = double Function(Pointer<Void> handle);
+
+typedef _KritaBrushGetFlowNative = Double Function(Pointer<Void> handle);
+typedef _KritaBrushGetFlowDart = double Function(Pointer<Void> handle);
 
 typedef _KritaBrushGetEraserNative = Bool Function(Pointer<Void> handle);
 typedef _KritaBrushGetEraserDart = bool Function(Pointer<Void> handle);
@@ -426,6 +439,12 @@ class KritaBrushEngine {
   late final _KritaBrushSetSmudgeDart _setSmudge = _lib
       .lookupFunction<_KritaBrushSetSmudgeNative, _KritaBrushSetSmudgeDart>(
           'krita_brush_set_smudge');
+  late final _KritaBrushSetFlowDart _setFlow = _lib
+      .lookupFunction<_KritaBrushSetFlowNative, _KritaBrushSetFlowDart>(
+          'krita_brush_set_flow');
+  late final _KritaBrushSetHardnessDart _setHardness = _lib
+      .lookupFunction<_KritaBrushSetHardnessNative, _KritaBrushSetHardnessDart>(
+          'krita_brush_set_hardness');
   late final _KritaBrushGenerateDabDart _generateDab = _lib.lookupFunction<
       _KritaBrushGenerateDabNative,
       _KritaBrushGenerateDabDart>('krita_brush_generate_dab');
@@ -470,6 +489,9 @@ class KritaBrushEngine {
   late final _KritaBrushGetHardnessDart _getHardness =
       _lib.lookupFunction<_KritaBrushGetHardnessNative, _KritaBrushGetHardnessDart>(
           'krita_brush_get_hardness');
+  late final _KritaBrushGetFlowDart _getFlow =
+      _lib.lookupFunction<_KritaBrushGetFlowNative, _KritaBrushGetFlowDart>(
+          'krita_brush_get_flow');
   late final _KritaBrushGetEraserDart _getEraser =
       _lib.lookupFunction<_KritaBrushGetEraserNative, _KritaBrushGetEraserDart>(
           'krita_brush_get_eraser');
@@ -499,6 +521,15 @@ class KritaBrushEngine {
   double get currentHardness {
     _checkAlive();
     return _getHardness(_handle);
+  }
+
+  /// The flow (per-dab application rate) currently set on the native
+  /// engine, in [0, 1] (default 1.0). Reflects either a [flow] setter
+  /// call or a preset's FlowValue sensor base. Flow < 1 scales each
+  /// dab's alpha so paint builds up gradually over multiple stamps.
+  double get currentFlow {
+    _checkAlive();
+    return _getFlow(_handle);
   }
 
   /// Whether the loaded preset is an eraser preset (settings-level
@@ -545,6 +576,23 @@ class KritaBrushEngine {
   set smudge(double value) {
     _checkAlive();
     _setSmudge(_handle, value.clamp(0.0, 1.0));
+  }
+
+  /// Sets the brush flow (per-dab application rate) in range [0, 1].
+  /// Flow < 1 scales each dab's alpha so paint builds up gradually over
+  /// multiple stamps. Distinct from [opacity] (the master multiplier
+  /// applied by the host compositor).
+  set flow(double value) {
+    _checkAlive();
+    _setFlow(_handle, value.clamp(0.0, 1.0));
+  }
+
+  /// Sets the brush hardness in range [0, 1] (0 = fully soft gaussian
+  /// falloff, 1 = hard-edged disk). On the real engine this rebuilds
+  /// the mask generator's fade.
+  set hardness(double value) {
+    _checkAlive();
+    _setHardness(_handle, value.clamp(0.0, 1.0));
   }
 
   /// Generates a single dab image for the given input.

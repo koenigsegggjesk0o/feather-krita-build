@@ -193,6 +193,7 @@ struct PresetParams {
     bool   eraser = false;
     bool   smudge = false;
     double smudgeRatio = 0;
+    double flow = -1.0; // sentinel: -1 = unset (0 is a valid flow value)
 };
 
 PresetParams parsePresetXml(const QByteArray& xml) {
@@ -220,6 +221,7 @@ PresetParams parsePresetXml(const QByteArray& xml) {
             else if (key == "eraser" || key == "erase_mode") p.eraser = (v > 0.5);
             else if (key == "smudge" || key == "smudge_mode") p.smudge = (v > 0.5);
             else if (key == "smudge_ratio" || key == "smudge_amount") p.smudgeRatio = v;
+            else if (key == "FlowValue" || key == "flow") p.flow = v;
         }
     }
     return p;
@@ -259,7 +261,7 @@ namespace {
 // The dab is a radial gradient: solid color from 0..(hardness*radius),
 // then linear falloff to transparent at radius. Pressure scales both
 // the effective radius and the alpha.
-QImage makeDab(double radius, double hardness, double pressure,
+QImage makeDab(double radius, double hardness, double pressure, double flow,
                uint32_t argb, bool eraser) {
     const int r = std::max(1, int(std::ceil(radius)));
     const int d = r * 2;
@@ -272,6 +274,9 @@ QImage makeDab(double radius, double hardness, double pressure,
     const double cb = (argb & 0xFF) / 255.0;
     const double solidR = radius * hardness;
     const double falloff = radius - solidR;
+    // Per-dab alpha scale: pressure (stylus) * flow (application rate).
+    // Opacity is the master multiplier left to the host compositor.
+    const double dabScale = pressure * flow;
 
     QPainter p(&img);
     p.setRenderHint(QPainter::Antialiasing, false);
@@ -279,15 +284,15 @@ QImage makeDab(double radius, double hardness, double pressure,
 
     // Use a radial gradient for the dab.
     QRadialGradient grad(QPointF(r, r), radius);
-    const QColor col(int(cr * 255), int(cg * 255), int(cb * 255), int(a * 255 * pressure));
+    const QColor col(int(cr * 255), int(cg * 255), int(cb * 255), int(a * 255 * dabScale));
     if (eraser) {
         // Eraser: return a BLACK-ALPHA MASK dab. The Dart compositor applies
         // it with BlendMode.erase (destination-out), using the dab's alpha as
         // the erase strength. NOTE: painting with CompositionMode_DestinationOut
         // onto this transparent image would be a no-op (dest alpha 0 stays 0),
         // so we must paint the mask with the default SourceOver mode.
-        grad.setColorAt(0.0, QColor(0, 0, 0, int(255 * pressure)));
-        grad.setColorAt(std::min(1.0, hardness), QColor(0, 0, 0, int(255 * pressure)));
+        grad.setColorAt(0.0, QColor(0, 0, 0, int(255 * dabScale)));
+        grad.setColorAt(std::min(1.0, hardness), QColor(0, 0, 0, int(255 * dabScale)));
         grad.setColorAt(1.0, QColor(0, 0, 0, 0));
     } else {
         grad.setColorAt(0.0, col);
@@ -376,6 +381,7 @@ int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path) {
         if (p.hardness > 0) handle->hardness = p.hardness;
         if (p.eraser) handle->eraser = true;
         if (p.smudge) handle->smudge = p.smudgeRatio;
+        if (p.flow >= 0.0) handle->flow = p.flow;
     }
     return 0;
 }
@@ -405,6 +411,16 @@ void krita_brush_set_smudge(KritaBrushContext* handle, double smudge) {
     handle->smudge = smudge < 0.0 ? 0.0 : (smudge > 1.0 ? 1.0 : smudge);
 }
 
+void krita_brush_set_flow(KritaBrushContext* handle, double flow) {
+    if (!handle) return;
+    handle->flow = flow < 0.0 ? 0.0 : (flow > 1.0 ? 1.0 : flow);
+}
+
+void krita_brush_set_hardness(KritaBrushContext* handle, double hardness) {
+    if (!handle) return;
+    handle->hardness = hardness < 0.0 ? 0.0 : (hardness > 1.0 ? 1.0 : hardness);
+}
+
 // ---------------------------------------------------------------------------
 // Parameter getters — let the app reflect loaded preset values into its UI.
 // ---------------------------------------------------------------------------
@@ -422,6 +438,9 @@ double krita_brush_get_hardness(KritaBrushContext* handle) {
 }
 double krita_brush_get_smudge(KritaBrushContext* handle) {
     return handle ? handle->smudge : 0.0;
+}
+double krita_brush_get_flow(KritaBrushContext* handle) {
+    return handle ? handle->flow : 0.0;
 }
 bool krita_brush_get_eraser(KritaBrushContext* handle) {
     return handle ? handle->eraser : false;
@@ -456,7 +475,7 @@ bool krita_brush_generate_dab(KritaBrushContext* handle,
         return false;
     }
 
-    QImage dab = makeDab(effRadius, handle->hardness, pressure,
+    QImage dab = makeDab(effRadius, handle->hardness, pressure, handle->flow,
                          handle->color, eraser);
     if (dab.isNull()) {
         handle->setError("failed to render dab");

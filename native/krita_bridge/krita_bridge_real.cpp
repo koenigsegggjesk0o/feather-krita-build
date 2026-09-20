@@ -280,6 +280,7 @@ struct KritaBrushContext {
     // ABI parameters (mirrors the fallback bridge defaults).
     double size = 16.0;
     double opacity = 1.0;
+    double flow = 1.0;      // per-dab application rate (FlowValue sensor base)
     double hardness = 0.85;
     double spacing = 0.15;
     double smudge = 0.0;
@@ -637,6 +638,17 @@ int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path) {
         if (ok && v >= 0.0 && v <= 1.0) handle->smudge = v;
     }
 
+    // Flow: the paintop FlowValue sensor base (0-1). Krita's paintbrush /
+    // airbrush / colorsmudge families write it; presets that omit it keep
+    // the default 1.0 (full application per dab). Distinct from the master
+    // opacity (Krita/opacity) which is left to the host compositor.
+    {
+        bool ok = false;
+        const double v = toDouble(lookup(QStringList() << "FlowValue"
+                                                      << "flow"), &ok);
+        if (ok && v >= 0.0 && v <= 1.0) handle->flow = v;
+    }
+
     // Eraser mode. Krita marks eraser presets in three ways (stock files
     // use CompositeOp=erase; the settings checkbox writes Krita/erase or
     // EraserMode; legacy shapes use a flat eraser param).
@@ -690,6 +702,24 @@ void krita_brush_set_smudge(KritaBrushContext* handle, double smudge) {
     handle->smudge = smudge < 0.0 ? 0.0 : (smudge > 1.0 ? 1.0 : smudge);
 }
 
+void krita_brush_set_flow(KritaBrushContext* handle, double flow) {
+    if (!handle) return;
+    handle->flow = flow < 0.0 ? 0.0 : (flow > 1.0 ? 1.0 : flow);
+    // Flow is a per-dab alpha scale applied in generate_dab — no brush
+    // rebuild needed (the mask generator shape is unchanged).
+}
+
+void krita_brush_set_hardness(KritaBrushContext* handle, double hardness) {
+    if (!handle) return;
+    const double h = hardness < 0.0 ? 0.0 : (hardness > 1.0 ? 1.0 : hardness);
+    handle->hardness = h;
+    // Hardness lives in the mask generator's fade (1 - hardness). There is
+    // no KisDabShape equivalent for fade, so rebuild the tip always — an
+    // explicit hardness override supersedes any preset-loaded brush
+    // (mirrors the loop-37 self-heal rebuild path).
+    if (ensureEngine(handle)) rebuildAutoBrush(handle);
+}
+
 double krita_brush_get_size(KritaBrushContext* handle) {
     return handle ? handle->size : 0.0;
 }
@@ -708,6 +738,10 @@ double krita_brush_get_hardness(KritaBrushContext* handle) {
 
 double krita_brush_get_smudge(KritaBrushContext* handle) {
     return handle ? handle->smudge : 0.0;
+}
+
+double krita_brush_get_flow(KritaBrushContext* handle) {
+    return handle ? handle->flow : 0.0;
 }
 
 bool krita_brush_get_eraser(KritaBrushContext* handle) {
@@ -800,8 +834,10 @@ bool krita_brush_generate_dab(KritaBrushContext* handle,
             out[1] = px[gIdx];
             out[2] = px[bIdx];
             const uint8_t alpha = (aIdx >= 0) ? px[aIdx] : 255;
-            // ABI pressure scaling on the alpha channel.
-            const int a = int(std::lround(double(alpha) * pressure));
+            // ABI per-dab alpha scaling: pressure (stylus) * flow (per-dab
+            // application rate). Opacity is the master multiplier left to
+            // the host compositor (KisPainter layer in desktop Krita).
+            const int a = int(std::lround(double(alpha) * pressure * handle->flow));
             out[3] = uint8_t(a > 255 ? 255 : a);
             out += 4;
         }

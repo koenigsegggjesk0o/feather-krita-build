@@ -207,6 +207,94 @@ int main(int argc, char** argv) {
         krita_brush_destroy(p);
     }
 
+    // ------------------------------------------------------------------
+    // Flow + hardness ABI gates (flow/hardness campaign).
+    //
+    // set_flow: per-dab alpha scale. flow=0.5 must roughly halve the dab
+    // center alpha vs flow=1.0 at the same pressure/size/hardness.
+    // set_hardness: rebuilds the mask generator. hardness=1.0 = hard disk
+    // (flat top, sharp edge); hardness=0.0 = gaussian falloff (edge < center).
+    // get_flow / get_hardness round-trip their setters.
+    // ------------------------------------------------------------------
+    {
+        // Neutralize the main context for the flow/hardness comparison.
+        krita_brush_set_size(b, 64.0);
+        krita_brush_set_color(b, 0xFF000000u);
+        krita_brush_set_hardness(b, 0.85);
+        krita_brush_set_flow(b, 1.0);
+
+        BrushInput fin;
+        std::memset(&fin, 0, sizeof(fin));
+        fin.pressure = 1.0;
+
+        // --- Flow: full vs half ---
+        BrushDab fd1;
+        std::memset(&fd1, 0, sizeof(fd1));
+        CHECK(krita_brush_generate_dab(b, &fin, &fd1), "flow=1.0 dab generated");
+        int alphaFull = 0;
+        if (fd1.pixels) {
+            const uint8_t* c = fd1.pixels + (fd1.height / 2) * fd1.stride + (fd1.width / 2) * 4;
+            alphaFull = c[3];
+            krita_brush_release_dab(b, &fd1);
+        }
+
+        krita_brush_set_flow(b, 0.5);
+        CHECK(std::fabs(krita_brush_get_flow(b) - 0.5) < 1e-9,
+              "get_flow round-trips set_flow(0.5)");
+        BrushDab fd2;
+        std::memset(&fd2, 0, sizeof(fd2));
+        CHECK(krita_brush_generate_dab(b, &fin, &fd2), "flow=0.5 dab generated");
+        if (fd2.pixels) {
+            const uint8_t* c = fd2.pixels + (fd2.height / 2) * fd2.stride + (fd2.width / 2) * 4;
+            const int alphaHalf = c[3];
+            std::printf("  flow alpha: full=%d half=%d\n", alphaFull, alphaHalf);
+            CHECK(alphaHalf < alphaFull, "flow=0.5 reduces dab alpha vs flow=1.0");
+            CHECK(alphaHalf <= int(alphaFull * 0.60) && alphaHalf >= int(alphaFull * 0.40),
+                  "flow=0.5 roughly halves dab alpha (within 40-60%%)");
+            krita_brush_release_dab(b, &fd2);
+        }
+
+        // --- Hardness: hard vs soft edge ---
+        krita_brush_set_flow(b, 1.0); // neutralize flow for hardness compare
+
+        krita_brush_set_hardness(b, 1.0);
+        CHECK(std::fabs(krita_brush_get_hardness(b) - 1.0) < 1e-9,
+              "get_hardness round-trips set_hardness(1.0)");
+        BrushDab hd;
+        std::memset(&hd, 0, sizeof(hd));
+        CHECK(krita_brush_generate_dab(b, &fin, &hd), "hard-edge dab generated");
+        int hardEdge = 0;
+        if (hd.pixels) {
+            const uint8_t* cc = hd.pixels + (hd.height / 2) * hd.stride + (hd.width / 2) * 4;
+            const int ex = hd.width / 2 + int(hd.width * 0.30);
+            const int ey = hd.height / 2 + int(hd.height * 0.30);
+            const uint8_t* ec = hd.pixels + ey * hd.stride + ex * 4;
+            hardEdge = ec[3];
+            std::printf("  hard: center=%d edge(0.6r)=%d\n", cc[3], hardEdge);
+            krita_brush_release_dab(b, &hd);
+        }
+
+        krita_brush_set_hardness(b, 0.0);
+        CHECK(std::fabs(krita_brush_get_hardness(b)) < 1e-9,
+              "get_hardness round-trips set_hardness(0.0)");
+        BrushDab sd;
+        std::memset(&sd, 0, sizeof(sd));
+        CHECK(krita_brush_generate_dab(b, &fin, &sd), "soft-edge dab generated");
+        if (sd.pixels) {
+            const uint8_t* cc = sd.pixels + (sd.height / 2) * sd.stride + (sd.width / 2) * 4;
+            const int ex = sd.width / 2 + int(sd.width * 0.30);
+            const int ey = sd.height / 2 + int(sd.height * 0.30);
+            const uint8_t* ec = sd.pixels + ey * sd.stride + ex * 4;
+            const int softCenter = cc[3];
+            const int softEdge = ec[3];
+            std::printf("  soft: center=%d edge(0.6r)=%d\n", softCenter, softEdge);
+            CHECK(softCenter >= 200, "soft center still strong (gaussian peak)");
+            CHECK(softEdge < softCenter, "soft edge < soft center (falloff present)");
+            CHECK(hardEdge >= softEdge, "hard edge >= soft edge at same offset");
+            krita_brush_release_dab(b, &sd);
+        }
+    }
+
     krita_brush_destroy(b);
 
     if (g_failures == 0) {

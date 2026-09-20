@@ -169,6 +169,81 @@ void main(List<String> args) {
     p2.dispose();
   }
 
+  // ------------------------------------------------------------------
+  // Flow + hardness ABI gates (flow/hardness campaign) via Dart FFI.
+  //
+  // Mirrors the C++ smoke (smoke_test_real.cpp) flow/hardness section,
+  // proving the values cross the app's own Dart FFI bindings.
+  // ------------------------------------------------------------------
+  // Neutralize the engine for the flow/hardness comparison.
+  engine.size = 64;
+  engine.color = const BrushColor(0, 0, 0);
+  engine.hardness = 0.85;
+  engine.flow = 1.0;
+
+  // --- Flow: full vs half ---
+  final fd1 =
+      engine.generateDab(const BrushInput(x: 0, y: 0, pressure: 1.0));
+  int alphaFull = 0;
+  if (fd1.pixels.isNotEmpty) {
+    final i = _centerPixelIndex(fd1.width, fd1.height, fd1.stride);
+    alphaFull = fd1.pixels[i + 3];
+  }
+
+  engine.flow = 0.5;
+  _check((engine.currentFlow - 0.5).abs() < 1e-9,
+      'currentFlow round-trips set flow(0.5)');
+  final fd2 =
+      engine.generateDab(const BrushInput(x: 0, y: 0, pressure: 1.0));
+  if (fd2.pixels.isNotEmpty) {
+    final i = _centerPixelIndex(fd2.width, fd2.height, fd2.stride);
+    final alphaHalf = fd2.pixels[i + 3];
+    stdout.writeln('  flow alpha: full=$alphaFull half=$alphaHalf');
+    _check(alphaHalf < alphaFull, 'flow=0.5 reduces dab alpha vs flow=1.0');
+    _check(
+        alphaHalf <= (alphaFull * 0.60).round() &&
+            alphaHalf >= (alphaFull * 0.40).round(),
+        'flow=0.5 roughly halves dab alpha (within 40-60%)');
+  } else {
+    _check(false, 'flow=0.5 dab generated');
+  }
+
+  // --- Hardness: hard vs soft edge ---
+  engine.flow = 1.0; // neutralize flow for hardness compare
+
+  engine.hardness = 1.0;
+  _check((engine.currentHardness - 1.0).abs() < 1e-9,
+      'currentHardness round-trips set hardness(1.0)');
+  final hd =
+      engine.generateDab(const BrushInput(x: 0, y: 0, pressure: 1.0));
+  int hardEdge = 0;
+  if (hd.pixels.isNotEmpty) {
+    final ex = (hd.width ~/ 2) + (hd.width * 0.30).round();
+    final ey = (hd.height ~/ 2) + (hd.height * 0.30).round();
+    final s = hd.stride > 0 ? hd.stride : hd.width * 4;
+    hardEdge = hd.pixels[ey * s + ex * 4 + 3];
+  }
+
+  engine.hardness = 0.0;
+  _check(engine.currentHardness.abs() < 1e-9,
+      'currentHardness round-trips set hardness(0.0)');
+  final sd =
+      engine.generateDab(const BrushInput(x: 0, y: 0, pressure: 1.0));
+  if (sd.pixels.isNotEmpty) {
+    final ci = _centerPixelIndex(sd.width, sd.height, sd.stride);
+    final softCenter = sd.pixels[ci + 3];
+    final ex = (sd.width ~/ 2) + (sd.width * 0.30).round();
+    final ey = (sd.height ~/ 2) + (sd.height * 0.30).round();
+    final s = sd.stride > 0 ? sd.stride : sd.width * 4;
+    final softEdge = sd.pixels[ey * s + ex * 4 + 3];
+    stdout.writeln('  soft: center=$softCenter edge(0.6r)=$softEdge');
+    _check(softCenter >= 200, 'soft center still strong (gaussian peak)');
+    _check(softEdge < softCenter, 'soft edge < soft center (falloff present)');
+    _check(hardEdge >= softEdge, 'hard edge >= soft edge at same offset');
+  } else {
+    _check(false, 'soft-edge dab generated');
+  }
+
   engine.dispose();
 
   if (_failures == 0) {

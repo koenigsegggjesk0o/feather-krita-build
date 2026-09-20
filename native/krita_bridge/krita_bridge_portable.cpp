@@ -251,6 +251,7 @@ struct PresetParams {
     bool eraser = false;
     bool smudge = false;
     double smudgeRatio = 0;
+    double flow = -1.0; // sentinel: -1 = unset (0 is a valid flow value)
 
     bool hasAny() const {
         return size > 0 || opacity > 0 || spacing > 0 || hardness > 0;
@@ -272,6 +273,7 @@ PresetParams parsePresetXml(const std::vector<uint8_t>& xmlBytes) {
         else if (key == "eraser" || key == "erase_mode") p.eraser = pair.eraserFlag;
         else if (key == "smudge" || key == "smudge_mode") p.smudge = pair.eraserFlag;
         else if (key == "smudge_ratio" || key == "smudge_amount") p.smudgeRatio = v;
+        else if (key == "FlowValue" || key == "flow") p.flow = v;
     }
     return p;
 }
@@ -308,7 +310,7 @@ namespace {
 // radial gradient, solid color up to `hardness`, linear falloff to 0 at the
 // edge; premultiplication happens in the caller (output here is RGBA8888,
 // i.e. NON-premultiplied, matching the Qt build's Format_RGBA8888 output).
-bool makeDab(double radius, double hardness, double pressure,
+bool makeDab(double radius, double hardness, double pressure, double flow,
              uint32_t argb, bool eraser,
              int* outW, int* outH, int* outStride, uint8_t** outPixels) {
     const int r = std::max(1, static_cast<int>(std::ceil(radius)));
@@ -318,7 +320,9 @@ bool makeDab(double radius, double hardness, double pressure,
     const double cr = ((argb >> 16) & 0xFF) / 255.0;
     const double cg = ((argb >> 8) & 0xFF) / 255.0;
     const double cb = (argb & 0xFF) / 255.0;
-    const int solidA = std::min(255, static_cast<int>(a * 255.0 * pressure + 0.5));
+    // Per-dab alpha scale: pressure (stylus) * flow (application rate).
+    // Opacity is the master multiplier left to the host compositor.
+    const int solidA = std::min(255, static_cast<int>(a * 255.0 * pressure * flow + 0.5));
     const double stop = std::min(1.0, hardness);
 
     std::vector<uint8_t> px(size_t(d) * size_t(d) * 4, 0);
@@ -345,7 +349,7 @@ bool makeDab(double radius, double hardness, double pressure,
                 px[i + 1] = 0;
                 px[i + 2] = 0;
                 px[i + 3] = static_cast<uint8_t>(
-                    std::min(255.0, 255.0 * pressure * mask + 0.5));
+                    std::min(255.0, 255.0 * pressure * flow * mask + 0.5));
             } else {
                 px[i] = static_cast<uint8_t>(std::min(255.0, cr * 255.0 + 0.5));
                 px[i + 1] = static_cast<uint8_t>(std::min(255.0, cg * 255.0 + 0.5));
@@ -430,6 +434,7 @@ PORTABLE_API int32_t krita_brush_load_preset(KritaBrushContext* handle,
         if (p.hardness > 0) handle->hardness = p.hardness;
         if (p.eraser) handle->eraser = true;
         if (p.smudge) handle->smudge = p.smudgeRatio;
+        if (p.flow >= 0.0) handle->flow = p.flow;
     }
     return 0;
 }
@@ -459,6 +464,16 @@ PORTABLE_API void krita_brush_set_smudge(KritaBrushContext* handle, double smudg
     handle->smudge = smudge < 0.0 ? 0.0 : (smudge > 1.0 ? 1.0 : smudge);
 }
 
+PORTABLE_API void krita_brush_set_flow(KritaBrushContext* handle, double flow) {
+    if (!handle) return;
+    handle->flow = flow < 0.0 ? 0.0 : (flow > 1.0 ? 1.0 : flow);
+}
+
+PORTABLE_API void krita_brush_set_hardness(KritaBrushContext* handle, double hardness) {
+    if (!handle) return;
+    handle->hardness = hardness < 0.0 ? 0.0 : (hardness > 1.0 ? 1.0 : hardness);
+}
+
 double krita_brush_get_size(KritaBrushContext* handle) {
     return handle ? handle->size : 0.0;
 }
@@ -473,6 +488,9 @@ double krita_brush_get_hardness(KritaBrushContext* handle) {
 }
 double krita_brush_get_smudge(KritaBrushContext* handle) {
     return handle ? handle->smudge : 0.0;
+}
+double krita_brush_get_flow(KritaBrushContext* handle) {
+    return handle ? handle->flow : 0.0;
 }
 bool krita_brush_get_eraser(KritaBrushContext* handle) {
     return handle ? handle->eraser : false;
@@ -509,7 +527,7 @@ PORTABLE_API bool krita_brush_generate_dab(KritaBrushContext* handle,
 
     int w = 0, h = 0, stride = 0;
     uint8_t* pixels = nullptr;
-    if (!makeDab(effRadius, handle->hardness, pressure, handle->color, eraser,
+    if (!makeDab(effRadius, handle->hardness, pressure, handle->flow, handle->color, eraser,
                  &w, &h, &stride, &pixels)) {
         handle->setError("failed to render dab");
         return false;

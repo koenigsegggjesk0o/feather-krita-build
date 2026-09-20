@@ -143,6 +143,23 @@ KRITA_BRIDGE_API void krita_brush_set_spacing(KritaBrushContext* handle, double 
 /// Sets the smudge ratio in [0, 1].
 KRITA_BRIDGE_API void krita_brush_set_smudge(KritaBrushContext* handle, double smudge);
 
+/// Sets the brush flow (per-dab application rate) in [0, 1]. Flow < 1
+/// scales each dab's alpha so paint builds up gradually over multiple
+/// stamps (semantically the paintop FlowValue sensor base). Default 1.0
+/// = full application per dab. Applied alongside pressure in
+/// [krita_brush_generate_dab]; opacity is the master multiplier left to
+/// the host compositor (KisPainter layer in desktop Krita).
+/// Added by the flow/hardness ABI campaign; back-compat: new function.
+KRITA_BRIDGE_API void krita_brush_set_flow(KritaBrushContext* handle, double flow);
+
+/// Sets the brush hardness in [0, 1] (0 = fully soft gaussian falloff,
+/// 1 = hard-edged disk). For auto brushes this rebuilds the mask
+/// generator's fade (1 - hardness); for preset-loaded brushes the tip is
+/// rebuilt as a real KisAutoBrush from the current diameter + new fade
+/// (an explicit hardness override supersedes the preset tip, mirroring
+/// the loop-37 self-heal path). Added by the flow/hardness ABI campaign.
+KRITA_BRIDGE_API void krita_brush_set_hardness(KritaBrushContext* handle, double hardness);
+
 // ---------------------------------------------------------------------------
 // Parameter getters — let the app reflect loaded preset values into its UI.
 // ---------------------------------------------------------------------------
@@ -151,6 +168,10 @@ KRITA_BRIDGE_API double krita_brush_get_opacity(KritaBrushContext* handle);
 KRITA_BRIDGE_API double krita_brush_get_spacing(KritaBrushContext* handle);
 KRITA_BRIDGE_API double krita_brush_get_hardness(KritaBrushContext* handle);
 KRITA_BRIDGE_API double krita_brush_get_smudge(KritaBrushContext* handle);
+/// Returns the current flow in [0, 1] (default 1.0). Reflects either a
+/// [krita_brush_set_flow] call or a preset's FlowValue sensor base.
+/// Added by the flow/hardness ABI campaign; back-compat: new function.
+KRITA_BRIDGE_API double krita_brush_get_flow(KritaBrushContext* handle);
 /// True when the loaded preset is an eraser preset (settings-level
 /// Krita/erase, EraserMode or CompositeOp=erase). Callers should switch
 /// their stroke compositing to destination-out. Added by roadmap (f);

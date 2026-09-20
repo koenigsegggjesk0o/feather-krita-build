@@ -179,6 +179,20 @@ class BrushPreset {
     return paintop == 'eraser' || paintop == 'erase';
   }
 
+  /// The preset's flow (per-dab application rate) in [0, 1], default 1.0.
+  ///
+  /// Mirrors the native bridge's FlowValue mapping (krita_bridge_real.cpp
+  /// reads the paintop FlowValue sensor base, falling back to 1.0 when the
+  /// preset omits it). Pure Dart — no native engine required; used by the
+  /// editor to seed the flow slider when a preset loads and by tests.
+  double get flowValue {
+    final v = settings['FlowValue'] ?? settings['flow'];
+    if (v == null) return 1.0;
+    final scalar = v.asScalar;
+    if (scalar == null || scalar < 0.0 || scalar > 1.0) return 1.0;
+    return scalar;
+  }
+
   /// Sets a scalar setting, replacing any existing value.
   void setScalar(String name, double value,
       {double min = 0.0, double max = 1.0, String description = ''}) {
