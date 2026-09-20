@@ -8,9 +8,13 @@
 //   - Searchable grid of preset cards (thumbnail + name + category).
 //   - Category filter chips: Basic, Dry Media, Wet Media, Markers, Erasers,
 //     Custom.
-//   - Sort toggle (5-loop-42): Name (library order) or Family — family
-//     sort groups every preset of the same paintop together (Krita-parity
-//     browsing; each card also carries the paintop family badge).
+//   - Sort toggle (5-loop-42): Name (library order) or Family.
+//   - Family-grouped browsing (5-loop-48): with the Family sort active
+//     the grid becomes SECTIONS — one per engine-declared paintop family
+//     ([BrushPreset.paintopId], upgraded with the real engine's
+//     scan-ABI families by EditorState.loadPresetLibrary) — each with a
+//     "family · count" header, alphabetical, undeclared last.
+//     Each card also carries the paintop family badge (5-loop-42).
 //   - Import .kpp button (delegates to [onImport]).
 //   - Selecting a preset calls [onPick] and closes the sheet.
 
@@ -60,31 +64,10 @@ class _BrushPickerScreenState extends State<BrushPickerScreen> {
     'Custom',
   ];
 
-  /// Map a preset's [BrushPreset.category] / paintop to one of our
-  /// top-level categories.
-  String _classify(BrushPreset p) {
-    final name = '${p.category} ${p.paintopId} ${p.name}'.toLowerCase();
-    if (name.contains('eraser') || name.contains('erase')) return 'Erasers';
-    if (name.contains('pencil') ||
-        name.contains('chalk') ||
-        name.contains('charcoal') ||
-        name.contains('pastel')) return 'Dry Media';
-    if (name.contains('water') ||
-        name.contains('wet') ||
-        name.contains('ink') ||
-        name.contains('smudge') ||
-        name.contains('colorsmudge')) return 'Wet Media';
-    if (name.contains('marker') || name.contains('airbrush')) return 'Markers';
-    if (p.category.toLowerCase() == 'custom' || name.contains('custom')) {
-      return 'Custom';
-    }
-    return 'Basic';
-  }
-
   List<BrushPreset> get _filtered {
     final q = _query.toLowerCase();
     final list = widget.presets.where((p) {
-      if (_category != 'All' && _classify(p) != _category) return false;
+      if (_category != 'All' && _classifyPreset(p) != _category) return false;
       if (q.isEmpty) return true;
       return p.name.toLowerCase().contains(q) ||
           p.paintopId.toLowerCase().contains(q) ||
@@ -106,7 +89,29 @@ class _BrushPickerScreenState extends State<BrushPickerScreen> {
 
   String _familyKey(BrushPreset p) {
     final f = p.paintopId.trim().toLowerCase();
-    return f.isEmpty ? '￿' : f;
+    return f.isEmpty ? kNoFamilyKey : f;
+  }
+
+  /// Family-grouped browsing (5-loop-48): when the Family sort is active
+  /// the picker renders one section per engine-declared paintop family
+  /// ([BrushPreset.paintopId] — upgraded with the real engine's scan-ABI
+  /// families by [EditorState.loadPresetLibrary]) instead of a flat grid.
+  /// Families alphabetical, the undeclared group last — the same ordering
+  /// contract as the former flat Family sort; within a family, presets
+  /// sort by name.
+  List<MapEntry<String, List<BrushPreset>>> get _grouped {
+    final map = <String, List<BrushPreset>>{};
+    for (final p in _filtered) {
+      map.putIfAbsent(_familyKey(p), () => <BrushPreset>[]).add(p);
+    }
+    for (final list in map.values) {
+      list.sort(
+          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    }
+    final keys = map.keys.toList()..sort();
+    return <MapEntry<String, List<BrushPreset>>>[
+      for (final k in keys) MapEntry(k, map[k]!),
+    ];
   }
 
   @override
@@ -144,27 +149,27 @@ class _BrushPickerScreenState extends State<BrushPickerScreen> {
             Expanded(
               child: _filtered.isEmpty
                   ? const _EmptyState()
-                  : GridView.builder(
-                      gridDelegate:
-                          const SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent: 160,
-                        mainAxisSpacing: 10,
-                        crossAxisSpacing: 10,
-                        childAspectRatio: 0.85,
-                      ),
-                      itemCount: _filtered.length,
-                      itemBuilder: (context, index) {
-                        final p = _filtered[index];
-                        return _PresetCard(
-                          preset: p,
-                          category: _classify(p),
-                          isActive: p.id == widget.activePresetId,
-                          onTap: () {
-                            widget.onPick(p);
+                  : _sort == 'Family'
+                      ? _FamilySectionedGrid(
+                          groups: _grouped,
+                          activePresetId: widget.activePresetId,
+                          onPick: widget.onPick,
+                        )
+                      : GridView.builder(
+                          gridDelegate: _kPresetGridDelegate,
+                          itemCount: _filtered.length,
+                          itemBuilder: (context, index) {
+                            final p = _filtered[index];
+                            return _PresetCard(
+                              preset: p,
+                              category: _classifyPreset(p),
+                              isActive: p.id == widget.activePresetId,
+                              onTap: () {
+                                widget.onPick(p);
+                              },
+                            );
                           },
-                        );
-                      },
-                    ),
+                        ),
             ),
             const SizedBox(height: 12),
             _BottomBar(
@@ -174,6 +179,137 @@ class _BrushPickerScreenState extends State<BrushPickerScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers.
+// ---------------------------------------------------------------------------
+
+/// Map a preset's [BrushPreset.category] / paintop to one of our
+/// top-level categories.
+String _classifyPreset(BrushPreset p) {
+  final name = '${p.category} ${p.paintopId} ${p.name}'.toLowerCase();
+  if (name.contains('eraser') || name.contains('erase')) return 'Erasers';
+  if (name.contains('pencil') ||
+      name.contains('chalk') ||
+      name.contains('charcoal') ||
+      name.contains('pastel')) return 'Dry Media';
+  if (name.contains('water') ||
+      name.contains('wet') ||
+      name.contains('ink') ||
+      name.contains('smudge') ||
+      name.contains('colorsmudge')) return 'Wet Media';
+  if (name.contains('marker') || name.contains('airbrush')) return 'Markers';
+  if (p.category.toLowerCase() == 'custom' || name.contains('custom')) {
+    return 'Custom';
+  }
+  return 'Basic';
+}
+
+/// Shared grid geometry for the flat browse grid and the per-family
+/// section grids (5-loop-48).
+const SliverGridDelegateWithMaxCrossAxisExtent _kPresetGridDelegate =
+    SliverGridDelegateWithMaxCrossAxisExtent(
+  maxCrossAxisExtent: 160,
+  mainAxisSpacing: 10,
+  crossAxisSpacing: 10,
+  childAspectRatio: 0.85,
+);
+
+/// Sentinel family key used by [_BrushPickerScreenState._familyKey] for
+/// presets with no declared paintop family (sorts last).
+const String kNoFamilyKey = '\uFFFD';
+
+/// Family-grouped browsing (5-loop-48): one header + one grid per
+/// engine-declared paintop family, replacing the flat grid while the
+/// Family sort is active. Filtering/search still applies (the groups
+/// come from the picker's filtered list).
+class _FamilySectionedGrid extends StatelessWidget {
+  const _FamilySectionedGrid({
+    required this.groups,
+    required this.activePresetId,
+    required this.onPick,
+  });
+
+  final List<MapEntry<String, List<BrushPreset>>> groups;
+  final String? activePresetId;
+  final ValueChanged<BrushPreset> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomScrollView(
+      slivers: [
+        for (final group in groups) ...[
+          SliverToBoxAdapter(
+            child: _FamilyHeader(
+              family: group.key,
+              count: group.value.length,
+            ),
+          ),
+          SliverGrid(
+            gridDelegate: _kPresetGridDelegate,
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                final p = group.value[index];
+                return _PresetCard(
+                  preset: p,
+                  category: _classifyPreset(p),
+                  isActive: p.id == activePresetId,
+                  onTap: () => onPick(p),
+                );
+              },
+              childCount: group.value.length,
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 10)),
+        ],
+      ],
+    );
+  }
+}
+
+/// Section header for one paintop family group: an accent bar, the
+/// family name and the preset count ("paintbrush · 2"). The undeclared
+/// sentinel group is displayed as "No family".
+class _FamilyHeader extends StatelessWidget {
+  const _FamilyHeader({required this.family, required this.count});
+
+  final String family;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = family == kNoFamilyKey ? 'No family' : family;
+    return Padding(
+      padding: const EdgeInsets.only(top: 2, bottom: 6),
+      child: Row(
+        children: [
+          Container(
+            width: 3,
+            height: 12,
+            decoration: BoxDecoration(
+              color: AppTheme.accent,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '$label · $count',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
