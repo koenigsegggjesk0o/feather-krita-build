@@ -441,6 +441,32 @@ jobs:
           set -euo pipefail
           ADB="$SDK_ROOT/platform-tools/adb"
           set -o pipefail
+          # ---- SIGKILL identification preamble (loop-44) --------------
+          # Beacon loop-43: the FIRST System.load of the real core dies
+          # with SIGKILL ("Killed", exit 137) before any of our code runs;
+          # kernel dmesg showed nothing (captured WITHOUT root — silently
+          # failed) and the logcat grep filter (DEBUG|Fatal) missed the
+          # kill window entirely. The device is userdebug, so this run
+          # decides lmkd-vs-ART-vs-kernel-oom in ONE pass: take root,
+          # STOP lmkd outright, then run the smoke and capture FULL logs
+          # after the outcome. Kill disappears => lmkd was the killer and
+          # the smoke goes green in the same run. Kill persists => not
+          # lmkd; the root dmesg + unfiltered logcat below name the real
+          # killer for the next iteration.
+          "$ADB" root >/dev/null 2>&1 || true
+          sleep 4
+          "$ADB" wait-for-device || true
+          for i in 1 2 3 4 5; do
+            ID=$("$ADB" shell id 2>/dev/null | tr -d '\r') || true
+            case "$ID" in *root*) echo "adbd root ok: $ID"; break;; *) echo "waiting for root ($i)"; sleep 3;; esac
+          done
+          {
+            "$ADB" shell 'id; getprop ro.build.type; head -6 /proc/meminfo; cat /proc/self/cgroup' 2>&1 || true
+            "$ADB" shell 'getprop | grep -i lmk' 2>&1 || true
+          } | tr -d '\r' > /tmp/prestate.txt || true
+          echo '--- root pre-state'; cat /tmp/prestate.txt || true
+          "$ADB" shell 'stop lmkd 2>/dev/null || setprop ctl.stop lmkd; echo stop-rc=$?' 2>&1 | tr -d '\r' | tee -a /tmp/prestate.txt || true
+          "$ADB" shell 'ps -A | grep lmkd || echo lmkd-not-running' 2>&1 | tr -d '\r' | tee -a /tmp/prestate.txt || true
           # app_process boots ART for this process: the Qt/KF5 android
           # statics need a JavaVM (see smoke_jni.cpp header). FkrSmoke
           # loads the chain in VM-registration order, then runs
@@ -450,7 +476,19 @@ jobs:
           grep -q 'BOOTCHECK OK' /tmp/bootcheck.txt \
             || { echo '##[error] app_process bootcheck failed'; cat /tmp/bootcheck.txt; exit 1; }
           "$ADB" shell "export LD_LIBRARY_PATH=/data/local/tmp/fkr; export CLASSPATH=/data/local/tmp/fkr/classes.dex; cd /data/local/tmp/fkr && /system/bin/app_process / FkrSmoke /data/local/tmp/fkr/stock_basic_5_size.kpp /data/local/tmp/fkr/stock_eraser_circle.kpp" \
-            2>&1 | tee /tmp/smoke_output.txt
+            2>&1 | tee /tmp/smoke_output.txt || true
+          # ---- full evidence capture AFTER the outcome (pass OR kill) --
+          timeout 25 "$ADB" logcat -d > /tmp/logcat_full.txt 2>&1 || true
+          timeout 25 "$ADB" logcat -d -b events > /tmp/logcat_events.txt 2>&1 || true
+          timeout 25 "$ADB" logcat -d -b crash > /tmp/logcat_crash.txt 2>&1 || true
+          "$ADB" shell 'dmesg | tail -150' > /tmp/dmesg_after.txt 2>&1 || true
+          "$ADB" shell 'head -6 /proc/meminfo' > /tmp/meminfo_after.txt 2>&1 || true
+          echo '--- dmesg kill/oom lines (root)'
+          grep -iE 'oom|kill|lowmem|sigkill' /tmp/dmesg_after.txt | tail -25 || echo '(none in dmesg)'
+          echo '--- events buffer kill records'
+          grep -iE 'am_kill|lmkd' /tmp/logcat_events.txt | tail -15 || echo '(none in events)'
+          echo '--- lmkd/kill lines in full logcat'
+          grep -iE 'lmkd|lowmemorykiller|sigkill|signal 9|Fatal signal' /tmp/logcat_full.txt | tail -20 || echo '(none in logcat)'
           grep -q 'SMOKE OK' /tmp/smoke_output.txt \
             || { echo '##[error] SMOKE OK banner missing — on-device gates failed'; exit 1; }
 
@@ -469,20 +507,35 @@ jobs:
           {
             echo '--- device identity'
             cat /tmp/device_identity.txt 2>/dev/null || true
+            echo '--- root pre-state + lmkd stop (loop-44 identification)'
+            cat /tmp/prestate.txt 2>/dev/null || true
             echo '--- smoke output (if any)'
             cat /tmp/smoke_output.txt 2>/dev/null || true
             echo '--- emulator log tail'
             tail -60 /tmp/emulator.log 2>/dev/null || true
             echo '--- logcat crash tail'
             printf '%s\n' "$LOGCAT"
-            echo '--- kernel kill/oom tail'
-            timeout 10 "$ADB" shell 'dmesg | grep -iE "oom|kill|lowmem|sigkill|sigsegv" | tail -25' 2>/dev/null || true
+            echo '--- dmesg kill/oom lines (root, captured post-outcome)'
+            grep -iE 'oom|kill|lowmem|sigkill|sigsegv' /tmp/dmesg_after.txt 2>/dev/null | tail -30 || true
+            echo '--- events buffer kill records'
+            grep -iE 'am_kill|lmkd' /tmp/logcat_events.txt 2>/dev/null | tail -20 || true
+            echo '--- lmkd/kill lines in full logcat'
+            grep -iE 'lmkd|lowmemorykiller|sigkill|signal 9|Fatal signal' /tmp/logcat_full.txt 2>/dev/null | tail -30 || true
+            echo '--- meminfo after outcome'
+            head -6 /tmp/meminfo_after.txt 2>/dev/null || true
           } > diag.txt || true
           cat diag.txt || true
           mkdir -p diagout
           cp diag.txt diagout/
           cp /tmp/smoke_output.txt diagout/ 2>/dev/null || true
           cp /tmp/emulator.log diagout/ 2>/dev/null || true
+          cp /tmp/bootcheck.txt diagout/ 2>/dev/null || true
+          cp /tmp/prestate.txt diagout/ 2>/dev/null || true
+          cp /tmp/dmesg_after.txt diagout/ 2>/dev/null || true
+          cp /tmp/logcat_full.txt diagout/ 2>/dev/null || true
+          cp /tmp/logcat_events.txt diagout/ 2>/dev/null || true
+          cp /tmp/logcat_crash.txt diagout/ 2>/dev/null || true
+          cp /tmp/meminfo_after.txt diagout/ 2>/dev/null || true
 
       - name: Upload diagnostics
         if: failure()
@@ -500,6 +553,8 @@ jobs:
             echo ""
             echo "- Engine run: ${{ steps.resolve.outputs.run_id }} @ ${{ steps.resolve.outputs.head_sha }}"
             echo "- Device: $(tr '\n' ' ' < /tmp/device_identity.txt 2>/dev/null || echo 'n/a')"
+            echo "- Identification (loop-44): $(grep -E 'stop-rc=|lmkd-not-running' /tmp/prestate.txt 2>/dev/null | tr '\n' ' ' || echo 'n/a')"
+            echo "- Smoke verdict: $(grep -q 'SMOKE OK' /tmp/smoke_output.txt 2>/dev/null && echo 'SMOKE OK' || echo 'no SMOKE OK — see diagnostics artifact')"
             echo ""
             if [ -f /tmp/smoke_output.txt ]; then
               echo '```'
