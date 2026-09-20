@@ -516,14 +516,8 @@ int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path) {
     }
     bool fadeFromBrush = false;
     bool spacingFromBrush = false;
+    qreal expectedDiameter = -1.0;
     if (!brushEl.isNull()) {
-        // REAL path: hand the <Brush> definition to Krita's own loader.
-        KisBrushSP realBrush =
-            KisBrush::fromXML(brushEl, KisGlobalResourcesInterface::instance());
-        if (realBrush && realBrush->valid()) {
-            handle->brush = realBrush;
-            handle->brushFromPreset = true;
-        }
         // Real spacing attribute on the brush element (fixed spacing; the
         // useAutoSpacing/autoSpacingCoeff attrs are applied by Krita's own
         // paintop spacing logic).
@@ -535,13 +529,16 @@ int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path) {
         // Real tip diameter + softness from the MaskGenerator element. In
         // stock presets (BrushVersion 2) softness is hfade/vfade; older
         // shapes use a single fade attribute. hardness = 1 - fade.
-        QDomElement mg = brushEl.firstChildElement("MaskGenerator");
+        const QDomElement mg = brushEl.firstChildElement("MaskGenerator");
         if (!mg.isNull()) {
-            QString diamAttr = mg.hasAttribute("diameter")
+            const QString diamAttr = mg.hasAttribute("diameter")
                 ? mg.attribute("diameter") : mg.attribute("radius");
             bool ok = false;
             const double d = diamAttr.toDouble(&ok);
-            if (ok && d >= 1.0) handle->size = d;
+            if (ok && d >= 1.0) {
+                handle->size = d;
+                expectedDiameter = d;
+            }
             const QString fadeAttr = mg.hasAttribute("hfade")
                 ? mg.attribute("hfade")
                 : (mg.hasAttribute("vfade") ? mg.attribute("vfade")
@@ -554,6 +551,39 @@ int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path) {
                 }
             }
         }
+        // REAL path: hand the <Brush> definition to Krita's own loader.
+        // NOTE: KisBrush::fromXML NEVER returns null — when its registry
+        // path cannot make sense of the element it silently substitutes a
+        // default-fallback auto brush. Trust the result only when its
+        // geometry matches the tip we parsed above; otherwise fall through
+        // to a real KisAutoBrush rebuilt from the parsed diameter/fade
+        // (same Krita generator classes, preset's own parameters).
+        KisBrushSP realBrush =
+            KisBrush::fromXML(brushEl, KisGlobalResourcesInterface::instance());
+        bool trusted = false;
+        if (realBrush) {
+            if (expectedDiameter > 0.0) {
+                const qreal eff = realBrush->userEffectiveSize();
+                trusted = realBrush->valid() &&
+                          qAbs(eff - expectedDiameter) <=
+                              qMax<qreal>(1.0, expectedDiameter * 0.2);
+            } else {
+                // Tip without a numeric diameter (image/pipe brushes):
+                // keep the historical trust rule.
+                trusted = realBrush->valid();
+            }
+        }
+        if (trusted) {
+            handle->brush = realBrush;
+            handle->brushFromPreset = true;
+        }
+    }
+    // Self-heal: when the registry-built brush was rejected, rebuild a real
+    // auto brush from the preset's parsed tip parameters (ensureEngine
+    // created one earlier with the stale default size 16).
+    if (!handle->brushFromPreset && !brushEl.isNull() &&
+        (expectedDiameter > 0.0 || fadeFromBrush)) {
+        if (ensureEngine(handle)) rebuildAutoBrush(handle);
     }
 
     // --- Paintop-settings-level params (the user-facing values) -----------
