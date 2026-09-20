@@ -1344,16 +1344,24 @@ jobs:
           echo "undefined symbol refs: $NUNDEF (resolved at load by Qt/KF5/bionic)"
           printf '%s\n' "$UNDEF" | grep -E 'Ko[A-Z]|Kis[A-Z]|krita_bridge' | head -40 || echo 'OK: no unresolved krita-namespace refs'
           # ---- runtime .so bundle for emulator smoke + APK wiring
-          # (Qt + KF5 + icu + libc++_shared, per-ABI where suffixed)
+          # (Qt + KF5 + libc++_shared, per-ABI where suffixed). Per-ABI
+          # staging ONLY: the smoke harness stages this dir flat and the
+          # APK bundle copies it verbatim, and the closure completion
+          # below DT_NEEDEDs every staged lib — a cross-ABI stray (e.g.
+          # libQt5Core_arm64-v8a.so inside the x86_64 artifact) would
+          # become an ORPHAN NEEDED on device (absent from the flat push
+          # dir / filtered out of the APK) and fail the load. icu is NOT
+          # staged: the on-device-proven harness closure (loop-43/44
+          # green runs) never carried it — Qt5 android does not DT_NEEDED
+          # shared ICU; the BFS orphan check below turns any hidden ICU
+          # dependency into a loud engine-build failure instead of a
+          # silent on-device one.
           mkdir -p artifact/android/${{ matrix.abi }}
-          cp "$QT/lib"/libQt5*_x86_64.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
-          cp "$QT/lib"/libQt5*_arm64-v8a.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
-          cp "$QT/lib"/libicu*.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
+          cp "$QT/lib"/libQt5*_${{ matrix.abi }}.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           cp "$KF5/lib"/libKF5*.so* artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
-          cp /opt/kf5-build/and-quazip/android-build/libs/*/libquazip*.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           # the exact linked quazip file must be the staged one (SONAME
           # gate above guarantees basename == SONAME)
-          cp -L "$QZLIB" artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
+          cp -L "$QZLIB" artifact/android/${{ matrix.abi }}/
           # libc++_shared.so for the APK (Qt/KF5 DT_NEEDED it; single copy
           # per process) — fetched per-ABI in the deps step (stored WITHOUT
           # the API-level suffix; strip it from the triple here).
@@ -1394,9 +1402,10 @@ jobs:
           # gate: BFS the DT_NEEDED graph from libkrita_bridge.so over
           # the staged dir — every staged lib must be reachable, every
           # NEEDED entry must have a staged or bionic-system provider.
-          JDIR="$ADIR" RE_BIN="$TC/llvm-readelf" python3 - << 'PYEOF'
+          JDIR="$ADIR" BRIDGE="$WS/artifact/lib/libkrita_bridge.so" RE_BIN="$TC/llvm-readelf" python3 - << 'PYEOF'
           import os, re, subprocess, glob, sys
           d, re_bin = os.environ['JDIR'], os.environ['RE_BIN']
+          bridge = os.environ['BRIDGE']
           rx = re.compile(r'Shared library: \[([^\]]+)\]')
           def needed(p):
               out = subprocess.run([re_bin, '-d', p], capture_output=True, text=True).stdout
@@ -1408,7 +1417,9 @@ jobs:
           orphan_needed = set()
           while stack:
               cur = stack.pop()
-              p = os.path.join(d, cur)
+              # the merged bridge lives in artifact/lib, NOT in the
+              # staged runtime dir (run-35528073994 lesson)
+              p = bridge if cur == 'libkrita_bridge.so' else os.path.join(d, cur)
               if not os.path.exists(p):
                   if cur not in syslibs: orphan_needed.add(cur)
                   continue
