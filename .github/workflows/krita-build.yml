@@ -1297,7 +1297,7 @@ jobs:
           # libc++_shared.so for the APK (Qt/KF5 DT_NEEDED it; single copy
           # per process) — fetched per-ABI in the deps step (stored WITHOUT
           # the API-level suffix; strip it from the triple here).
-          LIBCXX_DIR="/opt/android_deps/libcxx/${ABI_TRIPLE%-[0-9]*}"
+          LIBCXX_DIR="/opt/android_deps/libcxx/$(echo "$ABI_TRIPLE" | sed 's/[0-9]*$//')"
           test -s "$LIBCXX_DIR/libc++_shared.so" \
             || { echo "FATAL: fetched libc++_shared.so missing at $LIBCXX_DIR"; ls /opt/android_deps/libcxx/*/; exit 1; }
           cp "$LIBCXX_DIR/libc++_shared.so" artifact/android/${{ matrix.abi }}/
