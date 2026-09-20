@@ -1344,3 +1344,19 @@ Work Log:
 
 Stage Summary:
 - Engine layer: roadmap (f) GREEN on all platforms. App layer in flight → then v0.23-preset-loading release → FINAL beacon.
+---
+Task ID: 5-loop-37 (beacon 3 — FINAL: roadmap (f) CLOSED, v0.23 released, FULL roadmap complete)
+Agent: Z.ai Code (main, autonomous loop)
+Task: milestone lock — preset loading complete
+
+Work Log:
+- Engine fix-chain tail (runs 4-5): run 4 (35491362636 @ 2f40ce8) after the self-heal fix — ALL FOUR JOBS SUCCESS, C++ smoke preset dabs now w=40 (basic-5) and w=50 (eraser), was 16 on both before. Run 5 = app build 35492689079 @ 2f40ce8 — ALL FIVE JOBS SUCCESS, Dart FFI preset gates green through the app's own bindings: basic-5 size 40/opacity 1.0/spacing 0.1/hardness 0.0/dab extent 40; eraser size 50/hardness 0.13/flagged via settings-level CompositeOp=erase/black mask without eraser input flag.
+- ROOT CAUSE of the 16px dab (fixed in 45ec942): KisBrush::fromXML NEVER returns null — its registry path silently substitutes a default-fallback auto brush when it cannot use the element; that fallback failed the old valid() gate inconsistently and the context kept the ensureEngine-time auto brush (size 16). Fix: trust the registry brush only when userEffectiveSize matches the parsed MaskGenerator diameter (±20%); otherwise self-heal by rebuilding a real KisAutoBrush from the preset's parsed diameter/fade. Dabs then reflect the preset tip under BOTH outcomes (registry path and rebuild path verified green on CI).
+- Builder mirror FULLY SYNCED (was stale at loop-35 state — the earlier app run 35490074848 ran the OLD Dart smoke and built the OLD bindings; local clone + git overlay from app@38407ce, builder .github/workflows preserved, committed 65f3b9b): lib/ffi bindings + brush_preset model + tool/ffi_real_smoke + test/fixtures + native bridge + release scripts. Lesson: every loop that changes app code MUST re-sync the mirror before dispatching build-app (the artifacts are built FROM the mirror tree).
+- RELEASED v0.23-preset-loading (release id 392329783, tag @ 2f40ce8 via scripts/release_v23.py): 3 assets — linux real-engine zip 47.1MB, windows real-engine zip 39.9MB, android real-engine APK 114.7MB. Idempotent full-list check + 5x retry uploads per the v0.20-22 template.
+- Local gates re-run: flutter analyze 0 errors; preset_library_test 4/4 PASS.
+
+Stage Summary:
+- ROADMAP COMPLETE: (a) v0.20 Linux real engine | (b) v0.21 Windows real engine | (c) v0.22 Android real engine | (d) self-contained Linux bundle | (e) diagnostics cleanup | (f) v0.23 paintop-settings-level preset loading (real stock .kpp end-to-end on all desktop platforms + PNG-container Dart model) — **ALL SIX ITEMS DONE**. The real Krita v6.0.4 engine (source byte-identical upstream) now ships with real-preset loading on all three platforms.
+- Loop-37 session totals: 5 engine CI runs + 3 app runs dispatched (2 early-cancelled by design), 3 releases validated (v0.22 pre-existing, v0.23 new), ~4 CI fix iterations (toDouble lambda → PNG big-endian length → windows cygpath → fromXML fallback trust/self-heal), builder mirror sync institutionalized.
+- NEXT-LOOP NOTES (polish, no roadmap items left): (1) UX: canvas_widget could auto-switch to BrushType.eraser when engine.isEraserPreset after loadBrushPreset; (2) flow (FlowValue/FlowSensor) has no ABI getter — candidate get_flow extension; (3) ship the two stock fixtures as assets/brushes so the preset browser offers real Krita presets out of the box; (4) android emulator C++/Dart smoke (loop-36 note stands); (5) bundle more stock presets + preset browser thumbnails now that the PNG model decodes them.
