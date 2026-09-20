@@ -1071,6 +1071,25 @@ jobs:
           done
           echo "NDK sysroot STL aliases created:"
           ls -la "$NDKLIB/x86_64/"
+          # ---- REAL per-ABI libc++_shared.so for the artifact/APK: the
+          # r29 runner image ships only riscv64. Download NDK r27c and
+          # extract just the two files we need (deterministic, ~2 min).
+          mkdir -p /opt/android_deps/libcxx
+          for T in aarch64-linux-android x86_64-linux-android; do
+            DEST="/opt/android_deps/libcxx/$T/libc++_shared.so"
+            if [ ! -s "$DEST" ]; then
+              echo "fetching libc++_shared.so for $T ..."
+              curl -sL --retry 3 -o /tmp/ndk27.zip \
+                "https://dl.google.com/android/repository/android-ndk-r27c-linux.zip"
+              unzip -j -o /tmp/ndk27.zip \
+                "android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$T/libc++_shared.so" \
+                -d "/opt/android_deps/libcxx/$T" \
+                || { echo "FATAL: selective unzip failed for $T"; unzip -l /tmp/ndk27.zip | grep -m3 'libc++_shared' ; exit 1; }
+              rm -f /tmp/ndk27.zip
+            fi
+            test -s "$DEST" || { echo "FATAL: $DEST missing after fetch"; exit 1; }
+            echo "ok: $DEST ($(stat -c %s "$DEST") bytes)"
+          done
 
       - name: Configure Krita (minimal engine build, Qt5 android, unmodified source)
         run: |
@@ -1274,8 +1293,13 @@ jobs:
           cp "$QT/lib"/libQt5*_arm64-v8a.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           cp "$QT/lib"/libicu*.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           cp "$KF5/lib"/libKF5*.so* artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
-          # libc++_shared.so is intentionally NOT bundled here — the app's
-          # Qt libraries provide it (single copy per process).
+          cp /opt/kf5-build/and-quazip/android-build/libs/*/libquazip*.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
+          # libc++_shared.so for the APK (Qt/KF5 DT_NEEDED it; single copy
+          # per process) — fetched per-ABI in the deps step.
+          test -s "/opt/android_deps/libcxx/$ABI_TRIPLE/libc++_shared.so" \
+            || { echo "FATAL: fetched libc++_shared.so for $ABI_TRIPLE missing"; exit 1; }
+          cp "/opt/android_deps/libcxx/$ABI_TRIPLE/libc++_shared.so" artifact/android/${{ matrix.abi }}/
+          echo "bundled libc++_shared.so ($(stat -c %s artifact/android/${{ matrix.abi }}/libc++_shared.so) bytes)"
           # ---- android smoke executable (links the merged engine .so; run
           # later on an x86_64 emulator via adb for the C++ end-to-end proof)
           mkdir -p artifact/bin
