@@ -23,6 +23,9 @@
 
 extern "C" int smoke_main(int argc, char** argv);
 
+static jobject g_asset_mgr = nullptr;
+static void fkr_create_asset_manager(JavaVM* vm);
+
 // Own-scope JNI_OnLoad: ART validates every System.load target with
 // dlsym(handle, "JNI_OnLoad"), and bionic resolves a handle-dlsym
 // against the object's OWN symbol scope first, then its dependency
@@ -69,6 +72,7 @@ JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     } else {
         std::printf("vminject: QtAndroidPrivate::javaVM not found — global write skipped\n");
     }
+    fkr_create_asset_manager(vm);
     return JNI_VERSION_1_6;
 }
 
@@ -89,6 +93,45 @@ extern "C" __attribute__((visibility("default")))
 void _ZN8KCatalog16catalogLocaleDirERK10QByteArrayRK7QString(
     void* sret, const void* /*component*/, const void* /*language*/) {
     *static_cast<void**>(sret) = nullptr;
+}
+
+// The probe's final step hands the context object to
+// AAssetManager_fromJava, which reads the AssetManager's native pointer
+// through env->GetLongField(obj, fid) — ART aborts the process on a
+// null obj ("JNI DETECTED ERROR: obj == null", run 35523986254). So the
+// probe needs a REAL AssetManager. We have a real VM in JNI_OnLoad:
+// construct android.content.res.AssetManager through JNI (the
+// deprecated no-arg ctor is still functional on API 30), keep a global
+// ref, and serve it from the interposed javaObject(). An empty
+// AssetManager lists no catalog assets, which is exactly the graceful
+// "no translations" outcome the gates need.
+ // (g_asset_mgr declared at file scope above)
+
+static void fkr_create_asset_manager(JavaVM* vm) {
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK || env == nullptr) {
+        std::printf("vminject: no env for asset manager — probe will abort at fromJava\n");
+        return;
+    }
+    jclass c = env->FindClass("android/content/res/AssetManager");
+    if (c == nullptr) { env->ExceptionClear(); std::printf("vminject: AssetManager class not found\n"); return; }
+    jmethodID ctor = env->GetMethodID(c, "<init>", "()V");
+    if (ctor == nullptr) { env->ExceptionClear(); std::printf("vminject: AssetManager() ctor not found\n"); return; }
+    jobject o = env->NewObject(c, ctor);
+    if (o == nullptr) { env->ExceptionClear(); std::printf("vminject: AssetManager() construction failed\n"); return; }
+    g_asset_mgr = env->NewGlobalRef(o);
+    env->DeleteLocalRef(o);
+    env->DeleteLocalRef(c);
+    std::printf("vminject: real AssetManager acquired (global ref)\n");
+}
+
+// Cross-lib UNDEF import in KF5I18n — solist-order binding gives this
+// definition priority over the real Extras (which derefs its this
+// unconditionally and segfaults on the probe's null context object,
+// run 35523563700).
+extern "C" __attribute__((visibility("default")))
+void* _ZNK17QAndroidJniObject10javaObjectEv(const void* /*this*/) {
+    return g_asset_mgr;
 }
 
 extern "C" JNIEXPORT jint JNICALL
