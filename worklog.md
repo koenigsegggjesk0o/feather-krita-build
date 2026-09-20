@@ -1738,3 +1738,18 @@ Work Log:
 Stage Summary:
 - The failure was a mirror-sync infrastructure race, NOT a code defect: the consistent tree passes 113/113 locally and 4/5 CI jobs already passed including both real-engine builds. The atomic mirror sync removes the entire failure class going forward.
 - NEXT: poll 35544108461 (green -> release v0.31 + beacon 3 FINAL; red -> ##[error] postmortem on the consistent tree, fix, re-dispatch). App repo gains scripts/mirror_sync.py (token-free) with this beacon.
+
+---
+Task ID: 5-loop-48 (beacon 3 — FINAL: family-grouped picker shipped, v0.31 released; on-device scan proof closed)
+Agent: Z.ai Code (main, autonomous loop)
+Task: release v0.31 + loop closure
+
+Work Log:
+- build-app 35544108461 (workflow_dispatch on the CONSISTENT tree 1c0d75d) GREEN — all 5 jobs including build-android, which was the only failing job in the mixed-tree race run 35543395430. The postmortem's causal story is confirmed: identical code, consistent tree, green.
+- RELEASED v0.31-preset-picker-families (release id 392609374, scripts/release_v31.py @ APP_RUN_ID 35544108461, APP_SHA 4e8ba20): 3 assets uploaded (201 x3) — linux real-engine zip 47.4MB, windows real-engine zip 40.1MB, android real-engine APK 118.8MB. Release scratch cleaned.
+- The atomic mirror sync worked in production twice this loop (scripts/mirror_sync.py fix commit 1c0d75d + worklog beacon commits d6b9218) with zero ref races and correct trigger behavior (scripts/** + worklog.md fire no runs; lib/** fires build-app by design).
+
+Stage Summary:
+- LOOP-48 CLOSED END-TO-END: (1) the brush picker now browses presets grouped by the ENGINE-declared paintop family — sectioned grid, "<family> · <count>" headers, undeclared isolated last, search/filter composable, Name sort preserved flat; (2) the loop-47 preset-scan ABI is proven ON DEVICE (smoke 35542955944, SMOKE OK, rc=0); (3) the mirror-sync mixed-tree race that failed CI once is structurally eliminated (atomic tree commits); (4) v0.31 shipped on all three platforms.
+- Session totals: 2 app commits + 5 builder mirror commits + 1 CI postmortem + 1 infra fix (atomic mirror) + on-device proof + release. Analyze 0 err/0 warn; suite 113/113; Krita source byte-identical upstream throughout.
+- Handoff notes for 5-loop-49: (1) box wipes remain ~20-30 min — commit+push at every checkpoint (this loop survived wipes between beacons); (2) the atomic mirror_sync.py is the ONLY sanctioned sync path now — do not revert to per-file PUTs; token must come from GITHUB_TOKEN env (push protection blocks hardcoded tokens); (3) candidate campaigns: brush_settings_panel family-aware options (the activePaintopId is engine-authoritative — e.g. hide hardness for kNoHardnessPaintops in the panel header, loop-41 logic already exists), Feather-3D engine start, or an emulator smoke wired as a workflow_run auto-trigger after krita-build greens; (4) the '[' 'm' display-eating transport bug remains live — arbitrate bracket content with Read/od -c/wc -c, never bash echoes.
