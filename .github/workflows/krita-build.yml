@@ -1295,10 +1295,12 @@ jobs:
           cp "$KF5/lib"/libKF5*.so* artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           cp /opt/kf5-build/and-quazip/android-build/libs/*/libquazip*.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           # libc++_shared.so for the APK (Qt/KF5 DT_NEEDED it; single copy
-          # per process) — fetched per-ABI in the deps step.
-          test -s "/opt/android_deps/libcxx/$ABI_TRIPLE/libc++_shared.so" \
-            || { echo "FATAL: fetched libc++_shared.so for $ABI_TRIPLE missing"; exit 1; }
-          cp "/opt/android_deps/libcxx/$ABI_TRIPLE/libc++_shared.so" artifact/android/${{ matrix.abi }}/
+          # per process) — fetched per-ABI in the deps step (stored WITHOUT
+          # the API-level suffix; strip it from the triple here).
+          LIBCXX_DIR="/opt/android_deps/libcxx/${ABI_TRIPLE%-[0-9]*}"
+          test -s "$LIBCXX_DIR/libc++_shared.so" \
+            || { echo "FATAL: fetched libc++_shared.so missing at $LIBCXX_DIR"; ls /opt/android_deps/libcxx/*/; exit 1; }
+          cp "$LIBCXX_DIR/libc++_shared.so" artifact/android/${{ matrix.abi }}/
           echo "bundled libc++_shared.so ($(stat -c %s artifact/android/${{ matrix.abi }}/libc++_shared.so) bytes)"
           # ---- android smoke executable (links the merged engine .so; run
           # later on an x86_64 emulator via adb for the C++ end-to-end proof)
