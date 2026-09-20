@@ -72,6 +72,25 @@ JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     return JNI_VERSION_1_6;
 }
 
+// KCatalog's Android probe is a minefield on this deps bundle: the
+// KCatalogStaticData singleton ctor probes androidContext() ->
+// callObjectMethod("getAssets") -> javaObject() and every null-object
+// step crashes inside the mixed-ABI Qt binaries (runs 35521285894,
+// 35522266463, 35522996086: SEGV at 0x0 in a different Qt frame each
+// time). The probe runs INSIDE the exported KCatalog::catalogLocaleDir,
+// so interposing it with an empty-result stub removes the minefield
+// entirely: KLocalizedString finds no catalog and falls back to the
+// source strings — exactly right for engine gates that need no
+// translations. libsmoke_jni sits at the head of the bionic solist (it
+// is the System.load target), so this wins the PLT binding — the same
+// mechanism proven by the callObjectMethod shim in the workflow.
+// QString is a single d-pointer in Qt5; a null d is the null QString.
+extern "C" __attribute__((visibility("default")))
+void _ZN8KCatalog16catalogLocaleDirERK10QByteArrayRK7QString(
+    void* sret, const void* /*component*/, const void* /*language*/) {
+    *static_cast<void**>(sret) = nullptr;
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_FkrSmoke_run(JNIEnv* env, jclass, jobjectArray args) {
     const jsize n = env->GetArrayLength(args);
