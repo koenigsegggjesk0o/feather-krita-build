@@ -161,14 +161,24 @@ jobs:
           "$SM" --version || true
           df -h / | tail -1
           echo '--- accepting licenses'
-          yes | "$SM" --licenses > /tmp/lic.log 2>&1 \
+          # yes always dies with SIGPIPE (141) when sdkmanager closes
+          # stdin — under pipefail the pipeline reports failure even on
+          # SUCCESS ("All SDK package licenses accepted" was printed in
+          # run 35506153720). Gate on the OUTCOME, not the pipe rc.
+          set +e
+          yes | "$SM" --licenses > /tmp/lic.log 2>&1
+          RC=$?
+          set -e
+          echo "licenses rc=$RC (141 = SIGPIPE from yes, expected)"
+          grep -q 'All SDK package licenses accepted' /tmp/lic.log \
             || { echo '##[error] license acceptance failed'; tail -30 /tmp/lic.log; exit 1; }
           echo '--- installing system image (API 30 google_apis x86_64)'
-          if ! "$SM" "system-images;android-30;google_apis;x86_64" > /tmp/img.log 2>&1; then
-            echo '##[error] system-image install failed'
-            tail -40 /tmp/img.log
-            exit 1
-          fi
+          # no yes-pipe here: licenses are accepted, install runs
+          # unattended (EOF on any unexpected prompt aborts cleanly)
+          "$SM" "system-images;android-30;google_apis;x86_64" > /tmp/img.log 2>&1 \
+            || { echo '##[error] system-image install failed'; tail -40 /tmp/img.log; exit 1; }
+          test -d "$SDK_ROOT/system-images/android-30/google_apis/x86_64" \
+            || { echo '##[error] system image dir missing after install'; tail -20 /tmp/img.log; exit 1; }
           tail -3 /tmp/img.log
           echo no | "$AVDM" create avd -n fkr-smoke \
             -k "system-images;android-30;google_apis;x86_64"
