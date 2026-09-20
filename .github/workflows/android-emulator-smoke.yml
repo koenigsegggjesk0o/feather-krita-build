@@ -475,6 +475,8 @@ jobs:
             tail -60 /tmp/emulator.log 2>/dev/null || true
             echo '--- logcat crash tail'
             printf '%s\n' "$LOGCAT"
+            echo '--- kernel kill/oom tail'
+            timeout 10 "$ADB" shell 'dmesg | grep -iE "oom|kill|lowmem|sigkill|sigsegv" | tail -25' 2>/dev/null || true
           } > diag.txt || true
           cat diag.txt || true
           mkdir -p diagout
