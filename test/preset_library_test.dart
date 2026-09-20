@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:feather_krita/models/brush_preset.dart';
@@ -60,10 +61,24 @@ void main() {
     final names = state.presets.map((p) => p.name).toList();
     expect(names, contains('user_brush'));
     for (final name in EditorState.kBundledPresetAssets) {
-      expect(names, contains(name.replaceAll('.kpp', '')),
+      // Bundled presets appear under their curated display name when one
+      // is mapped (5-loop-38), or the file-id name otherwise.
+      final expected =
+          EditorState.kBundledPresetDisplayNames[name] ??
+          name.replaceAll('.kpp', '');
+      expect(names, contains(expected),
           reason: 'bundled preset $name must appear in the library');
     }
     expect(state.presets.length, EditorState.kBundledPresetAssets.length + 1);
+
+    // Generic embedded XML names were upgraded by the display-name map.
+    final paintbrush =
+        state.presets.firstWhere((p) => p.name == 'Paintbrush');
+    expect(paintbrush.paintopId, 'paintbrush');
+    expect(
+        state.presets.map((p) => p.name),
+        isNot(contains('defaultPreset')),
+        reason: 'generic embedded names must be replaced');
 
     // Preset parameters actually parse through the .kpp loader.
     final user = state.presets.firstWhere((p) => p.name == 'user_brush');
@@ -135,5 +150,85 @@ void main() {
     // Sensor curves survive as string settings (not scalars).
     expect(eraser.settings.containsKey('SizeSensor'), isTrue);
     expect(eraser.settings['SizeSensor']!.type, BrushSettingType.string);
+  });
+
+  test('every bundled preset asset parses with a usable model', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    for (final name in EditorState.kBundledPresetAssets) {
+      final data =
+          (await rootBundle.load('assets/brushes/$name'))
+              .buffer
+              .asUint8List();
+      final preset = BrushPreset.loadFromBytes(data, filePath: name);
+      expect(preset.paintopId, isNotEmpty, reason: '$name paintopId');
+      expect(preset.settings, isNotEmpty, reason: '$name settings');
+      if (name.startsWith('krita_') || name.startsWith('stock_')) {
+        // Real stock presets are PNG containers: the PNG doubles as the
+        // thumbnail.
+        expect(preset.thumbnail, isNotNull, reason: '$name thumbnail');
+        expect(preset.thumbnail!.length, greaterThan(400),
+            reason: '$name thumbnail');
+      }
+    }
+  });
+
+  test('BrushPreset.isEraserPreset mirrors the native detection signals',
+      () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    // Stock eraser: CompositeOp == erase.
+    final eraserCircle = BrushPreset.loadFromBytes(
+      File('test/fixtures/stock_eraser_circle.kpp').readAsBytesSync(),
+      filePath: 'stock_eraser_circle.kpp',
+    );
+    expect(eraserCircle.isEraserPreset, isTrue);
+
+    // Stock paintbrush: not an eraser.
+    final basic = BrushPreset.loadFromBytes(
+      File('test/fixtures/stock_basic_5_size.kpp').readAsBytesSync(),
+      filePath: 'stock_basic_5_size.kpp',
+    );
+    expect(basic.isEraserPreset, isFalse);
+
+    // Krita's per-paintop default eraser: paintopid == eraser, no
+    // explicit settings flag.
+    final defaultEraser = BrushPreset.loadFromBytes(
+      (await rootBundle.load('assets/brushes/krita_eraser.kpp'))
+          .buffer
+          .asUint8List(),
+      filePath: 'krita_eraser.kpp',
+    );
+    expect(defaultEraser.paintopId, 'eraser');
+    expect(defaultEraser.isEraserPreset, isTrue);
+  });
+
+  test('loadBrushPreset auto-switches the tool for eraser presets', () async {
+    final state = EditorState();
+    addTearDown(state.dispose);
+    expect(state.activeTool, Tool.draw);
+
+    // Loading an eraser preset switches to the eraser tool.
+    final eraser = BrushPreset.loadFromBytes(
+      File('test/fixtures/stock_eraser_circle.kpp').readAsBytesSync(),
+      filePath: 'stock_eraser_circle.kpp',
+    );
+    state.loadBrushPreset(eraser);
+    expect(state.activeTool, Tool.erase);
+
+    // Loading a non-eraser preset returns to draw (auto-switched path).
+    final basic = BrushPreset.loadFromBytes(
+      File('test/fixtures/stock_basic_5_size.kpp').readAsBytesSync(),
+      filePath: 'stock_basic_5_size.kpp',
+    );
+    state.loadBrushPreset(basic);
+    expect(state.activeTool, Tool.draw);
+
+    // A manual tool choice is never overridden by preset loading.
+    state.setActiveTool(Tool.select);
+    state.loadBrushPreset(basic);
+    expect(state.activeTool, Tool.select);
+
+    // But an eraser preset still wins (that IS the user's choice).
+    state.loadBrushPreset(eraser);
+    expect(state.activeTool, Tool.erase);
   });
 }

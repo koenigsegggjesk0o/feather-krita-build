@@ -258,11 +258,58 @@ class EditorState extends ChangeNotifier {
   /// Bundled .kpp assets seeded into the user presets folder on first
   /// load so the picker always has something to show and users can drop
   /// their own .kpp files right next to them.
+  ///
+  /// Since 5-loop-38 the bundle includes UNMODIFIED stock presets from
+  /// the Krita project (per-paintop defaults + named stock presets,
+  /// legacy PNG preset containers) — see assets/brushes/README.md for
+  /// provenance and license.
   static const List<String> kBundledPresetAssets = <String>[
+    // Real Krita stock presets (PNG preset containers).
+    'krita_paintbrush.kpp',
+    'krita_eraser.kpp',
+    'krita_roundmarker.kpp',
+    'krita_spraybrush.kpp',
+    'krita_smudge.kpp',
+    'krita_colorsmudge.kpp',
+    'krita_sketchbrush.kpp',
+    'krita_curvebrush.kpp',
+    'krita_particlebrush.kpp',
+    'krita_deformbrush.kpp',
+    'krita_hairybrush.kpp',
+    'krita_waterc_round_grain.kpp',
+    'krita_waterc_round_fringe.kpp',
+    'krita_waterc_spread.kpp',
+    'stock_basic_5_size.kpp',
+    'stock_eraser_circle.kpp',
+    // Synthetic minimal presets (pre-5-loop-38 bundle).
     'basic_soft_round.kpp',
     'ink_fineliner.kpp',
     'airbrush_soft.kpp',
   ];
+
+  /// Display names for bundled presets whose embedded XML name is a
+  /// generic internal default (e.g. "defaultPreset", "my_round_preset")
+  /// or carries file-name noise ("b)_Basic-5_Size"). Keyed by asset file
+  /// name; applied after the folder scan in [loadPresetLibrary]. Presets
+  /// not listed here keep the name parsed from their preset XML.
+  static const Map<String, String> kBundledPresetDisplayNames = <String, String>{
+    'krita_paintbrush.kpp': 'Paintbrush',
+    'krita_eraser.kpp': 'Eraser',
+    'krita_roundmarker.kpp': 'Round Marker',
+    'krita_spraybrush.kpp': 'Airbrush Spray',
+    'krita_smudge.kpp': 'Smudge',
+    'krita_colorsmudge.kpp': 'Color Smudge',
+    'krita_sketchbrush.kpp': 'Sketch',
+    'krita_curvebrush.kpp': 'Curve',
+    'krita_particlebrush.kpp': 'Particle',
+    'krita_deformbrush.kpp': 'Deform',
+    'krita_hairybrush.kpp': 'Hairy',
+    'krita_waterc_round_grain.kpp': 'Watercolor Round Grain',
+    'krita_waterc_round_fringe.kpp': 'Watercolor Fringe',
+    'krita_waterc_spread.kpp': 'Watercolor Spread',
+    'stock_basic_5_size.kpp': 'Basic-5 Size',
+    'stock_eraser_circle.kpp': 'Eraser Circle',
+  };
 
   /// Loads the brush-preset library: seeds the bundled .kpp presets into
   /// the user presets folder (idempotent), then scans that folder for
@@ -295,10 +342,24 @@ class EditorState extends ChangeNotifier {
     } catch (_) {
       // A broken folder must never take the editor down.
     }
+    _applyBundledDisplayNames(found);
     presets
       ..clear()
       ..addAll(found);
     notifyListeners();
+  }
+
+  /// Upgrades generic embedded preset names to the curated bundled
+  /// display names (5-loop-38). Only bundled assets listed in
+  /// [kBundledPresetDisplayNames] are affected; user presets and any
+  /// preset whose file name is not in the map keep their parsed name.
+  void _applyBundledDisplayNames(List<BrushPreset> list) {
+    for (final p in list) {
+      final file = p.filePath?.split(Platform.pathSeparator).last;
+      if (file == null) continue;
+      final display = kBundledPresetDisplayNames[file];
+      if (display != null && display.isNotEmpty) p.name = display;
+    }
   }
 
   // ----- Tool / mode setters --------------------------------------------
@@ -415,10 +476,24 @@ class EditorState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Whether the last preset auto-switched the tool into eraser mode
+  /// (5-loop-38). Used so that loading a NON-eraser preset afterwards
+  /// returns the editor to the draw tool — but only when eraser mode was
+  /// entered by preset auto-switching, never overriding a manual choice.
+  bool _eraserAutoSwitched = false;
+
   /// Loads [preset] into the native brush engine (if available), reflects
   /// the preset's parameter values into the UI state (sliders, name) and
   /// updates the displayed preset name. Non-fatal if the engine rejects
   /// the preset — the synthetic dab fallback still works.
+  ///
+  /// Eraser presets (5-loop-38) auto-switch the active tool to
+  /// [Tool.erase]; loading a non-eraser preset afterwards switches back
+  /// to [Tool.draw] iff the eraser tool was entered by that auto-switch
+  /// (see [_eraserAutoSwitched]). The decision is made from the preset's
+  /// own paintop-settings ([BrushPreset.isEraserPreset], pure Dart) so it
+  /// works identically with the real engine, the fallback bridge and in
+  /// tests.
   void loadBrushPreset(BrushPreset preset) {
     _brushPresetName = preset.name;
     final path = preset.filePath;
@@ -439,6 +514,15 @@ class EditorState extends ChangeNotifier {
       } catch (_) {
         // Ignore — the synthetic dab fallback still works.
       }
+    }
+
+    // Auto-switch the tool to match the preset's eraser mode (5-loop-38).
+    if (preset.isEraserPreset) {
+      _eraserAutoSwitched = true;
+      setActiveTool(Tool.erase);
+    } else if (_eraserAutoSwitched) {
+      _eraserAutoSwitched = false;
+      if (_activeTool == Tool.erase) setActiveTool(Tool.draw);
     }
     notifyListeners();
   }

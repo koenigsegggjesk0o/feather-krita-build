@@ -151,6 +151,34 @@ class BrushPreset {
     return v.asBool;
   }
 
+  /// Whether this preset selects eraser mode (5-loop-38).
+  ///
+  /// Mirrors the native bridge's detection (krita_bridge_real.cpp applies
+  /// the same paintop-settings signals) plus the paintop identity itself:
+  ///   - settings-level flags: Krita/erase, EraserMode, flat `eraser`
+  ///   - CompositeOp == "erase" (how stock Krita eraser presets mark it)
+  ///   - paintopid == "eraser" (Krita's per-paintop default eraser preset
+  ///     carries no explicit flag — the paintop IS the eraser)
+  ///
+  /// Used by the editor to auto-switch the active tool when a preset is
+  /// loaded, and by tests (pure Dart — no native engine required).
+  bool get isEraserPreset {
+    bool flag(String name) {
+      final v = settings[name];
+      if (v == null) return false;
+      final s = v.value.toLowerCase();
+      return s == 'true' || s == '1' || s == '1.0';
+    }
+
+    if (flag('Krita/erase') || flag('EraserMode') || flag('eraser')) {
+      return true;
+    }
+    final composite = settings['CompositeOp']?.value.toLowerCase();
+    if (composite == 'erase') return true;
+    final paintop = paintopId.toLowerCase();
+    return paintop == 'eraser' || paintop == 'erase';
+  }
+
   /// Sets a scalar setting, replacing any existing value.
   void setScalar(String name, double value,
       {double min = 0.0, double max = 1.0, String description = ''}) {
