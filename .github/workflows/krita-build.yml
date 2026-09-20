@@ -168,7 +168,12 @@ jobs:
             -Wl,-rpath,'$ORIGIN/../lib' \
             -o artifact/bin/smoke_test_real
           echo "=== Running REAL-engine smoke test (rpath only) ==="
-          ./artifact/bin/smoke_test_real
+          # Preset fixtures = real Krita stock .kpp from the app-repo clone
+          # (roadmap (f) paintop-settings-level gates; fatal when failing).
+          FIXDIR=/tmp/fkr-app/test/fixtures
+          ./artifact/bin/smoke_test_real \
+            $FIXDIR/stock_basic_5_size.kpp \
+            $FIXDIR/stock_eraser_circle.kpp
 
       - name: Upload brush engine libs
         if: always()
@@ -616,7 +621,11 @@ jobs:
           ldd artifact/bin/krita_bridge_real.dll 2>&1 | grep -i 'not found' || echo 'OK: no missing imports for bridge dll'
           ldd artifact/bin/smoke_test_real.exe 2>&1 | grep -i 'not found' || echo 'OK: no missing imports for smoke exe'
           echo '=== run smoke ==='
-          ./artifact/bin/smoke_test_real.exe
+          # Preset fixtures from the app-repo clone (roadmap (f) gates).
+          FIXDIR=/tmp/fkr-app/test/fixtures
+          ./artifact/bin/smoke_test_real.exe \
+            $FIXDIR/stock_basic_5_size.kpp \
+            $FIXDIR/stock_eraser_circle.kpp
 
       - name: Save dependency caches
         if: always()
