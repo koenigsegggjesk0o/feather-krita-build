@@ -225,14 +225,44 @@ KRITA_BRIDGE_API const char* krita_brush_last_error(KritaBrushContext* handle);
 /// static and valid for the lifetime of the bridge library.
 KRITA_BRIDGE_API const char* krita_brush_version(void);
 
-/// Returns the number of brush presets bundled with the loaded Krita
-/// installation, or -1 if Krita is not available.
+/// Returns the number of brush presets found by the last
+/// [krita_brush_preset_scan] on [handle] (0 before the first scan), or
+/// -1 if the handle is NULL.
 KRITA_BRIDGE_API int32_t krita_brush_preset_count(KritaBrushContext* handle);
 
 /// Returns the name of the preset at [index], or NULL if out of range.
 /// The returned pointer is owned by the handle and invalidated by the
 /// next call on [handle].
 KRITA_BRIDGE_API const char* krita_brush_preset_name(KritaBrushContext* handle, int32_t index);
+
+/// Scans [dir] RECURSIVELY for Krita brush preset containers (*.kpp) and
+/// parses each file through the engine's own container path (ZIP KoStore
+/// containers, legacy PNG zTXt presets, bare XML shapes — the exact
+/// extraction krita_brush_load_preset uses), recording per preset the
+/// display name and the declared paintop family (root
+/// `<Preset paintopid="...">` / `<Paintop id="...">`). The scan result is
+/// memoized on [handle] and read by krita_brush_preset_count /
+/// krita_brush_preset_name / krita_brush_preset_family /
+/// krita_brush_preset_path; a new scan call replaces the previous result.
+/// Unparsable files are skipped (robust directory scan) and do not fail
+/// the scan. Returns the number of presets found (>= 0), or negative on
+/// bad arguments (-1) / missing directory (-2).
+/// Added by the preset-families campaign; back-compat: new function.
+KRITA_BRIDGE_API int32_t krita_brush_preset_scan(KritaBrushContext* handle, const char* dir);
+
+/// Returns the paintop family ("paintbrush", "eraser", "spray", ...) of
+/// the preset at [index] from the last krita_brush_preset_scan, or NULL
+/// if out of range. The pointer is owned by the handle and invalidated
+/// by the next scan call on [handle]; copy it if it must outlive those.
+/// Added by the preset-families campaign; back-compat: new function.
+KRITA_BRIDGE_API const char* krita_brush_preset_family(KritaBrushContext* handle, int32_t index);
+
+/// Returns the absolute file path of the preset at [index] from the last
+/// krita_brush_preset_scan (feed it straight into
+/// [krita_brush_load_preset]), or NULL if out of range. Same pointer
+/// lifetime rules as [krita_brush_preset_family].
+/// Added by the preset-families campaign; back-compat: new function.
+KRITA_BRIDGE_API const char* krita_brush_preset_path(KritaBrushContext* handle, int32_t index);
 
 #ifdef __cplusplus
 } // extern "C"

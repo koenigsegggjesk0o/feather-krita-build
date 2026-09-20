@@ -295,6 +295,18 @@ typedef _KritaBrushCleanupDart = void Function(Pointer<Void> handle);
 typedef _KritaBrushLastErrorNative = Pointer<Utf8> Function(Pointer<Void> handle);
 typedef _KritaBrushLastErrorDart = Pointer<Utf8> Function(Pointer<Void> handle);
 
+// Preset-directory scan (preset-families campaign).
+typedef _KritaPresetScanNative = Int32 Function(
+    Pointer<Void> handle, Pointer<Utf8> dir);
+typedef _KritaPresetScanDart = int Function(
+    Pointer<Void> handle, Pointer<Utf8> dir);
+typedef _KritaPresetCountNative = Int32 Function(Pointer<Void> handle);
+typedef _KritaPresetCountDart = int Function(Pointer<Void> handle);
+typedef _KritaPresetEntryNative = Pointer<Utf8> Function(
+    Pointer<Void> handle, Int32 index);
+typedef _KritaPresetEntryDart = Pointer<Utf8> Function(
+    Pointer<Void> handle, int index);
+
 typedef _KritaBrushGetSizeNative = Double Function(Pointer<Void> handle);
 typedef _KritaBrushGetSizeDart = double Function(Pointer<Void> handle);
 
@@ -506,6 +518,21 @@ class KritaBrushEngine {
   late final _KritaBrushGetPaintopIdDart _getPaintopId =
       _lib.lookupFunction<_KritaBrushGetPaintopIdNative, _KritaBrushGetPaintopIdDart>(
           'krita_brush_get_paintop_id');
+  late final _KritaPresetScanDart _presetScan =
+      _lib.lookupFunction<_KritaPresetScanNative, _KritaPresetScanDart>(
+          'krita_brush_preset_scan');
+  late final _KritaPresetCountDart _presetCount =
+      _lib.lookupFunction<_KritaPresetCountNative, _KritaPresetCountDart>(
+          'krita_brush_preset_count');
+  late final _KritaPresetEntryDart _presetNameAt =
+      _lib.lookupFunction<_KritaPresetEntryNative, _KritaPresetEntryDart>(
+          'krita_brush_preset_name');
+  late final _KritaPresetEntryDart _presetFamilyAt =
+      _lib.lookupFunction<_KritaPresetEntryNative, _KritaPresetEntryDart>(
+          'krita_brush_preset_family');
+  late final _KritaPresetEntryDart _presetPathAt =
+      _lib.lookupFunction<_KritaPresetEntryNative, _KritaPresetEntryDart>(
+          'krita_brush_preset_path');
 
   /// The brush diameter currently set on the native engine.
   double get currentSize {
@@ -573,6 +600,45 @@ class KritaBrushEngine {
   set size(double pixels) {
     _checkAlive();
     _setSize(_handle, pixels);
+  }
+
+  /// Scans [dir] recursively for .kpp presets through the REAL engine's
+  /// own container parser (ZIP KoStore / legacy PNG zTXt / bare XML) and
+  /// memoizes name + paintop family per preset on the native handle.
+  /// Returns the number of presets found, or a negative code on bad
+  /// arguments / missing directory (see krita_bridge.h). The parsed
+  /// entries are read back with [scannedPresets].
+  /// Throws [ArgumentError] on null/empty [dir].
+  int scanPresetFamilies(String dir) {
+    if (dir.isEmpty) throw ArgumentError.value(dir, 'dir', 'must not be empty');
+    _checkAlive();
+    final dirPtr = dir.toNativeUtf8();
+    try {
+      return _presetScan(_handle, dirPtr);
+    } finally {
+      calloc.free(dirPtr);
+    }
+  }
+
+  /// The preset entries recorded by the last [scanPresetFamilies] call,
+  /// in scan order (sorted by path). Each entry carries the engine-parsed
+  /// display name and declared paintop family plus the absolute file
+  /// path (feed it to [loadPreset]).
+  List<KritaPresetInfo> scannedPresets() {
+    _checkAlive();
+    final n = _presetCount(_handle);
+    if (n <= 0) return const <KritaPresetInfo>[];
+    return List<KritaPresetInfo>.generate(n, (i) {
+      String read(Pointer<Utf8> Function(Pointer<Void>, int) fn) {
+        final ptr = fn(_handle, i);
+        return ptr == nullptr ? '' : ptr.toDartString();
+      }
+      return KritaPresetInfo(
+        name: read(_presetNameAt),
+        family: read(_presetFamilyAt),
+        path: read(_presetPathAt),
+      );
+    });
   }
 
   /// Sets the brush color.
@@ -694,4 +760,27 @@ class KritaBrushEngine {
       throw StateError('KritaBrushEngine has been disposed');
     }
   }
+}
+
+/// One preset entry from an engine-side directory scan
+/// ([KritaBrushEngine.scanPresetFamilies]).
+class KritaPresetInfo {
+  const KritaPresetInfo({
+    required this.name,
+    required this.family,
+    required this.path,
+  });
+
+  /// Engine-parsed display name (root `name` attribute, else file name).
+  final String name;
+
+  /// Declared paintop family (root `paintopid` / `<Paintop id>`), '' when
+  /// the preset omits it.
+  final String family;
+
+  /// Absolute file path (loadable through [KritaBrushEngine.loadPreset]).
+  final String path;
+
+  @override
+  String toString() => 'KritaPresetInfo($name, family=$family)';
 }

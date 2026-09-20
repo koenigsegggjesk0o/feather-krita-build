@@ -386,6 +386,38 @@ class EditorState extends ChangeNotifier {
       }
 
       found.addAll(await BrushPreset.listFromDirectory(dir.path));
+
+      // Engine-authoritative paintop families (preset-families campaign,
+      // 5-loop-47): when the REAL engine is available, re-parse the same
+      // folder through the engine's own container path (ZIP KoStore /
+      // legacy PNG zTXt / bare XML) and upgrade each preset's paintopId
+      // with the engine-declared family. Matched by file base name so
+      // Qt's '/' separators and Dart's Platform separator both agree.
+      // The Dart-parse values stand when the engine is absent (fallback
+      // bridge / stripped build) or predates the scan ABI — the strict
+      // bindings stay covered by the CI smoke gates.
+      try {
+        final engine = _brushEngine;
+        if (engine != null) {
+          final n = engine.scanPresetFamilies(dir.path);
+          if (n > 0) {
+            String baseOf(String p) =>
+                p.replaceAll('\\', '/').split('/').last;
+            final familyByFile = <String, String>{
+              for (final e in engine.scannedPresets())
+                if (e.family.isNotEmpty) baseOf(e.path): e.family,
+            };
+            for (final p in found) {
+              final file = p.filePath == null ? null : baseOf(p.filePath!);
+              final fam = file == null ? null : familyByFile[file];
+              if (fam != null && fam.isNotEmpty) p.paintopId = fam;
+            }
+          }
+        }
+      } catch (_) {
+        // Engine without the scan ABI (or scan failure) — the Dart-parsed
+        // families stand; never take the editor down over metadata.
+      }
     } catch (_) {
       // A broken folder must never take the editor down.
     }

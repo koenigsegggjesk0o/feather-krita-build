@@ -342,6 +342,66 @@ extern "C" int smoke_main(int argc, char** argv) {
 
     krita_brush_destroy(b);
 
+    // ------------------------------------------------------------------
+    // Preset scan gate (preset-families campaign). The directory that
+    // holds the argv fixtures is scanned through the engine's own
+    // container parser (the same extraction load_preset uses); the two
+    // real stock fixtures must appear with their declared paintop family
+    // ("paintbrush" for both) and a scanned path that round-trips through
+    // the full load_preset path. Skipped when the smoke runs without
+    // fixture argv (android engine job builds but does not run the exe).
+    // ------------------------------------------------------------------
+    if (argc >= 2) {
+        std::string fixdir(argv[1]);
+        const std::size_t slash = fixdir.find_last_of("/\\");
+        if (slash != std::string::npos) fixdir.resize(slash);
+        KritaBrushContext* s = krita_brush_init();
+        CHECK(s != nullptr, "scan context init");
+        if (s) {
+            const int32_t n = krita_brush_preset_scan(s, fixdir.c_str());
+            std::printf("preset scan %s -> %d entries\n", fixdir.c_str(), int(n));
+            if (n < 0) {
+                std::printf("  last_error: %s\n", krita_brush_last_error(s));
+            }
+            CHECK(n >= argc - 1, "scan finds at least the argv fixtures");
+            CHECK(krita_brush_preset_count(s) == n, "count matches scan size");
+            int32_t basicIdx = -1;
+            int32_t eraserIdx = -1;
+            for (int32_t i = 0; i < n; ++i) {
+                const std::string p = krita_brush_preset_path(s, i);
+                if (p.find("stock_basic_5_size") != std::string::npos) basicIdx = i;
+                if (p.find("stock_eraser_circle") != std::string::npos) eraserIdx = i;
+            }
+            CHECK(basicIdx >= 0, "scan sees stock_basic_5_size");
+            CHECK(eraserIdx >= 0, "scan sees stock_eraser_circle");
+            if (basicIdx >= 0 && eraserIdx >= 0) {
+                const std::string bf = krita_brush_preset_family(s, basicIdx);
+                const std::string ef = krita_brush_preset_family(s, eraserIdx);
+                std::printf("  families: basic=%s eraser=%s\n", bf.c_str(), ef.c_str());
+                CHECK(bf == "paintbrush", "basic-5 scanned family == paintbrush");
+                CHECK(ef == "paintbrush", "eraser-circle scanned family == paintbrush");
+                CHECK(!std::string(krita_brush_preset_name(s, basicIdx)).empty(),
+                      "scanned display name populated");
+                // Round-trip: a scanned path must load through the FULL
+                // preset path (scan and loader share the parse; the load
+                // additionally builds the real engine tip/params).
+                KritaBrushContext* r = krita_brush_init();
+                CHECK(r != nullptr, "scan round-trip context init");
+                if (r) {
+                    const int lrc = krita_brush_load_preset(
+                        r, krita_brush_preset_path(s, basicIdx));
+                    CHECK(lrc == 0, "scanned path loads through load_preset");
+                    if (lrc == 0) {
+                        CHECK(std::string(krita_brush_get_paintop_id(r)) == "paintbrush",
+                              "round-trip paintop id matches scanned family");
+                    }
+                    krita_brush_destroy(r);
+                }
+            }
+            krita_brush_destroy(s);
+        }
+    }
+
     if (g_failures == 0) {
         std::printf("SMOKE OK — real Krita bridge end-to-end\n");
         return 0;

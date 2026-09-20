@@ -172,6 +172,44 @@ void main(List<String> args) {
       _check(false, 'eraser preset dab generated');
     }
     p2.dispose();
+
+    // --- engine-side preset scan (preset-families campaign, 5-loop-47) ---
+    // The REAL engine's own container parser scans the fixture dir; the
+    // two stock fixtures must surface with their declared paintop family
+    // and a scanned path that round-trips through loadPreset. Same gates
+    // as the C++ smoke's scan section, proven through the app's own Dart
+    // FFI bindings.
+    final ps = KritaBrushEngine();
+    final scanCount = ps.scanPresetFamilies(fixtureDir.absolute.path);
+    stdout.writeln('  preset scan ${fixtureDir.absolute.path} -> $scanCount');
+    _check(scanCount >= 2, 'engine scan finds at least the two stock fixtures');
+    final entries = ps.scannedPresets();
+    _check(entries.length == scanCount,
+        'scannedPresets() count matches scan ($scanCount)');
+    final basicEntry = entries
+        .where((e) => e.path.replaceAll('\\', '/').endsWith(basicFixtureName))
+        .toList();
+    final eraserEntry = entries
+        .where((e) => e.path.replaceAll('\\', '/').endsWith(eraserFixtureName))
+        .toList();
+    _check(basicEntry.isNotEmpty, 'scan sees $basicFixtureName');
+    _check(eraserEntry.isNotEmpty, 'scan sees $eraserFixtureName');
+    if (basicEntry.isNotEmpty && eraserEntry.isNotEmpty) {
+      _check(basicEntry.first.family == 'paintbrush',
+          'scanned basic-5 family == paintbrush');
+      _check(eraserEntry.first.family == 'paintbrush',
+          'scanned eraser-circle family == paintbrush');
+      _check(basicEntry.first.name.isNotEmpty,
+          'scanned display name populated');
+      final rt = KritaBrushEngine();
+      _check(rt.loadPreset(basicEntry.first.path),
+          'scanned path round-trips through loadPreset');
+      if (rt.lastError().isNotEmpty) stdout.writeln('  err: ${rt.lastError()}');
+      _check(rt.currentPaintopId == 'paintbrush',
+          'round-trip paintop id matches scanned family');
+      rt.dispose();
+    }
+    ps.dispose();
   }
 
   // ------------------------------------------------------------------

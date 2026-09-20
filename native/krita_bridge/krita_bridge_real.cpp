@@ -55,6 +55,7 @@
 #include <QByteArray>
 #include <QColor>
 #include <QDir>
+#include <QDirIterator>
 #include <QDomDocument>
 #include <QDomElement>
 #include <QFile>
@@ -276,6 +277,16 @@ QDomElement firstDescendant(const QDomElement& parent, const QString& tag) {
 // ---------------------------------------------------------------------------
 // Bridge context — owns real Krita objects.
 // ---------------------------------------------------------------------------
+
+/// One entry of a preset-directory scan (preset-families campaign):
+/// absolute file path, display name and declared paintop family, all
+/// parsed by the engine's own container/XML path.
+struct PresetScanEntry {
+    std::string path;
+    std::string name;
+    std::string family;
+};
+
 struct KritaBrushContext {
     // ABI parameters (mirrors the fallback bridge defaults).
     double size = 16.0;
@@ -299,9 +310,10 @@ struct KritaBrushContext {
     // Bookkeeping.
     QString presetPath;
     QString presetName;
-    std::vector<std::string> availablePresets;
+    std::vector<PresetScanEntry> presetScan;
     std::string lastError;
     std::string nameBuffer;
+    std::string scanBuffer;
     std::string versionBuffer;
     std::string paintopId;   // declared preset family (paintopid root attr)
 
@@ -387,6 +399,66 @@ KoColor abiColorToKoColor(KritaBrushContext* h, bool forceBlack = false) {
 } // namespace
 
 // ---------------------------------------------------------------------------
+// Preset container/XML extraction shared by krita_brush_load_preset and
+// the preset-directory scan (preset-families campaign).
+// ---------------------------------------------------------------------------
+
+// Extract the preset XML payload from a .kpp container. Supported
+// containers: PKZIP KoStore archives (the XML entry named after the
+// preset), legacy PNG stock presets (zTXt chunk keyed "preset") and bare
+// XML files. On a PNG container without the chunk, *err (when non-null)
+// is set so the loader can keep its historical error message; an empty
+// return with an empty *err means "no XML found at all".
+QByteArray extractPresetXml(const QByteArray& container, std::string* err = nullptr) {
+    if (err) err->clear();
+    const uint8_t* cdata = reinterpret_cast<const uint8_t*>(container.constData());
+    static const uint8_t pngSig[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    QByteArray xml;
+    if (container.size() >= 4 && rd32(cdata) == 0x04034b50UL) {
+        const QList<QByteArray> entries = zipListXmlEntries(container);
+        for (const QByteArray& entryName : entries) {
+            const QByteArray candidate = zipExtractFile(container, QString::fromUtf8(entryName));
+            if (!candidate.isEmpty()) { xml = candidate; break; }
+        }
+    } else if (container.size() >= 8 && std::memcmp(cdata, pngSig, 8) == 0) {
+        xml = pngExtractPresetXml(container);
+        if (xml.isEmpty() && err) *err = "png";
+    } else if (!container.isEmpty()) {
+        xml = container;
+    }
+    return xml;
+}
+
+// Light parse of one preset container: display name + declared paintop
+// family. Shares the container/XML path of krita_brush_load_preset; no
+// engine objects are constructed, so a scan stays cheap even on large
+// preset directories. Returns false when the file carries no parsable
+// preset XML (the caller skips it — robust directory scan).
+bool probePresetFile(const QString& path, QString* nameOut, QString* familyOut) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    const QByteArray container = f.readAll();
+    f.close();
+
+    const QByteArray xml = extractPresetXml(container);
+    if (xml.isEmpty()) return false;
+    QDomDocument doc;
+    if (!doc.setContent(xml)) return false;
+
+    const QDomElement root = doc.documentElement();
+    QString name = root.attribute("name");
+    if (name.isEmpty()) name = QFileInfo(path).completeBaseName();
+    QString pid = root.attribute("paintopid");
+    if (pid.isEmpty() &&
+        root.tagName().compare("Paintop", Qt::CaseInsensitive) == 0) {
+        pid = root.attribute("id");
+    }
+    *nameOut = name;
+    *familyOut = pid;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // C API implementation.
 // ---------------------------------------------------------------------------
 
@@ -424,29 +496,11 @@ int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path) {
     const QByteArray container = f.readAll();
     f.close();
 
-    // Extract the preset XML. Supported containers:
-    //   1. PKZIP archive (.kpp saved by Krita's KoStore zip backend) — the
-    //      XML entry is named after the preset.
-    //   2. Legacy PNG preset (Krita's own stock presets): a PNG thumbnail
-    //      carrying the preset XML in a zTXt chunk keyed "preset".
-    //   3. Bare XML file (unpacked presets, synthetic test shapes).
-    const uint8_t* cdata = reinterpret_cast<const uint8_t*>(container.constData());
-    static const uint8_t pngSig[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
-    QByteArray xml;
-    if (container.size() >= 4 && rd32(cdata) == 0x04034b50UL) {
-        const QList<QByteArray> entries = zipListXmlEntries(container);
-        for (const QByteArray& entryName : entries) {
-            const QByteArray candidate = zipExtractFile(container, QString::fromUtf8(entryName));
-            if (!candidate.isEmpty()) { xml = candidate; break; }
-        }
-    } else if (container.size() >= 8 && std::memcmp(cdata, pngSig, 8) == 0) {
-        xml = pngExtractPresetXml(container);
-        if (xml.isEmpty()) {
-            handle->setError("PNG preset container has no 'preset' zTXt/tEXt chunk");
-            return 6;
-        }
-    } else if (!container.isEmpty()) {
-        xml = container;
+    std::string extractErr;
+    const QByteArray xml = extractPresetXml(container, &extractErr);
+    if (!extractErr.empty()) {
+        handle->setError("PNG preset container has no 'preset' zTXt/tEXt chunk");
+        return 6;
     }
     if (xml.isEmpty()) {
         handle->setError("no preset XML found in container");
@@ -903,36 +957,65 @@ const char* krita_brush_version(void) {
     return v.c_str();
 }
 
+int32_t krita_brush_preset_scan(KritaBrushContext* handle, const char* dir) {
+    if (!handle) return -1;
+    if (!dir || !*dir) {
+        handle->setError("scan dir is null or empty");
+        return -1;
+    }
+    handle->clearError();
+    const QDir rootDir(QString::fromUtf8(dir));
+    if (!rootDir.exists()) {
+        handle->setError("scan dir does not exist: " + std::string(dir));
+        return -2;
+    }
+
+    handle->presetScan.clear();
+    // Recursive *.kpp walk (Krita bundles presets in per-family
+    // subdirectories); the hard cap keeps a pathological tree bounded.
+    QDirIterator it(rootDir.absolutePath(), QStringList() << "*.kpp",
+                    QDir::Files, QDirIterator::Subdirectories);
+    QStringList files;
+    while (it.hasNext() && files.size() < 512) files << it.next();
+    files.sort();
+
+    handle->presetScan.reserve(size_t(files.size()));
+    for (const QString& f : files) {
+        QString name, family;
+        if (!probePresetFile(f, &name, &family)) continue;
+        PresetScanEntry e;
+        e.path = f.toUtf8().constData();
+        e.name = name.toUtf8().constData();
+        e.family = family.toUtf8().constData();
+        handle->presetScan.push_back(std::move(e));
+    }
+    return int32_t(handle->presetScan.size());
+}
+
 int32_t krita_brush_preset_count(KritaBrushContext* handle) {
     if (!handle) return -1;
-    if (handle->availablePresets.empty()) {
-        QStringList dirs;
-        dirs << "assets/brushes"
-             << "brushes"
-             << QDir::homePath() + "/.local/share/krita/brushes"
-             << QDir::homePath() + "/AppData/Roaming/krita/brushes";
-        QStringList files;
-        for (const QString& d : dirs) {
-            QDir dir(d);
-            if (dir.exists()) {
-                const QStringList found = dir.entryList(QStringList() << "*.kpp", QDir::Files);
-                for (const QString& f : found) files << f;
-            }
-        }
-        files.removeDuplicates();
-        handle->availablePresets.reserve(files.size());
-        for (const QString& f : files) {
-            handle->availablePresets.push_back(f.toUtf8().constData());
-        }
-    }
-    return int32_t(handle->availablePresets.size());
+    return int32_t(handle->presetScan.size());
 }
 
 const char* krita_brush_preset_name(KritaBrushContext* handle, int32_t index) {
     if (!handle) return nullptr;
-    if (index < 0 || index >= krita_brush_preset_count(handle)) return nullptr;
-    handle->nameBuffer = handle->availablePresets[index];
+    if (index < 0 || size_t(index) >= handle->presetScan.size()) return nullptr;
+    handle->nameBuffer = handle->presetScan[size_t(index)].name;
     return handle->nameBuffer.c_str();
+}
+
+const char* krita_brush_preset_family(KritaBrushContext* handle, int32_t index) {
+    if (!handle) return nullptr;
+    if (index < 0 || size_t(index) >= handle->presetScan.size()) return nullptr;
+    handle->scanBuffer = handle->presetScan[size_t(index)].family;
+    return handle->scanBuffer.c_str();
+}
+
+const char* krita_brush_preset_path(KritaBrushContext* handle, int32_t index) {
+    if (!handle) return nullptr;
+    if (index < 0 || size_t(index) >= handle->presetScan.size()) return nullptr;
+    handle->scanBuffer = handle->presetScan[size_t(index)].path;
+    return handle->scanBuffer.c_str();
 }
 
 } // extern "C"
