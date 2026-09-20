@@ -191,9 +191,12 @@ jobs:
             /tmp/qsp_shim.cpp -o "$STAGE/libqsp_shim.so" \
             "-L$PWD/$STAGE" -lQt5Core_x86_64
           test -s "$STAGE/libqsp_shim.so" || { echo '##[error] shim build failed'; exit 1; }
+          # Replace Qt5Core with the shim and DO NOT re-add it: the shim
+          # itself DT_NEEDEDs libQt5Core_x86_64.so, so Core loads THROUGH
+          # the shim and the shim stays ahead of it in the solist.
+          # (patchelf re-sorts .dynamic — re-adding put Core back first and
+          # shadowed the shim: run 35511658356.)
           patchelf --replace-needed libQt5Core_x86_64.so libqsp_shim.so "$STAGE/libkrita_bridge.so"
-          patchelf --add-needed libQt5Core_x86_64.so "$STAGE/libkrita_bridge.so"
-          echo 'shim wired into bridge NEEDED order'
           # ---- dynamic-closure completion: the engine merge link
           # OVER-LINKS (the krita object closure references symbols from
           # libraries that never enter the NEEDED chain — e.g. QuaZip via
@@ -213,6 +216,9 @@ jobs:
             [ "$name" = "libkrita_bridge.so" ] && continue
             [ "$name" = "libc++_shared.so" ] && continue
             [ "$name" = "libqsp_shim.so" ] && continue
+            # Core is deliberately NOT a direct NEEDED (loads via the
+            # shim, see above)
+            [ "$name" = "libQt5Core_x86_64.so" ] && continue
             if printf '%s\n' "$DYNOUT" | grep -qF "[$name]"; then continue; fi
             patchelf --add-needed "$name" "$STAGE/libkrita_bridge.so"
             echo "added DT_NEEDED: $name"
@@ -220,6 +226,17 @@ jobs:
           # head closes the pipe -> grep SIGPIPE -> pipefail aborts the
           # step (found by run 35510330096); audit prints are best-effort
           "$TC/llvm-readelf" -d "$STAGE/libkrita_bridge.so" | grep NEEDED | sed -n '1,40p' || true
+          # gate: the shim must be the FIRST NEEDED and Core must not be
+          # a direct dependency (else the real JNI-reaching
+          # writableLocation shadows the shim and the boot SIGSEGVs)
+          AUDIT=$("$TC/llvm-readelf" -d "$STAGE/libkrita_bridge.so")
+          FIRST=$(printf '%s\n' "$AUDIT" | awk '/\(NEEDED\)/{print $NF; exit}' | tr -d '[]')
+          [ "$FIRST" = "libqsp_shim.so" ] \
+            || { echo "##[error] shim is not the first NEEDED (got: $FIRST)"; exit 1; }
+          if printf '%s\n' "$AUDIT" | grep -qF '[libQt5Core_x86_64.so]'; then
+            echo '##[error] Qt5Core still a direct bridge NEEDED — shim would be shadowed'
+            exit 1
+          fi
           # ---- relink the smoke exe: the artifact exe's NEEDED entry is
           # the absolute builder path (recorded at link time) and cannot
           # resolve on-device. Relink from the same source against the
