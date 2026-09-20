@@ -255,6 +255,16 @@ jobs:
               unsigned char* p = static_cast<unsigned char*>(sret);
               for (int i = 0; i < 16; ++i) p[i] = 0;
           }
+          // Same probe, next step: KCatalogStaticData also calls
+          // javaObject() (cross-lib UNDEF import — interceptable, unlike
+          // the same-TU catalogLocaleDir call which clang direct-binds,
+          // run 35523563700). KF5 passes a null-context object here;
+          // the real javaObject derefs its this unconditionally. Return
+          // NULL: the guarded asset-manager path then no-ops with an
+          // empty catalog map and i18n falls back to source strings.
+          void* _ZNK17QAndroidJniObject10javaObjectEv(const void* /*this*/) {
+              return 0;
+          }
           }
           AXEOF
           "$TC/x86_64-linux-android24-clang++" -std=c++17 -O2 -fPIC -shared -nostdlib++ \
