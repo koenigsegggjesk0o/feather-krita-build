@@ -129,7 +129,10 @@ jobs:
           LIBCXX_SRC=""
           for N in $(ls -d "${SDK_ROOT}"/ndk/* 2>/dev/null | sort -V | tac); do
             while IFS= read -r CAND; do
-              if "$TC/llvm-readelf" --dyn-syms "$CAND" 2>/dev/null | grep -q '__cxa_init_primary_exception'; then
+              # GNU readelf -W = full symbol names (llvm-readelf truncates
+              # long names even in --dyn-syms — false negatives cost two
+              # CI round-trips: runs 35508334166 + 35508812780)
+              if readelf -Ws "$CAND" 2>/dev/null | grep -q '__cxa_init_primary_exception'; then
                 LIBCXX_SRC="$CAND"
                 break 2
               fi
@@ -153,7 +156,7 @@ jobs:
           test -s "$LIBCXX_SRC" || { echo '##[error] no usable modern libc++_shared.so found'; exit 1; }
           cp "$LIBCXX_SRC" "$STAGE/libc++_shared.so"
           echo "libc++_shared.so source: $LIBCXX_SRC ($(stat -c %s "$STAGE/libc++_shared.so") bytes)"
-          "$TC/llvm-readelf" --dyn-syms "$STAGE/libc++_shared.so" | grep -q '__cxa_init_primary_exception' \
+          readelf -Ws "$STAGE/libc++_shared.so" | grep -q '__cxa_init_primary_exception' \
             || { echo '##[error] staged libc++_shared still lacks the modern symbol set'; exit 1; }
           # stripped COPY for fast adb push (dynamic behavior unchanged;
           # the unstripped original ships in the real-engine APK)
