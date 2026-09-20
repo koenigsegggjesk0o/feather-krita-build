@@ -117,7 +117,38 @@ jobs:
           cp engine/android/x86_64/libQt5*_x86_64.so "$STAGE/"
           cp engine/android/x86_64/libKF5*.so* "$STAGE/"
           cp engine/android/x86_64/libquazip*.so "$STAGE/"
-          cp engine/android/x86_64/libc++_shared.so "$STAGE/"
+          # ---- libc++_shared.so: the engine artifact carries a PRUNED
+          # OLD runtime (1.6MB, pre-LLVM-12 — no __cxa_init_primary_exception;
+          # found by run 35507751331: CANNOT LINK EXECUTABLE at load). The
+          # bridge was compiled against a modern NDK, so the on-device
+          # runtime must be modern too. libc++_shared is backwards
+          # ABI-compatible, so the r21-era Qt/KF5 libs keep working with a
+          # newer runtime. Source it from the runner's NDKs (first whose
+          # x86_64 copy exports the modern symbol), else download r27c —
+          # the same source krita-build's android deps step uses.
+          LIBCXX_SRC=""
+          for N in $(ls -d "${SDK_ROOT}"/ndk/* 2>/dev/null | sort -V | tac); do
+            while IFS= read -r CAND; do
+              if "$TC/llvm-readelf" --dyn-syms "$CAND" 2>/dev/null | grep -q '__cxa_init_primary_exception'; then
+                LIBCXX_SRC="$CAND"
+                break 2
+              fi
+            done < <(find "$N" -name libc++_shared.so -path '*sysroot/usr/lib/x86_64-linux-android/*' 2>/dev/null | head -5)
+          done
+          if [ -z "$LIBCXX_SRC" ]; then
+            echo 'no local NDK exports the modern symbol — downloading NDK r27c runtime'
+            curl -sfL --retry 3 -o /tmp/ndk27.zip \
+              https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
+            unzip -j -o -q /tmp/ndk27.zip \
+              'android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so' \
+              -d /tmp/ndk27lib
+            LIBCXX_SRC=/tmp/ndk27lib/libc++_shared.so
+          fi
+          test -s "$LIBCXX_SRC" || { echo '##[error] no usable modern libc++_shared.so found'; exit 1; }
+          cp "$LIBCXX_SRC" "$STAGE/libc++_shared.so"
+          echo "libc++_shared.so source: $LIBCXX_SRC ($(stat -c %s "$STAGE/libc++_shared.so") bytes)"
+          "$TC/llvm-readelf" --dyn-syms "$STAGE/libc++_shared.so" | grep -q '__cxa_init_primary_exception' \
+            || { echo '##[error] staged libc++_shared still lacks the modern symbol set'; exit 1; }
           # stripped COPY for fast adb push (dynamic behavior unchanged;
           # the unstripped original ships in the real-engine APK)
           "$TC/llvm-strip" "$STAGE/libkrita_bridge.so"
