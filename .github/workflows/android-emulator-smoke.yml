@@ -363,7 +363,7 @@ jobs:
           "$SDK_ROOT/emulator/emulator" -avd fkr-smoke \
             -no-window -no-audio -no-boot-anim \
             -gpu swiftshader_indirect -accel on \
-            -memory 3072 -no-snapshot -wipe-data \
+            -memory 4096 -no-snapshot -wipe-data \
             > /tmp/emulator.log 2>&1 &
           echo $! > /tmp/emulator.pid
           ADB="$SDK_ROOT/platform-tools/adb"
@@ -445,6 +445,10 @@ jobs:
           # statics need a JavaVM (see smoke_jni.cpp header). FkrSmoke
           # loads the chain in VM-registration order, then runs
           # smoke_main through the JNI wrapper; System.exit propagates rc.
+          "$ADB" shell "export CLASSPATH=/data/local/tmp/fkr/classes.dex; /system/bin/app_process / FkrSmoke bootcheck" \
+            2>&1 | tee /tmp/bootcheck.txt || true
+          grep -q 'BOOTCHECK OK' /tmp/bootcheck.txt \
+            || { echo '##[error] app_process bootcheck failed'; cat /tmp/bootcheck.txt; exit 1; }
           "$ADB" shell "export LD_LIBRARY_PATH=/data/local/tmp/fkr; export CLASSPATH=/data/local/tmp/fkr/classes.dex; cd /data/local/tmp/fkr && /system/bin/app_process / FkrSmoke /data/local/tmp/fkr/stock_basic_5_size.kpp /data/local/tmp/fkr/stock_eraser_circle.kpp" \
             2>&1 | tee /tmp/smoke_output.txt
           grep -q 'SMOKE OK' /tmp/smoke_output.txt \
