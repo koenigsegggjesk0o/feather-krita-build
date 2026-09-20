@@ -376,7 +376,9 @@ jobs:
           def needed(p):
               out = subprocess.run([re_bin, '-d', p], capture_output=True, text=True).stdout
               return rx.findall(out)
-          syslibs = {'liblog.so', 'libz.so', 'libm.so', 'libdl.so', 'libc.so', 'libandroid.so'}
+          # libEGL/libGLESv2/libjnigraphics = Android system libs (/system/lib64),
+          # on-device resolution proven by the loop-43/44 green harness runs
+          syslibs = {'liblog.so', 'libz.so', 'libm.so', 'libdl.so', 'libc.so', 'libandroid.so', 'libEGL.so', 'libGLESv2.so', 'libjnigraphics.so'}
           files = {os.path.basename(p) for p in glob.glob(os.path.join(d, '*.so'))}
           files.discard('libkrita_bridge.so')
           seen, stack = {'libkrita_bridge.so'}, ['libkrita_bridge.so']
