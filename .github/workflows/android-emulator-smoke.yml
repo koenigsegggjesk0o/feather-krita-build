@@ -91,10 +91,15 @@ jobs:
       - name: Fetch bridge + smoke sources and fixtures (mirror @ engine sha)
         run: |
           set -euo pipefail
-          BASE="https://raw.githubusercontent.com/${REPO}/${{ steps.resolve.outputs.head_sha }}"
+          # Tooling comes from mirror MAIN (smoke_main refactor + JNI boot
+          # are load-bearing-neutral against the stable ABI), while the
+          # engine BINARIES stay pinned to the engine run's artifacts.
+          BASE="https://raw.githubusercontent.com/${REPO}/main"
           mkdir -p src
           for f in native/krita_bridge/krita_bridge.h \
                    native/krita_bridge/smoke_test_real.cpp \
+                   native/krita_bridge/smoke_jni.cpp \
+                   native/krita_bridge/FkrSmoke.java \
                    test/fixtures/stock_basic_5_size.kpp \
                    test/fixtures/stock_eraser_circle.kpp; do
             curl -fsSL "$BASE/$f" -o "src/$(basename "$f")" \
@@ -179,6 +184,13 @@ jobs:
           static const char16_t kPath[] = u"/data/local/tmp/fkr";
           extern "C" {
           void _ZN7QStringC1EPK5QChari(void* self, const char16_t* s, int len);
+          // QJNIObjectPrivate::isSameObject(jobject) const -> bool —
+          // JVM-less boot guard: never deref a null JNIEnv (the shim is
+          // the first definition every consumer sees)
+          bool _ZNK17QJNIObjectPrivate12isSameObjectEP8_jobject(void* self, void* obj) {
+              (void)self; (void)obj;
+              return false;
+          }
           // QStandardPaths::writableLocation(StandardLocation) -> QString
           // (non-trivial return: hidden sret pointer is param 1)
           void _ZN14QStandardPaths16writableLocationENS_16StandardLocationE(void* sret, int type) {
@@ -207,6 +219,29 @@ jobs:
           "$TC/llvm-readelf" -d "$STAGE/libQt5Core_x86_64.so" | grep -q 'SONAME.*libQt5Core_x86_64.so' \
             || { echo '##[error] shim SONAME not set'; exit 1; }
           echo 'shim masquerade wired: stub = libQt5Core_x86_64.so, real = libQt5Core_real_x86_64.so'
+          # ---- AndroidExtras masquerade: KF5I18n's static init calls
+          # QtAndroid::androidContext() -> QtNative activity — absent in a
+          # bare process. Shim returns a NULL QAndroidJniObject (Qt's own
+          # null-object paths degrade gracefully); the real module is
+          # renamed + re-SONAMEd as the shim's dependency (same DFS
+          # priority argument as the Core masquerade).
+          mv "$STAGE/libQt5AndroidExtras_x86_64.so" "$STAGE/libQt5AndroidExtras_real_x86_64.so"
+          patchelf --set-soname libQt5AndroidExtras_real_x86_64.so "$STAGE/libQt5AndroidExtras_real_x86_64.so"
+          cat > /tmp/axe_shim.cpp <<'AXEOF'
+          // null QAndroidJniObject: m_jobject = m_jclass = nullptr
+          extern "C" {
+          void _ZN9QtAndroid14androidContextEv(void* sret) {
+              unsigned char* p = static_cast<unsigned char*>(sret);
+              for (int i = 0; i < 16; ++i) p[i] = 0;
+          }
+          }
+          AXEOF
+          "$TC/x86_64-linux-android24-clang++" -std=c++17 -O2 -fPIC -shared -nostdlib++ \
+            /tmp/axe_shim.cpp -o "$STAGE/libQt5AndroidExtras_x86_64.so" \
+            "-L$PWD/$STAGE" -lQt5AndroidExtras_real_x86_64 -Wl,-soname,libQt5AndroidExtras_x86_64.so
+          "$TC/llvm-readelf" -d "$STAGE/libQt5AndroidExtras_real_x86_64.so" | grep -q 'SONAME.*libQt5AndroidExtras_real_x86_64.so' \
+            || { echo '##[error] real AndroidExtras SONAME rename failed'; exit 1; }
+          echo 'AndroidExtras masquerade wired: stub = libQt5AndroidExtras_x86_64.so, real = libQt5AndroidExtras_real_x86_64.so'
           # ---- dynamic-closure completion: the engine merge link
           # OVER-LINKS (the krita object closure references symbols from
           # libraries that never enter the NEEDED chain — e.g. QuaZip via
@@ -226,6 +261,7 @@ jobs:
             [ "$name" = "libkrita_bridge.so" ] && continue
             [ "$name" = "libc++_shared.so" ] && continue
             [ "$name" = "libQt5Core_real_x86_64.so" ] && continue
+            [ "$name" = "libQt5AndroidExtras_real_x86_64.so" ] && continue
             # Core (the shim) is already a direct NEEDED of every consumer
             if printf '%s\n' "$DYNOUT" | grep -qF "[$name]"; then continue; fi
             patchelf --add-needed "$name" "$STAGE/libkrita_bridge.so"
@@ -261,9 +297,24 @@ jobs:
           "$TC/llvm-readelf" -d "$STAGE/smoke_test_real_android" \
             | grep -q 'Library runpath: \[\$ORIGIN\]' \
             || { echo '##[error] smoke RUNPATH is not $ORIGIN'; exit 1; }
-          # ---- fixtures ride along (real Krita stock PNG containers)
+          # ---- JNI smoke library: smoke_main + JNI entry, loaded inside
+          # the ART VM (app_process boot; bare shell exec has no JVM and
+          # the Qt/KF5 android statics SIGSEGV — runs 35510837084/35513090509)
+          "$TC/x86_64-linux-android24-clang++" -std=c++17 -O2 -fPIC -shared \
+            -Isrc src/smoke_test_real.cpp src/smoke_jni.cpp \
+            "-L$PWD/$STAGE" -lkrita_bridge \
+            -o "$STAGE/libsmoke_jni.so"
+          test -s "$STAGE/libsmoke_jni.so" || { echo '##[error] smoke_jni build failed'; exit 1; }
+          "$TC/llvm-readelf" -d "$STAGE/libsmoke_jni.so" | grep NEEDED
+          # ---- fixtures + app_process boot classes
           cp src/stock_basic_5_size.kpp src/stock_eraser_circle.kpp "$STAGE/"
           chmod +x "$STAGE/smoke_test_real_android"
+          mkdir -p jclasses && "$JAVA_HOME/bin/javac" --release 8 -d jclasses src/FkrSmoke.java
+          BT=$(ls "$SDK_ROOT/build-tools/" | sort -V | tail -1)
+          "$SDK_ROOT/build-tools/$BT/d8" --release --min-api 24 \
+            --lib "$SDK_ROOT/platforms/android-30/android.jar" \
+            --output "$STAGE" jclasses/FkrSmoke.class
+          test -s "$STAGE/classes.dex" || { echo '##[error] dex build failed'; exit 1; }
           echo "--- staged runtime: $(du -sh "$STAGE" | cut -f1), $(ls "$STAGE" | wc -l) files"
 
       - name: Enable KVM
@@ -297,7 +348,7 @@ jobs:
           echo '--- installing system image (API 30 google_apis x86_64)'
           # no yes-pipe here: licenses are accepted, install runs
           # unattended (EOF on any unexpected prompt aborts cleanly)
-          "$SM" "system-images;android-30;google_apis;x86_64" > /tmp/img.log 2>&1 \
+          "$SM" "system-images;android-30;google_apis;x86_64" "platforms;android-30" > /tmp/img.log 2>&1 \
             || { echo '##[error] system-image install failed'; tail -40 /tmp/img.log; exit 1; }
           test -d "$SDK_ROOT/system-images/android-30/google_apis/x86_64" \
             || { echo '##[error] system image dir missing after install'; tail -20 /tmp/img.log; exit 1; }
@@ -384,7 +435,11 @@ jobs:
           set -euo pipefail
           ADB="$SDK_ROOT/platform-tools/adb"
           set -o pipefail
-          "$ADB" shell "cd /data/local/tmp/fkr && LD_LIBRARY_PATH=/data/local/tmp/fkr ./smoke_test_real_android stock_basic_5_size.kpp stock_eraser_circle.kpp" \
+          # app_process boots ART for this process: the Qt/KF5 android
+          # statics need a JavaVM (see smoke_jni.cpp header). FkrSmoke
+          # loads the chain in VM-registration order, then runs
+          # smoke_main through the JNI wrapper; System.exit propagates rc.
+          "$ADB" shell "export LD_LIBRARY_PATH=/data/local/tmp/fkr; export CLASSPATH=/data/local/tmp/fkr/classes.dex; cd /data/local/tmp/fkr && /system/bin/app_process / FkrSmoke /data/local/tmp/fkr/stock_basic_5_size.kpp /data/local/tmp/fkr/stock_eraser_circle.kpp" \
             2>&1 | tee /tmp/smoke_output.txt
           grep -q 'SMOKE OK' /tmp/smoke_output.txt \
             || { echo '##[error] SMOKE OK banner missing — on-device gates failed'; exit 1; }
