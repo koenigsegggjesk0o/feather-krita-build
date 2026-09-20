@@ -20,6 +20,23 @@
 
 extern "C" int smoke_main(int argc, char** argv);
 
+// Own-scope JNI_OnLoad: ART validates every System.load target with
+// dlsym(handle, "JNI_OnLoad"), and bionic resolves a handle-dlsym
+// against the object's OWN symbol scope first, then its dependency
+// closure (BFS). Without this function the lookup walks through the
+// bridge chain and lands on libQt5Core_real's JNI_OnLoad — which
+// registers natives on Qt's Java classes (absent from a minimal dex)
+// and returns JNI_ERR, failing the whole load as
+// "JNI_ERR returned from JNI_OnLoad in libsmoke_jni.so" (run
+// 35520875707). Returning the version from our own scope is
+// deterministic: ART never reaches the core's hook, which is exactly
+// what we want — the engine statics are shimmed VM-free and nothing in
+// the smoke needs Qt's loader path.
+extern "C" JNIEXPORT jint JNICALL
+JNI_OnLoad(JavaVM* /*vm*/, void* /*reserved*/) {
+    return JNI_VERSION_1_6;
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_FkrSmoke_run(JNIEnv* env, jclass, jobjectArray args) {
     const jsize n = env->GetArrayLength(args);

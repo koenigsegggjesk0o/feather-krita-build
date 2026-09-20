@@ -2,9 +2,13 @@
 // (loop-43; load-order redesign loop-44).
 // app_process boots the ART VM, then this class loads libsmoke_jni.so,
 // whose DT_NEEDED closure (bridge -> core shim -> real core -> extras ->
-// KF5 -> quazip) is pulled in by PLAIN bionic dlopen — the linker never
-// calls JNI_OnLoad for dependency loads, so no Qt library ever reaches
-// the ART path that demands Qt's Java classes.
+// KF5 -> quazip) is pulled in by PLAIN bionic dlopen. libsmoke_jni
+// exports an own-scope JNI_OnLoad returning JNI_VERSION_1_6: ART's
+// dlsym(handle) checks the object's own scope BEFORE walking the
+// dependency closure (bionic BFS), so our clean version handshake
+// shields the load from libQt5Core_real's JNI_OnLoad (which fails with
+// JNI_ERR — it registers natives on Qt's Java classes, absent from a
+// minimal dex; run 35520875707).
 //
 // WHY NOT System.load the real core first (loop-43 design): ART calls
 // JNI_OnLoad on every top-level System.load. libQt5Core_real exports
