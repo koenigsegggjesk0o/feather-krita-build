@@ -238,6 +238,23 @@ jobs:
               unsigned char* p = static_cast<unsigned char*>(sret);
               for (int i = 0; i < 16; ++i) p[i] = 0;
           }
+          // KCatalogStaticData probes androidContext().callObjectMethod(
+          // "getAssets") unconditionally, and the real Extras wrapper +
+          // Core helper in this deps bundle disagree on the member ABI
+          // (the wrapper forwards m_jobject where the Core helper expects
+          // a C++ this — run 35522266463: SEGV at 0x0 inside
+          // QJNIObjectPrivate::callObjectMethodV+60 on the null object).
+          // KF5I18n binds this symbol through the shim's SONAME first
+          // (solist order), so defining it here intercepts the probe:
+          // return a null object immediately — KF5's own test/je guards
+          // then skip the asset-manager path and i18n falls back to the
+          // source strings, which is exactly what the gates want.
+          void _ZNK17QAndroidJniObject16callObjectMethodEPKcS1_z(
+              void* sret, void* /*this*/, const char* /*name*/,
+              const char* /*sig*/, ...) {
+              unsigned char* p = static_cast<unsigned char*>(sret);
+              for (int i = 0; i < 16; ++i) p[i] = 0;
+          }
           }
           AXEOF
           "$TC/x86_64-linux-android24-clang++" -std=c++17 -O2 -fPIC -shared -nostdlib++ \
