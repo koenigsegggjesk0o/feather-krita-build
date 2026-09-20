@@ -4,9 +4,16 @@
 // (JNI_OnLoad of the REAL core runs when ART loads it via System.load)
 // and finally runs the C++ gate set through the JNI wrapper.
 //
+// "bootcheck" mode (first arg): verifies the app_process/CLASSPATH boot
+// itself, with NO native loads — isolates harness boot vs library-chain
+// failures (run 35515046839: instant SIGKILL, cause unidentified).
+//
 // Loaded from /data/local/tmp/fkr (see android-emulator-smoke.yml).
 public class FkrSmoke {
-    static {
+    static boolean sLoaded = false;
+
+    static void ensureLoaded() {
+        if (sLoaded) return;
         // 1. REAL core FIRST, explicitly: its JNI_OnLoad (called by ART on
         //    top-level System.load) registers the JavaVM with Qt's android
         //    glue. If it loaded transitively (via the shim's DT_NEEDED)
@@ -21,11 +28,17 @@ public class FkrSmoke {
         System.load("/data/local/tmp/fkr/libQt5AndroidExtras_x86_64.so");
         // 4. the JNI smoke (pulls the real bridge + engine closure)
         System.load("/data/local/tmp/fkr/libsmoke_jni.so");
+        sLoaded = true;
     }
 
     public static native int run(String[] args);
 
     public static void main(String[] args) {
+        if (args.length > 0 && "bootcheck".equals(args[0])) {
+            System.out.println("BOOTCHECK OK — app_process boot healthy");
+            System.exit(0);
+        }
+        ensureLoaded();
         final int rc = run(args);
         System.out.println("fkr smoke rc=" + rc);
         System.exit(rc);
