@@ -303,6 +303,7 @@ struct KritaBrushContext {
     std::string lastError;
     std::string nameBuffer;
     std::string versionBuffer;
+    std::string paintopId;   // declared preset family (paintopid root attr)
 
     void setError(const std::string& m) { lastError = m; }
     void clearError() { lastError.clear(); }
@@ -413,6 +414,7 @@ int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path) {
     }
     handle->presetPath = info.filePath();
     handle->presetName = info.completeBaseName();
+    handle->paintopId.clear();  // re-filled from the root element below
 
     QFile f(info.filePath());
     if (!f.open(QIODevice::ReadOnly)) {
@@ -506,6 +508,19 @@ int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path) {
     // The <Brush> element can appear as a real XML descendant (ZIP shapes)
     // or as the "brush_definition" settings value (stock PNG presets).
     QDomElement root = doc.documentElement();
+    // Paintop family identity (paintop identity campaign): stock presets
+    // declare <Preset paintopid="paintbrush">, legacy/synthetic shapes
+    // use <Paintop id="paintbrush">. Reported via
+    // krita_brush_get_paintop_id so the UI can badge the family and gate
+    // per-paintop options (hardness etc.).
+    {
+        QString pid = root.attribute("paintopid");
+        if (pid.isEmpty() &&
+            root.tagName().compare("Paintop", Qt::CaseInsensitive) == 0) {
+            pid = root.attribute("id");
+        }
+        handle->paintopId = pid.toStdString();
+    }
     QDomElement brushEl = firstDescendant(root, "brush");
     if (brushEl.isNull()) brushEl = firstDescendant(root, "Brush");
     const QString brushDefinition = lookup(QStringList() << "brush_definition");
@@ -752,6 +767,11 @@ const char* krita_brush_get_preset_name(KritaBrushContext* handle) {
     if (!handle) return "";
     handle->nameBuffer = handle->presetName.toStdString();
     return handle->nameBuffer.c_str();
+}
+
+const char* krita_brush_get_paintop_id(KritaBrushContext* handle) {
+    if (!handle) return "";
+    return handle->paintopId.c_str();
 }
 
 bool krita_brush_generate_dab(KritaBrushContext* handle,

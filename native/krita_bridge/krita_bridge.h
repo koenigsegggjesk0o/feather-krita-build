@@ -178,6 +178,16 @@ KRITA_BRIDGE_API double krita_brush_get_flow(KritaBrushContext* handle);
 /// back-compat: new function, no struct layout change.
 KRITA_BRIDGE_API bool krita_brush_get_eraser(KritaBrushContext* handle);
 KRITA_BRIDGE_API const char* krita_brush_get_preset_name(KritaBrushContext* handle);
+/// Returns the loaded preset's declared paintop family (the root
+/// `<Preset paintopid="...">` / `<Paintop id="...">` attribute —
+/// "paintbrush", "eraser", "spray", ...). Empty string when no preset is
+/// loaded or the preset omits the attribute. The pointer stays valid
+/// until the next [krita_brush_load_preset] call or handle disposal;
+/// copy it if it must outlive those. Lets the UI show which family a
+/// preset belongs to and gate per-paintop options (e.g. Krita only
+/// offers hardness to auto-brush paintops). Added by the paintop
+/// identity campaign; back-compat: new function, no struct layout change.
+KRITA_BRIDGE_API const char* krita_brush_get_paintop_id(KritaBrushContext* handle);
 
 // ---------------------------------------------------------------------------
 // Dab generation.

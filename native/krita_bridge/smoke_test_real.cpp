@@ -164,6 +164,13 @@ int main(int argc, char** argv) {
         CHECK(sp > 0.0, "spacing positive");
         CHECK(hd >= 0.0 && hd <= 1.0, "hardness in [0,1]");
 
+        // Paintop identity gate (paintop identity campaign): the declared
+        // root family must come through the ABI. Both smoke fixtures are
+        // real Krita stock files declaring <Preset paintopid="paintbrush">.
+        const std::string pid = krita_brush_get_paintop_id(p);
+        std::printf("  paintop_id=%s\n", pid.c_str());
+        CHECK(!pid.empty(), "paintop id populated from preset root");
+
         // Dab generation must work on the preset-loaded context.
         BrushInput pin;
         std::memset(&pin, 0, sizeof(pin));
@@ -184,6 +191,7 @@ int main(int argc, char** argv) {
                 CHECK(std::fabs(sp - 0.1) < 1e-9, "basic-5 spacing == 0.1 (Brush spacing)");
                 CHECK(hd == 0.0, "basic-5 hardness == 0 (hfade = 1)");
                 CHECK(!krita_brush_get_eraser(p), "basic-5 NOT flagged eraser");
+                CHECK(pid == "paintbrush", "basic-5 paintop id == paintbrush");
                 CHECK(c[0] == 0 && c[1] == 0 && c[2] == 0,
                       "basic-5 dab sanity (default color is black)");
             } else if (fixtureName.find("stock_eraser_circle") != std::string::npos) {
@@ -196,6 +204,8 @@ int main(int argc, char** argv) {
                 // its stroke compositing to destination-out accordingly).
                 CHECK(krita_brush_get_eraser(p),
                       "eraser preset flagged via settings (CompositeOp=erase)");
+                CHECK(pid == "paintbrush",
+                      "eraser-circle paintop id == paintbrush (CompositeOp marks the eraser, not the family)");
                 // The dab path also honors it: black mask WITHOUT the
                 // eraser input flag (mask color forcing).
                 CHECK(c[0] == 0 && c[1] == 0 && c[2] == 0,

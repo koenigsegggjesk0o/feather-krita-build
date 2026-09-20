@@ -59,6 +59,7 @@ class BrushSettingsPanel extends StatelessWidget {
                       // Preset name + change button.
                       _PresetChip(
                         name: state.brushPresetName,
+                        family: state.activePaintopId,
                         color: Color(state.brushColor),
                         onTap: onPickPreset,
                       ),
@@ -111,6 +112,9 @@ class BrushSettingsPanel extends StatelessWidget {
                       // Hardness (5-loop-40): mask fade through the real
                       // engine (set_hardness ABI rebuilds the mask
                       // generator). 0 = fully soft gaussian, 1 = hard disk.
+                      // Disabled (5-loop-41) when the loaded preset's
+                      // paintop family has no hardness dimension, mirroring
+                      // Krita's own per-paintop option availability.
                       GlassSlider(
                         value: state.brushHardness,
                         min: 0,
@@ -119,6 +123,7 @@ class BrushSettingsPanel extends StatelessWidget {
                         label: 'Hardness',
                         icon: Icons.adjust_rounded,
                         accent: AppTheme.toolLight,
+                        enabled: state.activePaintopSupportsHardness,
                         onChanged: state.setBrushHardness,
                         valueFormatter: (v) => '${(v * 100).round()}%',
                       ),
@@ -147,9 +152,9 @@ class BrushSettingsPanel extends StatelessWidget {
                         label: 'Smudge',
                         icon: Icons.water_drop_outlined,
                         accent: AppTheme.toolLiquify,
-                onChanged: state.setBrushSmudge,
-                valueFormatter: (v) => '${(v * 100).round()}%',
-              ),
+                        onChanged: state.setBrushSmudge,
+                        valueFormatter: (v) => '${(v * 100).round()}%',
+                      ),
                       const SizedBox(height: 12),
 
                       // Smoothing / stabilizer (loop-25).
@@ -161,20 +166,20 @@ class BrushSettingsPanel extends StatelessWidget {
                         label: 'Smoothing',
                         icon: Icons.waves_rounded,
                         accent: AppTheme.toolSelect,
-                onChanged: state.setBrushSmoothing,
-                valueFormatter: (v) => '${(v * 100).round()}%',
-              ),
-              const SizedBox(height: 16),
+                        onChanged: state.setBrushSmoothing,
+                        valueFormatter: (v) => '${(v * 100).round()}%',
+                      ),
+                      const SizedBox(height: 16),
 
-              // Colour swatch + picker.
-              _ColorRow(state: state),
-              const SizedBox(height: 8),
-              // Recent colours (loop-27).
-              _ColorHistoryRow(state: state),
-              const SizedBox(height: 16),
+                      // Colour swatch + picker.
+                      _ColorRow(state: state),
+                      const SizedBox(height: 8),
+                      // Recent colours (loop-27).
+                      _ColorHistoryRow(state: state),
+                      const SizedBox(height: 16),
 
-              // Mirror.
-              _MirrorRow(state: state),
+                      // Mirror.
+                      _MirrorRow(state: state),
                     ],
                   ),
                 ),
@@ -232,14 +237,30 @@ class _Header extends StatelessWidget {
 }
 
 class _PresetChip extends StatelessWidget {
-  const _PresetChip({required this.name, required this.color, required this.onTap});
+  const _PresetChip({
+    required this.name,
+    required this.color,
+    required this.onTap,
+    this.family,
+  });
 
   final String name;
   final Color color;
   final VoidCallback onTap;
 
+  /// The loaded preset's declared paintop family (5-loop-41), shown as a
+  /// small badge after the "Preset" label. Empty hides the badge.
+  final String? family;
+
+  String get _familyLabel {
+    final f = (family ?? '').trim();
+    if (f.isEmpty) return '';
+    return f[0].toUpperCase() + f.substring(1);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final familyLabel = _familyLabel;
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -265,13 +286,39 @@ class _PresetChip extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Preset',
-                    style: TextStyle(
-                      color: AppTheme.textTertiary,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w500,
-                    ),
+                  Row(
+                    children: [
+                      const Text(
+                        'Preset',
+                        style: TextStyle(
+                          color: AppTheme.textTertiary,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      if (familyLabel.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: AppTheme.accentSoft,
+                            borderRadius:
+                                BorderRadius.circular(AppTheme.radiusSmall),
+                          ),
+                          child: Text(
+                            familyLabel,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppTheme.accent,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   Text(
                     name,

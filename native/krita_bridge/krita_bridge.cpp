@@ -194,6 +194,7 @@ struct PresetParams {
     bool   smudge = false;
     double smudgeRatio = 0;
     double flow = -1.0; // sentinel: -1 = unset (0 is a valid flow value)
+    std::string paintopId; // declared family (root paintopid/id attribute)
 };
 
 PresetParams parsePresetXml(const QByteArray& xml) {
@@ -203,6 +204,16 @@ PresetParams parsePresetXml(const QByteArray& xml) {
         r.readNext();
         if (r.tokenType() != QXmlStreamReader::StartElement) continue;
         const QString name = r.name().toString();
+        if (name == "Preset" || name == "Paintop") {
+            // Root paintop identity (paintop identity campaign): stock
+            // presets declare <Preset paintopid="paintbrush">, legacy /
+            // synthetic shapes use <Paintop id="paintbrush">.
+            const QXmlStreamAttributes attrs = r.attributes();
+            QString pid = attrs.value("paintopid").toString();
+            if (pid.isEmpty()) pid = attrs.value("id").toString();
+            if (!pid.isEmpty()) p.paintopId = pid.toStdString();
+            continue;
+        }
         if (name == "param" || name == "brush_parameter") {
             const QXmlStreamAttributes attrs = r.attributes();
             QString key = attrs.value("name").toString();
@@ -243,6 +254,7 @@ struct KritaBrushContext {
     std::vector<std::string> availablePresets;
     std::string lastError;
     std::string presetNameBuffer;
+    std::string paintopId;   // declared preset family (paintopid root attr)
 
     // Smudge state — last sampled color (premultiplied RGBA floats 0..1).
     float smudgeR = 0, smudgeG = 0, smudgeB = 0, smudgeA = 0;
@@ -382,6 +394,9 @@ int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path) {
         if (p.eraser) handle->eraser = true;
         if (p.smudge) handle->smudge = p.smudgeRatio;
         if (p.flow >= 0.0) handle->flow = p.flow;
+        // Declared family replaces any previous preset's identity (empty
+        // stays empty — no preset-level claim means no family badge).
+        handle->paintopId = p.paintopId;
     }
     return 0;
 }
@@ -449,6 +464,11 @@ const char* krita_brush_get_preset_name(KritaBrushContext* handle) {
     if (!handle) return "";
     handle->presetNameBuffer = handle->presetName.toStdString();
     return handle->presetNameBuffer.c_str();
+}
+
+const char* krita_brush_get_paintop_id(KritaBrushContext* handle) {
+    if (!handle) return "";
+    return handle->paintopId.c_str();
 }
 
 bool krita_brush_generate_dab(KritaBrushContext* handle,

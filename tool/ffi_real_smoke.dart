@@ -131,13 +131,16 @@ void main(List<String> args) {
     if (p1.lastError().isNotEmpty) stdout.writeln('  err: ${p1.lastError()}');
     stdout.writeln('  basic-5: size=${p1.currentSize} '
         'opacity=${p1.currentOpacity} spacing=${p1.currentSpacing} '
-        'hardness=${p1.currentHardness} name=${p1.currentPresetName}');
+        'hardness=${p1.currentHardness} name=${p1.currentPresetName} '
+        'paintop=${p1.currentPaintopId}');
     _check(p1.currentSize == 40.0, 'basic-5 size == 40 (MaskGenerator diameter)');
     _check(p1.currentOpacity == 1.0, 'basic-5 opacity == 1.0 (Krita/opacity = 100)');
     _check((p1.currentSpacing - 0.1).abs() < 1e-9,
         'basic-5 spacing == 0.1 (Brush spacing attr)');
     _check(p1.currentHardness == 0.0, 'basic-5 hardness == 0 (hfade = 1)');
     _check(!p1.isEraserPreset, 'basic-5 NOT flagged eraser');
+    _check(p1.currentPaintopId == 'paintbrush',
+        'basic-5 paintop id == paintbrush (declared root family)');
     final pdab = p1.generateDab(const BrushInput(x: 0, y: 0, pressure: 1.0));
     _check(pdab.width >= 36 && pdab.width <= 44,
         'basic-5 dab extent from preset tip (got ${pdab.width})');
@@ -150,13 +153,15 @@ void main(List<String> args) {
     if (p2.lastError().isNotEmpty) stdout.writeln('  err: ${p2.lastError()}');
     stdout.writeln('  eraser: size=${p2.currentSize} '
         'opacity=${p2.currentOpacity} spacing=${p2.currentSpacing} '
-        'hardness=${p2.currentHardness}');
+        'hardness=${p2.currentHardness} paintop=${p2.currentPaintopId}');
     _check(p2.currentSize == 50.0, 'eraser size == 50 (MaskGenerator diameter)');
     _check(p2.currentOpacity == 1.0, 'eraser opacity == 1.0 (Krita/opacity = 100)');
     _check((p2.currentHardness - 0.13).abs() < 1e-9,
         'eraser hardness == 0.13 (hfade = 0.87)');
     _check(p2.isEraserPreset,
         'eraser preset flagged via settings (CompositeOp=erase)');
+    _check(p2.currentPaintopId == 'paintbrush',
+        'eraser-circle paintop id == paintbrush (CompositeOp marks the eraser, not the family)');
     final edab = p2.generateDab(const BrushInput(x: 0, y: 0, pressure: 1.0));
     if (edab.pixels.isNotEmpty) {
       final i = _centerPixelIndex(edab.width, edab.height, edab.stride);

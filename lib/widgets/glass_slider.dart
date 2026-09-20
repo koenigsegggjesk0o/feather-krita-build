@@ -29,6 +29,7 @@ class GlassSlider extends StatefulWidget {
     this.divisions,
     this.accent = AppTheme.accent,
     this.height = 44,
+    this.enabled = true,
   });
 
   final double value;
@@ -44,6 +45,11 @@ class GlassSlider extends StatefulWidget {
   final Color accent;
   final double height;
 
+  /// When false the slider ignores all input (drag, tap, keyboard) and is
+  /// rendered dimmed (5-loop-41: used to grey out the hardness slider for
+  /// paintop families without a hardness dimension).
+  final bool enabled;
+
   @override
   State<GlassSlider> createState() => _GlassSliderState();
 }
@@ -53,7 +59,8 @@ class _GlassSliderState extends State<GlassSlider> {
 
   double get _fraction {
     if (widget.max <= widget.min) return 0;
-    return ((widget.value - widget.min) / (widget.max - widget.min)).clamp(0.0, 1.0);
+    return ((widget.value - widget.min) / (widget.max - widget.min))
+        .clamp(0.0, 1.0);
   }
 
   double _fractionToValue(double f) {
@@ -76,6 +83,7 @@ class _GlassSliderState extends State<GlassSlider> {
     return Focus(
       autofocus: false,
       onKeyEvent: (node, event) {
+        if (!widget.enabled) return KeyEventResult.ignored;
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
         final step = (widget.max - widget.min) / (widget.divisions ?? 100);
         if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
@@ -88,72 +96,79 @@ class _GlassSliderState extends State<GlassSlider> {
         }
         return KeyEventResult.ignored;
       },
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final trackWidth = constraints.maxWidth;
-          return SizedBox(
-            height: widget.height,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (widget.label != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4, left: 2, right: 2),
-                    child: Row(
-                      children: [
-                        if (widget.icon != null) ...[
-                          Icon(widget.icon,
-                              size: 14, color: AppTheme.textTertiary),
-                          const SizedBox(width: 4),
-                        ],
-                        Text(
-                          widget.label!,
-                          style: const TextStyle(
-                            color: AppTheme.textTertiary,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                          ),
+      child: Opacity(
+        opacity: widget.enabled ? 1.0 : 0.35,
+        child: IgnorePointer(
+          ignoring: !widget.enabled,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final trackWidth = constraints.maxWidth;
+              return SizedBox(
+                height: widget.height,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (widget.label != null)
+                      Padding(
+                        padding:
+                            const EdgeInsets.only(bottom: 4, left: 2, right: 2),
+                        child: Row(
+                          children: [
+                            if (widget.icon != null) ...[
+                              Icon(widget.icon,
+                                  size: 14, color: AppTheme.textTertiary),
+                              const SizedBox(width: 4),
+                            ],
+                            Text(
+                              widget.label!,
+                              style: const TextStyle(
+                                color: AppTheme.textTertiary,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              fmt(widget.value),
+                              style: TextStyle(
+                                color: widget.accent,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
-                        const Spacer(),
-                        Text(
-                          fmt(widget.value),
-                          style: TextStyle(
-                            color: widget.accent,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
+                      ),
+                    Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onPanStart: (d) {
+                          setState(() => _dragging = true);
+                          HapticFeedback.selectionClick();
+                          widget.onChangeStart?.call(widget.value);
+                          _updateFromLocal(d.localPosition.dx, trackWidth);
+                        },
+                        onPanUpdate: (d) =>
+                            _updateFromLocal(d.localPosition.dx, trackWidth),
+                        onPanEnd: (_) {
+                          setState(() => _dragging = false);
+                          widget.onChangeEnd?.call(widget.value);
+                        },
+                        onTapDown: (d) =>
+                            _updateFromLocal(d.localPosition.dx, trackWidth),
+                        child: _Track(
+                          fraction: _fraction,
+                          accent: widget.accent,
+                          dragging: _dragging,
                         ),
-                      ],
+                      ),
                     ),
-                  ),
-                Expanded(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onPanStart: (d) {
-                      setState(() => _dragging = true);
-                      HapticFeedback.selectionClick();
-                      widget.onChangeStart?.call(widget.value);
-                      _updateFromLocal(d.localPosition.dx, trackWidth);
-                    },
-                    onPanUpdate: (d) =>
-                        _updateFromLocal(d.localPosition.dx, trackWidth),
-                    onPanEnd: (_) {
-                      setState(() => _dragging = false);
-                      widget.onChangeEnd?.call(widget.value);
-                    },
-                    onTapDown: (d) =>
-                        _updateFromLocal(d.localPosition.dx, trackWidth),
-                    child: _Track(
-                      fraction: _fraction,
-                      accent: widget.accent,
-                      dragging: _dragging,
-                    ),
-                  ),
+                  ],
                 ),
-              ],
-            ),
-          );
-        },
+              );
+            },
+          ),
+        ),
       ),
     );
   }

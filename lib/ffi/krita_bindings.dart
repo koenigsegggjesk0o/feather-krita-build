@@ -318,6 +318,11 @@ typedef _KritaBrushGetPresetNameNative = Pointer<Utf8> Function(
 typedef _KritaBrushGetPresetNameDart = Pointer<Utf8> Function(
     Pointer<Void> handle);
 
+typedef _KritaBrushGetPaintopIdNative = Pointer<Utf8> Function(
+    Pointer<Void> handle);
+typedef _KritaBrushGetPaintopIdDart = Pointer<Utf8> Function(
+    Pointer<Void> handle);
+
 // ---------------------------------------------------------------------------
 // Dynamic library loader.
 // ---------------------------------------------------------------------------
@@ -498,6 +503,9 @@ class KritaBrushEngine {
   late final _KritaBrushGetPresetNameDart _getPresetName =
       _lib.lookupFunction<_KritaBrushGetPresetNameNative, _KritaBrushGetPresetNameDart>(
           'krita_brush_get_preset_name');
+  late final _KritaBrushGetPaintopIdDart _getPaintopId =
+      _lib.lookupFunction<_KritaBrushGetPaintopIdNative, _KritaBrushGetPaintopIdDart>(
+          'krita_brush_get_paintop_id');
 
   /// The brush diameter currently set on the native engine.
   double get currentSize {
@@ -544,6 +552,19 @@ class KritaBrushEngine {
   String get currentPresetName {
     _checkAlive();
     final ptr = _getPresetName(_handle);
+    if (ptr == nullptr) return '';
+    return ptr.toDartString();
+  }
+
+  /// The loaded preset's declared paintop family (root
+  /// `<Preset paintopid="...">` / `<Paintop id="...">` attribute —
+  /// "paintbrush", "eraser", "spray", ...), or '' when no preset is
+  /// loaded or the preset omits the attribute. Lets the UI show which
+  /// family a preset belongs to and gate per-paintop options (e.g.
+  /// Krita only offers hardness to auto-brush paintops).
+  String get currentPaintopId {
+    _checkAlive();
+    final ptr = _getPaintopId(_handle);
     if (ptr == nullptr) return '';
     return ptr.toDartString();
   }

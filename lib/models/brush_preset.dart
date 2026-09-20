@@ -193,6 +193,38 @@ class BrushPreset {
     return scalar;
   }
 
+  /// Paintop families WITHOUT a hardness dimension in Krita. Derived
+  /// from Krita's own preset files: across the bundled stock presets,
+  /// hardness/Softness option entries appear only on paintbrush- and
+  /// eraser-family files (auto-brush tips); every one of the families
+  /// below carries none, and their brush editors offer no hardness.
+  static const Set<String> kNoHardnessPaintops = <String>{
+    'colorsmudge',
+    'curvebrush',
+    'deformbrush',
+    'hairybrush',
+    'particlebrush',
+    'roundmarker',
+    'sketchbrush',
+    'smudge',
+    'spraybrush',
+  };
+
+  /// Whether this preset's paintop family has a hardness dimension
+  /// (paintop identity campaign, 5-loop-41). Mirrors Krita: auto-brush
+  /// families (paintbrush, eraser, airbrush, ...) offer hardness; the
+  /// families in [kNoHardnessPaintops] do not. Unknown and undeclared
+  /// families default to ENABLED so a custom preset keeps manual
+  /// control; the engine applies what the loaded tip supports anyway
+  /// ([set_hardness] rebuilds auto-brush mask generators and is a no-op
+  /// for image/pipe tips). Used by the editor to disable the hardness
+  /// slider for families without a hardness dimension.
+  bool get supportsHardness {
+    final id = paintopId.trim().toLowerCase();
+    if (id.isEmpty) return true;
+    return !kNoHardnessPaintops.contains(id);
+  }
+
   /// Sets a scalar setting, replacing any existing value.
   void setScalar(String name, double value,
       {double min = 0.0, double max = 1.0, String description = ''}) {
@@ -223,9 +255,7 @@ class BrushPreset {
         'name': name,
         'paintopId': paintopId,
         'settings': settings.map((k, v) => MapEntry(k, v.toJson())),
-        'thumbnail': thumbnail != null
-            ? base64Encode(thumbnail!)
-            : null,
+        'thumbnail': thumbnail != null ? base64Encode(thumbnail!) : null,
         'filePath': filePath,
         'description': description,
         'isFavorite': isFavorite,
@@ -360,9 +390,10 @@ class BrushPreset {
     String? presetXml;
     var pos = 8; // skip the PNG signature
     while (pos + 8 <= bytes.length) {
-      final length =
-          (bytes[pos] << 24) | (bytes[pos + 1] << 16) |
-          (bytes[pos + 2] << 8) | bytes[pos + 3];
+      final length = (bytes[pos] << 24) |
+          (bytes[pos + 1] << 16) |
+          (bytes[pos + 2] << 8) |
+          bytes[pos + 3];
       final type = String.fromCharCodes(bytes.sublist(pos + 4, pos + 8));
       if (pos + 12 + length > bytes.length) break; // corrupt chunk
       final data = bytes.sublist(pos + 8, pos + 8 + length);
@@ -372,7 +403,8 @@ class BrushPreset {
           final keyword = String.fromCharCodes(data.sublist(0, nul));
           if (keyword.toLowerCase() == 'preset') {
             if (type == 'tEXt') {
-              presetXml = utf8.decode(data.sublist(nul + 1), allowMalformed: true);
+              presetXml =
+                  utf8.decode(data.sublist(nul + 1), allowMalformed: true);
             } else if (data.length > nul + 2 && data[nul + 1] == 0) {
               // zTXt: method byte 0 (zlib) then the zlib-wrapped stream.
               final inflated = ZLibDecoder().decodeBytes(
@@ -439,11 +471,9 @@ class BrushPreset {
     // native bridge's parsePresetXml.
     void readParams(Iterable<xml.XmlElement> nodes) {
       for (final param in nodes) {
-        final pname =
-            param.getAttribute('name') ?? param.getAttribute('id');
+        final pname = param.getAttribute('name') ?? param.getAttribute('id');
         if (pname == null) continue;
-        final value =
-            param.getAttribute('value') ?? param.innerText.trim();
+        final value = param.getAttribute('value') ?? param.innerText.trim();
         settings[pname] = _classifySetting(pname, value);
       }
     }

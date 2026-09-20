@@ -252,6 +252,7 @@ struct PresetParams {
     bool smudge = false;
     double smudgeRatio = 0;
     double flow = -1.0; // sentinel: -1 = unset (0 is a valid flow value)
+    std::string paintopId; // declared family (root paintopid/id attribute)
 
     bool hasAny() const {
         return size > 0 || opacity > 0 || spacing > 0 || hardness > 0;
@@ -261,6 +262,26 @@ struct PresetParams {
 PresetParams parsePresetXml(const std::vector<uint8_t>& xmlBytes) {
     PresetParams p;
     const std::string xml(xmlBytes.begin(), xmlBytes.end());
+    // Root paintop identity (paintop identity campaign): stock presets
+    // declare <Preset paintopid="paintbrush">, legacy/synthetic shapes
+    // use <Paintop id="paintbrush">. attrValue's whitespace boundary
+    // keeps the "id=" fallback from matching inside "paintopid=".
+    {
+        static const char* kRoots[] = {"<Preset", "<Paintop"};
+        for (const char* tag : kRoots) {
+            const size_t pos = xml.find(tag);
+            if (pos == std::string::npos) continue;
+            const size_t gt = xml.find('>', pos);
+            if (gt == std::string::npos) continue;
+            const std::string head = xml.substr(pos, gt - pos);
+            std::string pid;
+            if (attrValue(head, "paintopid", &pid) ||
+                attrValue(head, "id", &pid)) {
+                if (!pid.empty()) p.paintopId = pid;
+            }
+            break;
+        }
+    }
     for (const ParamPair& pair : scanParams(xml)) {
         const std::string& key = pair.key;
         const double v = pair.value;
@@ -299,6 +320,7 @@ struct KritaBrushContext {
     std::vector<std::string> availablePresets;
     std::string lastError;
     std::string presetNameBuffer;
+    std::string paintopId;   // declared preset family (paintopid root attr)
 
     void setError(const std::string& m) { lastError = m; }
     void clearError() { lastError.clear(); }
@@ -435,6 +457,9 @@ PORTABLE_API int32_t krita_brush_load_preset(KritaBrushContext* handle,
         if (p.eraser) handle->eraser = true;
         if (p.smudge) handle->smudge = p.smudgeRatio;
         if (p.flow >= 0.0) handle->flow = p.flow;
+        // Declared family replaces any previous preset's identity (empty
+        // stays empty — no preset-level claim means no family badge).
+        handle->paintopId = p.paintopId;
     }
     return 0;
 }
@@ -499,6 +524,11 @@ const char* krita_brush_get_preset_name(KritaBrushContext* handle) {
     if (!handle) return "";
     handle->presetNameBuffer = handle->presetName;
     return handle->presetNameBuffer.c_str();
+}
+
+PORTABLE_API const char* krita_brush_get_paintop_id(KritaBrushContext* handle) {
+    if (!handle) return "";
+    return handle->paintopId.c_str();
 }
 
 PORTABLE_API bool krita_brush_generate_dab(KritaBrushContext* handle,

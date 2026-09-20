@@ -66,8 +66,8 @@ class EditorState extends ChangeNotifier {
   })  : _strokes = strokes ?? StrokeManager(),
         _camera = camera ?? CameraController(),
         texture = texture ?? TexturePainter(),
-        guideSurface =
-            guideSurface ?? GuideSurface.sphere(radius: 1.4, segments: 24, rings: 14),
+        guideSurface = guideSurface ??
+            GuideSurface.sphere(radius: 1.4, segments: 24, rings: 14),
         presets = presets ?? <BrushPreset>[] {
     _strokes.addListener(_forward);
     _camera.addListener(_forward);
@@ -193,6 +193,13 @@ class EditorState extends ChangeNotifier {
   int _brushColor = 0xFF1A1A1A;
   String _brushPresetName = 'Basic Round';
 
+  /// The loaded preset's declared paintop family (5-loop-41) — e.g.
+  /// "paintbrush", "eraser", "spraybrush". Engine-authoritative when
+  /// the native bridge is live (krita_brush_get_paintop_id), falling
+  /// back to the pure-Dart [BrushPreset.paintopId] parse. Empty until a
+  /// preset that declares a family is loaded.
+  String _activePaintopId = '';
+
   /// Recently-used brush colours (most-recent-first). Loop-27.
   /// Capped at [kMaxColorHistory]. Mutated by [recordColor] (called from
   /// [setBrushColor]) and persisted via [onColorHistoryChanged].
@@ -228,6 +235,17 @@ class EditorState extends ChangeNotifier {
   /// mask generator (explicit override supersedes the preset brush until
   /// the next preset load).
   double get brushHardness => _brushHardness;
+
+  /// The loaded preset's declared paintop family (5-loop-41), or '' when
+  /// none is known. See [_activePaintopId].
+  String get activePaintopId => _activePaintopId;
+
+  /// Whether the hardness slider applies to the loaded preset's paintop
+  /// family (5-loop-41). Mirrors Krita: only auto-brush families offer
+  /// hardness. Falls back to enabled when the family is unknown.
+  bool get activePaintopSupportsHardness =>
+      _activePaintopId.isEmpty ||
+      !BrushPreset.kNoHardnessPaintops.contains(_activePaintopId);
 
   int get brushColor => _brushColor;
   String get brushPresetName => _brushPresetName;
@@ -322,7 +340,8 @@ class EditorState extends ChangeNotifier {
   /// or carries file-name noise ("b)_Basic-5_Size"). Keyed by asset file
   /// name; applied after the folder scan in [loadPresetLibrary]. Presets
   /// not listed here keep the name parsed from their preset XML.
-  static const Map<String, String> kBundledPresetDisplayNames = <String, String>{
+  static const Map<String, String> kBundledPresetDisplayNames =
+      <String, String>{
     'krita_paintbrush.kpp': 'Paintbrush',
     'krita_eraser.kpp': 'Eraser',
     'krita_roundmarker.kpp': 'Round Marker',
@@ -351,9 +370,7 @@ class EditorState extends ChangeNotifier {
   Future<void> loadPresetLibrary({String? directory}) async {
     final found = <BrushPreset>[];
     try {
-      final dir = directory != null
-          ? Directory(directory)
-          : presetsDir();
+      final dir = directory != null ? Directory(directory) : presetsDir();
       if (!dir.existsSync()) dir.createSync(recursive: true);
 
       // Seed bundled presets (skip anything already on disk).
@@ -589,10 +606,20 @@ class EditorState extends ChangeNotifier {
           try {
             _brushHardness = e.currentHardness.clamp(0.0, 1.0);
           } catch (_) {}
+          // Paintop family (5-loop-41): the engine's declared identity is
+          // authoritative; the pure-Dart parse covers older bridges.
+          try {
+            final pid = e.currentPaintopId;
+            _activePaintopId =
+                pid.isNotEmpty ? pid : preset.paintopId.trim().toLowerCase();
+          } catch (_) {
+            _activePaintopId = preset.paintopId.trim().toLowerCase();
+          }
         } else {
           // Engine present but preset rejected: still seed flow from the
           // preset XML (pure Dart) so the slider tracks the selection.
           _brushFlow = preset.flowValue.clamp(0.0, 1.0);
+          _activePaintopId = preset.paintopId.trim().toLowerCase();
         }
       } catch (_) {
         // Ignore — the synthetic dab fallback still works.
@@ -603,6 +630,11 @@ class EditorState extends ChangeNotifier {
     // preset XML so the slider tracks the selection (5-loop-40).
     if (_brushEngine == null) {
       _brushFlow = preset.flowValue.clamp(0.0, 1.0);
+    }
+    // Paintop family from the pure-Dart parse when no engine reported it
+    // (5-loop-41).
+    if (_brushEngine == null && _activePaintopId.isEmpty) {
+      _activePaintopId = preset.paintopId.trim().toLowerCase();
     }
 
     // Auto-switch the tool to match the preset's eraser mode (5-loop-38).
