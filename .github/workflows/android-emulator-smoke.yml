@@ -180,8 +180,19 @@ jobs:
           test -d "$SDK_ROOT/system-images/android-30/google_apis/x86_64" \
             || { echo '##[error] system image dir missing after install'; tail -20 /tmp/img.log; exit 1; }
           tail -3 /tmp/img.log
+          # AVD-home alignment (run 35506353784: emulator died with
+          # "Unknown AVD name [fkr-smoke]" — modern avdmanager defaults
+          # to ~/.config/.android/avd while the emulator searches
+          # $ANDROID_AVD_HOME / $HOME/.android/avd). Pin BOTH tools to
+          # one tree, then verify the ini exists.
+          export ANDROID_USER_HOME="$HOME/.android"
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          rm -rf "$ANDROID_AVD_HOME/fkr-smoke" "$ANDROID_AVD_HOME/fkr-smoke.avd"
           echo no | "$AVDM" create avd -n fkr-smoke \
             -k "system-images;android-30;google_apis;x86_64"
+          test -f "$ANDROID_AVD_HOME/fkr-smoke.ini" \
+            || { echo '##[error] AVD ini not created in pinned AVD home'; ls -la "$ANDROID_AVD_HOME" || true; exit 1; }
           "$SDK_ROOT/emulator/emulator" -avd fkr-smoke \
             -no-window -no-audio -no-boot-anim \
             -gpu swiftshader_indirect -accel on \
@@ -189,12 +200,34 @@ jobs:
             > /tmp/emulator.log 2>&1 &
           echo $! > /tmp/emulator.pid
           ADB="$SDK_ROOT/platform-tools/adb"
-          "$ADB" wait-for-device
+          echo '--- waiting for device (bounded, liveness-checked)'
+          for i in $(seq 1 60); do
+            if "$ADB" get-state >/dev/null 2>&1; then
+              echo "device visible after ~$((i * 5))s"
+              break
+            fi
+            if ! kill -0 "$(cat /tmp/emulator.pid)" 2>/dev/null; then
+              echo '##[error] emulator process died before device appeared'
+              tail -60 /tmp/emulator.log || true
+              exit 1
+            fi
+            sleep 5
+          done
+          if ! "$ADB" get-state >/dev/null 2>&1; then
+            echo '##[error] device never became visible (5 min)'
+            tail -60 /tmp/emulator.log || true
+            exit 1
+          fi
           for i in $(seq 1 90); do
             B=$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
             if [ "$B" = "1" ]; then
               echo "emulator boot completed after ~$((i * 10))s"
               exit 0
+            fi
+            if ! kill -0 "$(cat /tmp/emulator.pid)" 2>/dev/null; then
+              echo '##[error] emulator process died during boot wait'
+              tail -60 /tmp/emulator.log || true
+              exit 1
             fi
             sleep 10
           done
