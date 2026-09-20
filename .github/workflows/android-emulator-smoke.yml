@@ -162,6 +162,21 @@ jobs:
           # the unstripped original ships in the real-engine APK)
           "$TC/llvm-strip" "$STAGE/libkrita_bridge.so"
           echo "bridge after strip: $(stat -c %s "$STAGE/libkrita_bridge.so") bytes"
+          # ---- quazip DT_NEEDED fix: the bridge references QuaZip symbols
+          # (kritastore's .kpp ZIP loader) but nothing in its NEEDED chain
+          # names the library, so bionic never loads it and the load dies
+          # with 'cannot locate symbol _ZN6QuaZipC1ERK7QString' (found by
+          # run 35509208740). The lib rides in the artifact bundle; adding
+          # the DT_NEEDED entry makes the loader load it from the same dir.
+          # NOTE for the APK campaign: the engine merge step should add
+          # quazip (and audit ALL indirect UNDEFs) — the shipped APK has
+          # the same latent defect.
+          sudo apt-get install -y patchelf >/dev/null 2>&1 || sudo apt-get install -y patchelf
+          patchelf --add-needed libquazip1-qt5_x86_64.so "$STAGE/libkrita_bridge.so"
+          "$TC/llvm-readelf" -d "$STAGE/libkrita_bridge.so" | grep -q 'libquazip1-qt5_x86_64.so' \
+            || { echo '##[error] quazip NEEDED not added to bridge copy'; exit 1; }
+          echo '--- bridge NEEDED after quazip patch:'
+          "$TC/llvm-readelf" -d "$STAGE/libkrita_bridge.so" | grep NEEDED | head -30
           # ---- relink the smoke exe: the artifact exe's NEEDED entry is
           # the absolute builder path (recorded at link time) and cannot
           # resolve on-device. Relink from the same source against the
