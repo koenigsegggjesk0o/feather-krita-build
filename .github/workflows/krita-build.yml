@@ -1085,23 +1085,45 @@ jobs:
           echo "NDK sysroot STL aliases created:"
           ls -la "$NDKLIB/x86_64/"
           # ---- REAL per-ABI libc++_shared.so for the artifact/APK: the
-          # r29 runner image ships only riscv64. Download NDK r27c and
-          # extract just the two files we need (deterministic, ~2 min).
+          # r29 runner image ships only riscv64. The pairing-correct
+          # runtime is r29 — the merge is compiled by the r29 clang, and
+          # r27c's sysroot runtime (1.6MB) genuinely LACKS
+          # __cxa_init_primary_exception (proven ON-DEVICE by run
+          # 35507751331: CANNOT LINK at load; fixed harness-side in
+          # loop-43/44 — this brings the same fix ENGINE-side so the
+          # shipped APK carries a modern runtime; loop-45 APK campaign).
+          # Download the r29 zip ONCE, extract both ABIs (deterministic).
           mkdir -p /opt/android_deps/libcxx
+          LIBCXX_ZIP=/tmp/ndk29.zip
+          NEED_FETCH=0
+          for T in aarch64-linux-android x86_64-linux-android; do
+            [ -s "/opt/android_deps/libcxx/$T/libc++_shared.so" ] || NEED_FETCH=1
+          done
+          if [ "$NEED_FETCH" -eq 1 ] && [ ! -s "$LIBCXX_ZIP" ]; then
+            for i in 1 2 3; do
+              curl -sfL --retry 3 -o "$LIBCXX_ZIP" \
+                "https://dl.google.com/android/repository/android-ndk-r29-linux.zip" && break
+              echo "ndk r29 download attempt $i failed; retry in 15s"
+              rm -f "$LIBCXX_ZIP"; sleep 15
+            done
+          fi
+          test -s "$LIBCXX_ZIP" || { echo 'FATAL: ndk r29 zip not available'; exit 1; }
           for T in aarch64-linux-android x86_64-linux-android; do
             DEST="/opt/android_deps/libcxx/$T/libc++_shared.so"
             if [ ! -s "$DEST" ]; then
-              echo "fetching libc++_shared.so for $T ..."
-              curl -sL --retry 3 -o /tmp/ndk27.zip \
-                "https://dl.google.com/android/repository/android-ndk-r27c-linux.zip"
-              unzip -j -o /tmp/ndk27.zip \
-                "android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$T/libc++_shared.so" \
+              echo "extracting libc++_shared.so for $T ..."
+              unzip -j -o "$LIBCXX_ZIP" \
+                "android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$T/libc++_shared.so" \
                 -d "/opt/android_deps/libcxx/$T" \
-                || { echo "FATAL: selective unzip failed for $T"; unzip -l /tmp/ndk27.zip | grep -m3 'libc++_shared' ; exit 1; }
-              rm -f /tmp/ndk27.zip
+                || { echo "FATAL: selective unzip failed for $T"; unzip -l "$LIBCXX_ZIP" | grep -m3 'libc++_shared' ; exit 1; }
             fi
             test -s "$DEST" || { echo "FATAL: $DEST missing after fetch"; exit 1; }
-            echo "ok: $DEST ($(stat -c %s "$DEST") bytes)"
+            # symbol gate: GNU readelf -Ws prints FULL symbol names
+            # (llvm-readelf truncates long names — false negatives cost
+            # two CI round-trips: runs 35508334166 + 35508812780)
+            readelf -Ws "$DEST" 2>/dev/null | grep -q '__cxa_init_primary_exception' \
+              || { echo "FATAL: $DEST lacks __cxa_init_primary_exception (stale runtime?)"; exit 1; }
+            echo "ok: $DEST ($(stat -c %s "$DEST") bytes, r29 modern runtime)"
           done
 
       - name: Configure Krita (minimal engine build, Qt5 android, unmodified source)
@@ -1250,6 +1272,26 @@ jobs:
           # ---- KF5 cross-built shared libs: full paths, over-link safe on ELF
           KFLIBS=$(find "$KF5/lib" -maxdepth 1 -name 'libKF5*.so' | tr '\n' ' ')
           echo "kf5 libs: $(echo $KFLIBS | wc -w)"
+          # ---- QuaZip shared lib on the merge link line (loop-45 APK
+          # campaign): kritastore objects reference QuaZip symbols
+          # DIRECTLY (run 35509208740) and bionic resolves UNDEFs only
+          # along the DT_NEEDED load closure — without this edge the
+          # shipped APK fails to dlopen libkrita_bridge.so. Link the
+          # SAME file that gets staged into the artifact and guarantee
+          # SONAME == staged basename (a missing SONAME would make the
+          # linker record the absolute build path as DT_NEEDED —
+          # unresolvable on device).
+          QZLIB=$(find /opt/kf5-build/and-quazip -name 'libquazip*.so' 2>/dev/null | sort | head -1)
+          [ -n "$QZLIB" ] || QZLIB=$(find "$KF5/lib" -maxdepth 1 -name 'libquazip*.so' 2>/dev/null | sort | head -1)
+          test -n "$QZLIB" || { echo 'FATAL: quazip shared lib not found'; exit 1; }
+          QZBASE=$(basename "$QZLIB")
+          if ! "$TC/llvm-readelf" -d "$QZLIB" 2>/dev/null | grep -q 'SONAME'; then
+            (sudo apt-get install -y patchelf >/dev/null 2>&1 || true)
+            sudo patchelf --set-soname "$QZBASE" "$QZLIB" \
+              || { echo 'FATAL: quazip SONAME set failed'; exit 1; }
+            echo "quazip SONAME set: $QZBASE"
+          fi
+          echo "quazip: $QZLIB (SONAME gate passed)"
           # ---- deterministic STL: Qt5 android libs use libc++_shared.so; the
           # merged engine must use the SAME STL (two libc++ copies in one
           # process = ODR crash). -nostdlib++ suppresses the driver default,
@@ -1275,7 +1317,9 @@ jobs:
             -l"Qt5Core_${{ matrix.abi }}" -l"Qt5Gui_${{ matrix.abi }}" -l"Qt5Xml_${{ matrix.abi }}" \
             -l"Qt5Svg_${{ matrix.abi }}" -l"Qt5Widgets_${{ matrix.abi }}" -l"Qt5Sql_${{ matrix.abi }}" \
             -l"Qt5Concurrent_${{ matrix.abi }}" -l"Qt5Network_${{ matrix.abi }}" \
+            -l"Qt5PrintSupport_${{ matrix.abi }}" \
             $KFLIBS $VPLIBS \
+            "$QZLIB" \
             -lz -llog \
             -o artifact/lib/libkrita_bridge.so
           echo "link rc=$?"
@@ -1307,6 +1351,9 @@ jobs:
           cp "$QT/lib"/libicu*.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           cp "$KF5/lib"/libKF5*.so* artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           cp /opt/kf5-build/and-quazip/android-build/libs/*/libquazip*.so artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
+          # the exact linked quazip file must be the staged one (SONAME
+          # gate above guarantees basename == SONAME)
+          cp -L "$QZLIB" artifact/android/${{ matrix.abi }}/ 2>/dev/null || true
           # libc++_shared.so for the APK (Qt/KF5 DT_NEEDED it; single copy
           # per process) — fetched per-ABI in the deps step (stored WITHOUT
           # the API-level suffix; strip it from the triple here).
@@ -1315,6 +1362,68 @@ jobs:
             || { echo "FATAL: fetched libc++_shared.so missing at $LIBCXX_DIR"; ls /opt/android_deps/libcxx/*/; exit 1; }
           cp "$LIBCXX_DIR/libc++_shared.so" artifact/android/${{ matrix.abi }}/
           echo "bundled libc++_shared.so ($(stat -c %s artifact/android/${{ matrix.abi }}/libc++_shared.so) bytes)"
+          # ---- bionic-load closure completion + gate (loop-45 APK
+          # campaign): bionic resolves UNDEFs ONLY along the DT_NEEDED
+          # load closure, so the merged .so historically left indirect
+          # UNDEFs (QuaZip via kritastore run 35509208740, QPrinter via
+          # kritawidgets run 35509902482) unresolvable in the shipped
+          # APK. The quazip/PrintSupport link-line entries above fix the
+          # ROOT cause; this completion loop reproduces the
+          # ON-DEVICE-PROVEN harness invariant (loop-43/44 green run:
+          # every staged runtime lib is DT_NEEDED somewhere in the
+          # closure) so the artifact is correct-by-construction, and the
+          # BFS gate turns the invariant into a regression guard.
+          (sudo apt-get install -y patchelf >/dev/null 2>&1 || true)
+          test -n "$(command -v patchelf)" || { echo 'FATAL: patchelf unavailable'; exit 1; }
+          ADIR="artifact/android/${{ matrix.abi }}"
+          NSTAGED=$(ls "$ADIR"/lib*.so 2>/dev/null | wc -l)
+          [ "$NSTAGED" -ge 5 ] || { echo "FATAL: runtime staging too small ($NSTAGED libs)"; ls -la "$ADIR"; exit 1; }
+          echo "staged runtime libs: $NSTAGED"
+          DYNOUT=$("$TC/llvm-readelf" -d artifact/lib/libkrita_bridge.so)
+          for lib in "$ADIR"/lib*.so; do
+            name=$(basename "$lib")
+            [ "$name" = "libkrita_bridge.so" ] && continue
+            [ "$name" = "libc++_shared.so" ] && continue
+            if printf '%s\n' "$DYNOUT" | grep -qF "[$name]"; then
+              echo "  closure: $name (already NEEDED)"
+            else
+              patchelf --add-needed "$name" artifact/lib/libkrita_bridge.so
+              echo "  closure: $name (DT_NEEDED added)"
+            fi
+          done
+          # gate: BFS the DT_NEEDED graph from libkrita_bridge.so over
+          # the staged dir — every staged lib must be reachable, every
+          # NEEDED entry must have a staged or bionic-system provider.
+          JDIR="$ADIR" RE_BIN="$TC/llvm-readelf" python3 - << 'PYEOF'
+          import os, re, subprocess, glob, sys
+          d, re_bin = os.environ['JDIR'], os.environ['RE_BIN']
+          rx = re.compile(r'Shared library: \[([^\]]+)\]')
+          def needed(p):
+              out = subprocess.run([re_bin, '-d', p], capture_output=True, text=True).stdout
+              return rx.findall(out)
+          syslibs = {'liblog.so', 'libz.so', 'libm.so', 'libdl.so', 'libc.so', 'libandroid.so', 'libc++_shared.so'}
+          files = {os.path.basename(p) for p in glob.glob(os.path.join(d, '*.so'))}
+          files.discard('libkrita_bridge.so')
+          seen, stack = {'libkrita_bridge.so'}, ['libkrita_bridge.so']
+          orphan_needed = set()
+          while stack:
+              cur = stack.pop()
+              p = os.path.join(d, cur)
+              if not os.path.exists(p):
+                  if cur not in syslibs: orphan_needed.add(cur)
+                  continue
+              for n in needed(p):
+                  if n not in seen:
+                      seen.add(n); stack.append(n)
+          unreached = sorted(files - seen)
+          if unreached:
+              print('FATAL: staged libs NOT reachable in DT_NEEDED closure:', unreached)
+              sys.exit(1)
+          if orphan_needed:
+              print('FATAL: NEEDED entries with no staged provider and not system libs:', sorted(orphan_needed))
+              sys.exit(1)
+          print('closure gate OK: %d staged libs reachable from libkrita_bridge.so' % len(files))
+          PYEOF
           # ---- android smoke executable (links the merged engine .so; run
           # later on an x86_64 emulator via adb for the C++ end-to-end proof)
           mkdir -p artifact/bin

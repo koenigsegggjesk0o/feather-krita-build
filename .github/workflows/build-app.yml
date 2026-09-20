@@ -360,6 +360,45 @@ jobs:
             MISSING=$((MISSING+1));
           }
           [ "$MISSING" -eq 0 ] || { echo "FATAL: $MISSING missing libs"; exit 1; }
+          # ---- indirect-UNDEF closure gate (loop-45): bionic resolves
+          # UNDEFs ONLY along the DT_NEEDED load closure; a jniLibs .so
+          # that is present but NOT reachable from libkrita_bridge.so
+          # contributes nothing to symbol resolution (the exact v0.28
+          # defect class: QuaZip via kritastore run 35509208740,
+          # QPrinter/Qt5PrintSupport via kritawidgets run 35509902482).
+          # BFS the NEEDED graph: every bundled lib must be reachable
+          # from libkrita_bridge.so and every NEEDED entry must have a
+          # jniLibs provider (or be a bionic system lib).
+          JLIB="$JLIB" RE_BIN="$RE" python3 - << 'PYEOF'
+          import os, re, subprocess, glob, sys
+          d, re_bin = os.environ['JLIB'], os.environ['RE_BIN']
+          rx = re.compile(r'Shared library: \[([^\]]+)\]')
+          def needed(p):
+              out = subprocess.run([re_bin, '-d', p], capture_output=True, text=True).stdout
+              return rx.findall(out)
+          syslibs = {'liblog.so', 'libz.so', 'libm.so', 'libdl.so', 'libc.so', 'libandroid.so'}
+          files = {os.path.basename(p) for p in glob.glob(os.path.join(d, '*.so'))}
+          files.discard('libkrita_bridge.so')
+          seen, stack = {'libkrita_bridge.so'}, ['libkrita_bridge.so']
+          orphan_needed = set()
+          while stack:
+              cur = stack.pop()
+              p = os.path.join(d, cur)
+              if not os.path.exists(p):
+                  if cur not in syslibs: orphan_needed.add(cur)
+                  continue
+              for n in needed(p):
+                  if n not in seen:
+                      seen.add(n); stack.append(n)
+          unreached = sorted(files - seen)
+          if unreached:
+              print('FATAL: jniLibs present but NOT reachable in DT_NEEDED closure:', unreached)
+              sys.exit(1)
+          if orphan_needed:
+              print('FATAL: NEEDED entries with no jniLibs provider and not system libs:', sorted(orphan_needed))
+              sys.exit(1)
+          print('indirect closure gate OK: %d bundled libs reachable from libkrita_bridge.so' % len(files))
+          PYEOF
 
       - name: Build Android APK (release, real engine)
         run: flutter build apk --release
