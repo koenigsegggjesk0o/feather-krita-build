@@ -15,6 +15,9 @@
 // Krita source is NEVER modified — this wrapper only re-enters the smoke.
 
 #include <jni.h>
+#include <dlfcn.h>
+#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -33,7 +36,39 @@ extern "C" int smoke_main(int argc, char** argv);
 // what we want — the engine statics are shimmed VM-free and nothing in
 // the smoke needs Qt's loader path.
 extern "C" JNIEXPORT jint JNICALL
-JNI_OnLoad(JavaVM* /*vm*/, void* /*reserved*/) {
+JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
+    // The engine's i18n path (krita_brush_set_size -> i18n() -> KCatalog
+    // -> QAndroidJniEnvironment) reads Qt's g_javaVm global through the
+    // exported reader QtAndroidPrivate::javaVM() and derefs it WITHOUT a
+    // null check — a null VM segfaults at fault addr 0x0 (run
+    // 35521285894 backtrace: QJNIEnvironmentPrivate ctor +36). Qt's own
+    // setter (setJavaVM) is hidden and only reachable through the
+    // core's JNI_OnLoad, which we deliberately shield. The reader is a
+    // two-instruction thunk (mov X(%rip),%rax; ret), so the global's
+    // address is recoverable from the prologue and writable directly.
+    // Pattern-verified; any mismatch logs and leaves the process to the
+    // readable tombstone path instead of guessing.
+    void* sym = dlsym(RTLD_DEFAULT, "_ZN16QtAndroidPrivate6javaVMEv");
+    if (sym != nullptr) {
+        unsigned char* p = static_cast<unsigned char*>(sym);
+        unsigned char prologue[8] = {0x48, 0x8b, 0x05, 0, 0, 0, 0, 0xc3};
+        bool match = true;
+        for (int i = 0; i < 8; ++i) {
+            if ((i == 3 || i == 4 || i == 5 || i == 6)) continue;
+            if (p[i] != prologue[i]) { match = false; break; }
+        }
+        if (match) {
+            int32_t disp = 0;
+            std::memcpy(&disp, p + 3, 4);
+            void** g_java_vm = reinterpret_cast<void**>(p + 7 + disp);
+            *g_java_vm = vm;
+            std::printf("vminject: g_javaVm set at %p\n", static_cast<void*>(g_java_vm));
+        } else {
+            std::printf("vminject: unexpected javaVM() prologue at %p — global write skipped\n", sym);
+        }
+    } else {
+        std::printf("vminject: QtAndroidPrivate::javaVM not found — global write skipped\n");
+    }
     return JNI_VERSION_1_6;
 }
 
