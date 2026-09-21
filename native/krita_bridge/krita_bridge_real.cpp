@@ -114,6 +114,13 @@
 // serve it; written by the host-init constructor below.
 static jobject g_fkr_asset_mgr = nullptr;
 
+// JavaVM captured by JNI_OnLoad (when the .so is loaded via Kotlin
+// System.loadLibrary). Flutter FFI's DynamicLibrary.open does NOT call
+// JNI_OnLoad, so the Kotlin side must load us first. This VM is injected
+// into Qt's internal g_javaVm slot so every QJNIEnvironmentPrivate path
+// (and thus every Qt/KF5 JNI call) works at runtime.
+static JavaVM* g_fkr_jni_vm = nullptr;
+
 extern "C" {
 
 // --- proven interposes (verbatim semantics from loop-43 smoke_jni.cpp) ----
@@ -166,6 +173,9 @@ typedef jint (*FkrGetCreatedJavaVMs_t)(JavaVM**, jsize, jsize*);
 // whose DT_NEEDED closure contains libart — namespace-safe), then fall
 // back to the direct libart dlopen and a global-scope dlsym.
 JavaVM* fkr_runtime_vm() {
+    // Fast path: if JNI_OnLoad already captured the VM (Kotlin side
+    // called System.loadLibrary before FFI's DynamicLibrary.open), use it.
+    if (g_fkr_jni_vm != nullptr) return g_fkr_jni_vm;
     const auto log = [](const char* msg) {
         __android_log_print(ANDROID_LOG_INFO, "krita_bridge", "host-init: %s", msg);
     };
@@ -270,6 +280,62 @@ struct FkrQtHostInit {
 const FkrQtHostInit fkr_qt_host_init_instance;
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// JNI_OnLoad — the clean fix for the Android boot wall (loop-61 beacon 5).
+// When the Kotlin side calls System.loadLibrary("krita_bridge") (MainActivity
+// companion init), Android's ART calls this function with the process's
+// JavaVM. We capture it and inject it straight into Qt's internal g_javaVm
+// slot (same slot the host-init constructor targets, but the host-init runs
+// at dlopen time before JNI_OnLoad fires — so the host-init cannot see the
+// VM; JNI_OnLoad can). This makes every Qt/KF5 JNI path work at runtime:
+// the crash at krita_brush_set_size → KLocalizedString::toString() →
+// QJNIEnvironmentPrivate ctor (fault 0x0, null g_javaVm) is eliminated.
+// The catalogLocaleDir interpose CANNOT intercept this path because the
+// call chain is intra-library within libKF5I18n (direct calls bypass the
+// PLT/interpose); only a real JavaVM injection fixes it. Krita source is
+// NEVER touched; this is bridge glue only (allowed change surface #2).
+// ---------------------------------------------------------------------------
+extern "C" __attribute__((visibility("default")))
+jint JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
+    g_fkr_jni_vm = vm;
+    __android_log_print(ANDROID_LOG_INFO, "krita_bridge",
+                        "JNI_OnLoad: JavaVM captured");
+    void* slot = fkr_qt_g_java_vm_slot();
+    if (slot != nullptr) {
+        *static_cast<JavaVM* volatile*>(slot) = vm;
+        __android_log_print(ANDROID_LOG_INFO, "krita_bridge",
+                            "JNI_OnLoad: g_javaVm injected (slot found)");
+    } else {
+        __android_log_print(ANDROID_LOG_INFO, "krita_bridge",
+                            "JNI_OnLoad: javaVM() slot not found — vminject deferred");
+    }
+    // Real AssetManager for the javaObject() interpose (probes that reach
+    // AAssetManager_fromJava abort on a null object). This supersedes the
+    // host-init's AssetManager acquisition (which could never run because
+    // the VM was never available at dlopen time).
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK &&
+        env != nullptr) {
+        jclass c = env->FindClass("android/content/res/AssetManager");
+        if (c != nullptr) {
+            jmethodID ctor = env->GetMethodID(c, "<init>", "()V");
+            if (ctor != nullptr) {
+                jobject o = env->NewObject(c, ctor);
+                if (o != nullptr) {
+                    g_fkr_asset_mgr = env->NewGlobalRef(o);
+                    env->DeleteLocalRef(o);
+                    __android_log_print(ANDROID_LOG_INFO, "krita_bridge",
+                                        "JNI_OnLoad: real AssetManager acquired");
+                }
+            }
+            env->DeleteLocalRef(c);
+        }
+        env->ExceptionClear();
+    }
+    return JNI_VERSION_1_6;
+}
+
 #endif // __ANDROID__
 
 // ---------------------------------------------------------------------------
