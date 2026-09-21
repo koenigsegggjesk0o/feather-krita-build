@@ -115,6 +115,15 @@ class SceneLightRig {
     );
   }
 
+  /// Positions the sun from DEGREE inputs (the on-disk .feather unit and
+  /// the HUD readout unit). Delegates to [setSunAzimuthElevation], so the
+  /// elevation is clamped into
+  /// [[kMinSunElevationDeg], [kMaxSunElevationDeg]] — corrupt or
+  /// out-of-range project values can never degenerate the direction.
+  void setSunAzimuthElevationDeg(double azimuthDeg, double elevationDeg) {
+    setSunAzimuthElevation(azimuthDeg * _degToRad, elevationDeg * _degToRad);
+  }
+
   /// One Light-tool drag step: [dxPx] pixels right move the sun's azimuth
   /// by [kLightAzimuthDegPerPx] per pixel, [dyPx] pixels DOWN lower the
   /// sun's elevation by [kLightElevationDegPerPx] per pixel (dragging up

@@ -20,6 +20,18 @@
 //                    builds ignore the unknown key, and documents without it
 //                    leave the camera untouched on load. Format version stays
 //                    2 because the extension is purely additive.
+//   light          — OPTIONAL loop-53 extension: {azimuthDeg, elevationDeg,
+//                    intensity} — the scene key-light rig's sun sky position
+//                    (degrees, azimuth normalized to [0, 360), elevation in
+//                    [-30, +88]) plus the diffuse intensity in [0, 1]. Same
+//                    additive contract as the camera block: older builds
+//                    ignore the unknown key; documents without it leave the
+//                    live rig untouched on load (the rig defaults reproduce
+//                    the legacy fixed key light exactly). The rig's setters
+//                    clamp elevation and intensity, so out-of-range values
+//                    in a hand-edited file can never degenerate the light.
+//                    Az/el (not the derived direction vector) is what gets
+//                    stored, so the JSON round-trip involves no trig.
 //
 // Parsing is tolerant: missing optional fields fall back to sane defaults
 // so v1 documents keep loading after the v2 writer ships.
@@ -58,6 +70,9 @@ class FeatherProjectDocument {
     this.cameraTargetX,
     this.cameraTargetY,
     this.cameraTargetZ,
+    this.lightAzimuthDeg,
+    this.lightElevationDeg,
+    this.lightIntensity,
     List<Stroke>? strokes,
   }) : strokes = strokes ?? <Stroke>[];
 
@@ -92,6 +107,18 @@ class FeatherProjectDocument {
       cameraTargetY != null &&
       cameraTargetZ != null;
 
+  /// Optional key-light rig sky position (loop-53). Null when the document
+  /// has no light block; [applyTo] leaves the live rig untouched then.
+  final double? lightAzimuthDeg;
+  final double? lightElevationDeg;
+  final double? lightIntensity;
+
+  /// True when all three light fields were present in the document.
+  bool get hasLight =>
+      lightAzimuthDeg != null &&
+      lightElevationDeg != null &&
+      lightIntensity != null;
+
   final List<Stroke> strokes;
 
   /// The guide surface type for [guideSurfaceName].
@@ -116,6 +143,7 @@ class FeatherProjectDocument {
     final texture = decoded['texture'];
     final brush = decoded['brush'];
     final cam = decoded['camera'];
+    final light = decoded['light'];
     final strokesJson = decoded['strokes'];
     final strokeList = strokesJson is Map<String, dynamic>
         ? (strokesJson['strokes'] as List? ?? [])
@@ -168,6 +196,15 @@ class FeatherProjectDocument {
       cameraTargetZ: cam is Map<String, dynamic>
           ? _camTargetAt(cam, 2)
           : null,
+      lightAzimuthDeg: light is Map<String, dynamic>
+          ? (light['azimuthDeg'] as num?)?.toDouble()
+          : null,
+      lightElevationDeg: light is Map<String, dynamic>
+          ? (light['elevationDeg'] as num?)?.toDouble()
+          : null,
+      lightIntensity: light is Map<String, dynamic>
+          ? (light['intensity'] as num?)?.toDouble()
+          : null,
       strokes: strokeList
           .whereType<Map<String, dynamic>>()
           .map(Stroke.fromJson)
@@ -195,6 +232,9 @@ class FeatherProjectDocument {
       cameraTargetX: state.camera.target.x,
       cameraTargetY: state.camera.target.y,
       cameraTargetZ: state.camera.target.z,
+      lightAzimuthDeg: state.lightRig.sunAzimuthDeg,
+      lightElevationDeg: state.lightRig.sunElevationDeg,
+      lightIntensity: state.lightRig.intensity,
       strokes: state.strokes.strokes.map((s) => s.copy()).toList(),
     );
   }
@@ -211,6 +251,11 @@ class FeatherProjectDocument {
             '"target":[${_num(cameraTargetX!)},'
             '${_num(cameraTargetY!)},${_num(cameraTargetZ!)}]},'
         : '';
+    final lightJson = hasLight
+        ? '"light":{"azimuthDeg":${_num(lightAzimuthDeg!)},'
+            '"elevationDeg":${_num(lightElevationDeg!)},'
+            '"intensity":${_num(lightIntensity!)}},'
+        : '';
     return '{"version":$version,'
         '"fileName":"${esc(fileName)}",'
         '"texture":{"width":$textureWidth,"height":$textureHeight},'
@@ -221,6 +266,7 @@ class FeatherProjectDocument {
         '"color":$brushColor,'
         '"mirrorX":$mirrorX,"mirrorY":$mirrorY,"mirrorZ":$mirrorZ},'
         '$cameraJson'
+        '$lightJson'
         '"strokes":{"strokes":$strokesJson,'
         '"selectedIds":[],"nextId":$nextId}}';
   }
@@ -306,6 +352,18 @@ class FeatherProjectDocument {
         pitch: cameraPitch!,
         distance: cameraDistance!,
       );
+    }
+
+    // Restore the saved key-light rig (loop-53). setSunAzimuthElevationDeg
+    // clamps the elevation into the valid arc and setIntensity clamps to
+    // [0, 1], so out-of-range or corrupt values can never degenerate the
+    // light direction. Documents saved before loop-53 have no light block
+    // and leave the live rig untouched (its defaults reproduce the legacy
+    // fixed key light exactly).
+    if (hasLight) {
+      state.lightRig
+        ..setSunAzimuthElevationDeg(lightAzimuthDeg!, lightElevationDeg!)
+        ..setIntensity(lightIntensity!);
     }
 
     state.notify();

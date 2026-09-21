@@ -3,10 +3,13 @@
 //
 // project_test.dart — .feather project document round-trip tests.
 
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math_64.dart' show Vector2, Vector3;
 
 import 'package:feather_krita/engine/guide_surface.dart';
+import 'package:feather_krita/engine/light_rig.dart' show kMaxSunElevationDeg;
 import 'package:feather_krita/io/feather_project.dart';
 import 'package:feather_krita/models/stroke.dart';
 import 'package:feather_krita/state/editor_state.dart';
@@ -239,6 +242,135 @@ void main() {
       expect(loaded.camera.yaw, closeTo(-1.1, 1e-9));
       expect(loaded.camera.pitch, closeTo(0.3, 1e-9));
       expect(loaded.camera.distance, closeTo(5.5, 1e-9));
+    });
+  });
+
+  group('FeatherProjectDocument light rig (loop-53)', () {
+    test('round-trips the key-light rig through JSON', () {
+      final state = EditorState(fileName: 'Lit.feather');
+      state.lightRig
+        ..setSunAzimuthElevationDeg(137.5, -12.25)
+        ..setIntensity(0.42);
+
+      final doc = FeatherProjectDocument.fromEditor(state);
+      final parsed = FeatherProjectDocument.parse(doc.toJsonString());
+
+      expect(parsed.hasLight, isTrue);
+      expect(parsed.lightAzimuthDeg, closeTo(137.5, 1e-6));
+      expect(parsed.lightElevationDeg, closeTo(-12.25, 1e-6));
+      expect(parsed.lightIntensity, closeTo(0.42, 1e-6));
+      // The format version stays 2: the light block is purely additive,
+      // exactly like the loop-18 camera block before it.
+      expect(parsed.version, kFeatherProjectVersion);
+    });
+
+    test('applyTo restores the rig exactly (direction + intensity)', () {
+      final doc = FeatherProjectDocument.parse(
+        '{"version":2,"fileName":"Lit.feather",'
+        '"texture":{"width":2048,"height":2048},'
+        '"guideSurface":"Sphere",'
+        '"brush":{"preset":"Basic Round","size":32.00,'
+        '"opacity":1.000,"color":4278877482,"mirrorX":false,'
+        '"mirrorY":false,"mirrorZ":false},'
+        '"light":{"azimuthDeg":137.5,"elevationDeg":-12.25,'
+        '"intensity":0.42},'
+        '"strokes":{"strokes":[],"selectedIds":[],"nextId":1}}',
+      );
+
+      final loaded = EditorState(fileName: 'X.feather');
+      doc.applyTo(loaded);
+
+      expect(loaded.lightRig.sunAzimuthDeg, closeTo(137.5, 1e-6));
+      expect(loaded.lightRig.sunElevationDeg, closeTo(-12.25, 1e-6));
+      expect(loaded.lightRig.intensity, closeTo(0.42, 1e-6));
+      // The direction is the renderer-convention vector opposite the sun:
+      // dir = -(cos el·cos az, sin el, cos el·sin az).
+      final az = 137.5 * math.pi / 180.0;
+      final el = -12.25 * math.pi / 180.0;
+      expect(loaded.lightRig.direction.x, closeTo(-math.cos(el) * math.cos(az), 1e-9));
+      expect(loaded.lightRig.direction.y, closeTo(-math.sin(el), 1e-9));
+      expect(loaded.lightRig.direction.z, closeTo(-math.cos(el) * math.sin(az), 1e-9));
+    });
+
+    test('documents without a light block leave the rig untouched', () {
+      const legacyJson = '{"version":2,'
+          '"fileName":"NoLight.feather",'
+          '"texture":{"width":2048,"height":2048},'
+          '"guideSurface":"Sphere",'
+          '"brush":{"preset":"Basic Round","size":32.00,'
+          '"opacity":1.000,"color":4278877482,"mirrorX":false,'
+          '"mirrorY":false,"mirrorZ":false},'
+          '"strokes":{"strokes":[],"selectedIds":[],"nextId":1}}';
+
+      final parsed = FeatherProjectDocument.parse(legacyJson);
+      expect(parsed.hasLight, isFalse);
+
+      final loaded = EditorState(fileName: 'X.feather');
+      loaded.lightRig
+        ..setSunAzimuthElevationDeg(210.0, 35.0)
+        ..setIntensity(0.25);
+
+      parsed.applyTo(loaded);
+      expect(loaded.lightRig.sunAzimuthDeg, closeTo(210.0, 1e-9));
+      expect(loaded.lightRig.sunElevationDeg, closeTo(35.0, 1e-9));
+      expect(loaded.lightRig.intensity, closeTo(0.25, 1e-9));
+    });
+
+    test('out-of-range light values are clamped on load', () {
+      final doc = FeatherProjectDocument.parse(
+        '{"version":2,"fileName":"Wild.feather",'
+        '"texture":{"width":2048,"height":2048},'
+        '"guideSurface":"Sphere",'
+        '"brush":{"preset":"Basic Round","size":32.00,'
+        '"opacity":1.000,"color":4278877482,"mirrorX":false,'
+        '"mirrorY":false,"mirrorZ":false},'
+        '"light":{"azimuthDeg":400,"elevationDeg":200,'
+        '"intensity":7},'
+        '"strokes":{"strokes":[],"selectedIds":[],"nextId":1}}',
+      );
+      expect(doc.hasLight, isTrue);
+
+      final loaded = EditorState(fileName: 'X.feather');
+      doc.applyTo(loaded);
+
+      // Azimuth wraps into [0, 360); elevation clamps into the valid arc
+      // so the direction can never degenerate at the pole; intensity
+      // clamps to [0, 1].
+      expect(loaded.lightRig.sunAzimuthDeg, closeTo(40.0, 1e-6));
+      expect(
+        loaded.lightRig.sunElevationDeg,
+        closeTo(kMaxSunElevationDeg, 1e-6),
+      );
+      expect(loaded.lightRig.intensity, 1.0);
+    });
+
+    test('a default document carries the default rig', () {
+      final state = EditorState(fileName: 'Default.feather');
+      final doc = FeatherProjectDocument.fromEditor(state);
+      final parsed = FeatherProjectDocument.parse(doc.toJsonString());
+
+      expect(parsed.hasLight, isTrue);
+      expect(parsed.lightAzimuthDeg, closeTo(state.lightRig.sunAzimuthDeg, 1e-6));
+      expect(parsed.lightElevationDeg, closeTo(state.lightRig.sunElevationDeg, 1e-6));
+      expect(parsed.lightIntensity, closeTo(1.0, 1e-9));
+
+      // Loading it into a fresh state rebuilds the rig from the SERIALIZED
+      // az/el — the on-disk number format carries 6 decimals (the same
+      // hand-rolled style as the camera block, ~3e-7 deg worst case), so
+      // compare the loaded rig against the PARSED numbers exactly and
+      // against the pre-serialize live getters at the format's precision.
+      final loaded = EditorState(fileName: 'Y.feather');
+      parsed.applyTo(loaded);
+      expect(loaded.lightRig.sunAzimuthDeg, closeTo(parsed.lightAzimuthDeg!, 1e-9));
+      expect(loaded.lightRig.sunElevationDeg, closeTo(parsed.lightElevationDeg!, 1e-9));
+      final az = parsed.lightAzimuthDeg! * math.pi / 180.0;
+      final el = parsed.lightElevationDeg! * math.pi / 180.0;
+      expect(loaded.lightRig.direction.x, closeTo(-math.cos(el) * math.cos(az), 1e-12));
+      expect(loaded.lightRig.direction.y, closeTo(-math.sin(el), 1e-12));
+      expect(loaded.lightRig.direction.z, closeTo(-math.cos(el) * math.sin(az), 1e-12));
+      expect(loaded.lightRig.intensity, 1.0);
+      expect(loaded.lightRig.sunAzimuthDeg, closeTo(state.lightRig.sunAzimuthDeg, 1e-6));
+      expect(loaded.lightRig.sunElevationDeg, closeTo(state.lightRig.sunElevationDeg, 1e-6));
     });
   });
 }
