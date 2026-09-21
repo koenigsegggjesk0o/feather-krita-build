@@ -49,9 +49,16 @@ String guideSurfaceTypeName(GuideSurfaceType type) {
 }
 
 /// Parses a [GuideSurfaceType] from a display name (as written by
-/// [guideSurfaceTypeName]) or a raw enum name. Falls back to
-/// [GuideSurfaceType.sphere] for unknown values.
-GuideSurfaceType guideSurfaceTypeFromName(String? name) {
+/// [guideSurfaceTypeName]) or a raw enum name. Returns null when [name]
+/// is not a known spelling — unlike [guideSurfaceTypeFromName], which
+/// silently falls back to [GuideSurfaceType.sphere].
+///
+/// The strict variant is the single source of truth for the name
+/// mapping: the tolerant wrapper delegates to it, and the loop-58
+/// guide-surface parity check (io/guide_surface_parity.dart) uses it to
+/// tell a deliberate alias ("torus") apart from an unknown name that
+/// only restores as sphere by accident.
+GuideSurfaceType? guideSurfaceTypeFromNameStrict(String? name) {
   switch (name?.trim().toLowerCase()) {
     case 'sphere':
       return GuideSurfaceType.sphere;
@@ -70,9 +77,15 @@ GuideSurfaceType guideSurfaceTypeFromName(String? name) {
     case 'custom_curve':
       return GuideSurfaceType.customCurve;
     default:
-      return GuideSurfaceType.sphere;
+      return null;
   }
 }
+
+/// Parses a [GuideSurfaceType] from a display name (as written by
+/// [guideSurfaceTypeName]) or a raw enum name. Falls back to
+/// [GuideSurfaceType.sphere] for unknown values.
+GuideSurfaceType guideSurfaceTypeFromName(String? name) =>
+    guideSurfaceTypeFromNameStrict(name) ?? GuideSurfaceType.sphere;
 
 /// A 3D control point used to shape a [GuideSurface].
 class SurfaceControlPoint {

@@ -20,6 +20,13 @@
 //     that aren't in the exports directory (e.g. files copied in from
 //     email/cloud storage). Selecting any row fills the path field; a
 //     dedicated "Open" tap on it loads the project.
+//
+// Loop-58 guide-surface parity:
+//   While the path field points at an existing .feather/.json file, a
+//   parity strip shows which guide surface the document stores and how
+//   faithfully it will survive the load roundtrip (exact / aliased /
+//   unknown-name fallback / missing). The scan is synchronous and size-
+//   capped so the verdict renders in the same frame as the path change.
 
 import 'dart:io';
 
@@ -29,6 +36,7 @@ import 'package:file_picker/file_picker.dart';
 
 import 'package:feather_krita/theme/app_theme.dart';
 import 'package:feather_krita/io/file_meta.dart';
+import 'package:feather_krita/io/guide_surface_parity.dart';
 import 'package:feather_krita/io/recent_projects.dart';
 
 /// A dialog that returns the path of the .feather file to open
@@ -49,11 +57,14 @@ class _OpenProjectDialogState extends State<OpenProjectDialog> {
   List<FileMeta> _candidates = const [];
   List<FileMeta> _recents = const [];
   String? _hint;
+  GuideSurfaceParityReport? _parity;
 
   @override
   void initState() {
     super.initState();
     _path = TextEditingController();
+    _path.addListener(_updateParity);
+    _parity = _scanFor(_path.text);
     _refreshAll();
   }
 
@@ -66,6 +77,26 @@ class _OpenProjectDialogState extends State<OpenProjectDialog> {
   void _refreshAll() {
     _refreshCandidates();
     _refreshRecents();
+  }
+
+  /// Scans [text] as a project path. Non-project extensions (and read
+  /// errors inside the scan) yield null so the strip stays hidden.
+  GuideSurfaceParityReport? _scanFor(String text) {
+    final p = text.trim();
+    if (p.endsWith('.feather') || p.endsWith('.json')) {
+      return scanGuideSurfaceParity(p);
+    }
+    return null;
+  }
+
+  /// Recomputes the parity strip for the current path text. Fires on
+  /// every edit (including the programmatic set from a row tap); the
+  /// detail comparison keeps redundant setStates off the same verdict.
+  void _updateParity() {
+    final report = _scanFor(_path.text);
+    if (report?.detail != _parity?.detail) {
+      setState(() => _parity = report);
+    }
   }
 
   void _refreshCandidates() {
@@ -232,6 +263,10 @@ class _OpenProjectDialogState extends State<OpenProjectDialog> {
                     const TextStyle(color: AppTheme.toolErase, fontSize: 11),
               ),
             ],
+            if (_parity != null) ...[
+              const SizedBox(height: 8),
+              _GuideParityStrip(report: _parity!),
+            ],
             if (_recents.isNotEmpty) ...[
               const SizedBox(height: 12),
               const Text(
@@ -370,6 +405,70 @@ class _CandidateTile extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// The loop-58 parity verdict for the path currently in the field.
+/// Color-coded by level: green = exact roundtrip, orange = known alias,
+/// red = unknown name (falls back to Sphere) or no surface stored.
+class _GuideParityStrip extends StatelessWidget {
+  const _GuideParityStrip({required this.report});
+
+  final GuideSurfaceParityReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color accent;
+    final IconData icon;
+    switch (report.level) {
+      case GuideSurfaceParityLevel.exact:
+        accent = AppTheme.primaryGreen;
+        icon = Icons.check_circle_outline;
+      case GuideSurfaceParityLevel.aliased:
+        accent = AppTheme.primaryOrange;
+        icon = Icons.swap_horiz_rounded;
+      case GuideSurfaceParityLevel.fallback:
+      case GuideSurfaceParityLevel.missing:
+        accent = AppTheme.toolErase;
+        icon = Icons.warning_amber_rounded;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.darkGlassLight.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+        border: Border.all(color: accent.withValues(alpha: 0.45)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: accent),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Guide surface: ${report.surfaceLabel}',
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  report.detail,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: accent, fontSize: 9),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

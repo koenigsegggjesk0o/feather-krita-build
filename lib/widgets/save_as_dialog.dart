@@ -11,6 +11,12 @@
 // The browse button wraps `file_picker.saveFile` in a try/catch: on
 // platforms where the plugin is unavailable the manual filename field
 // keeps the dialog fully functional (and deterministic under tests).
+//
+// Loop-58 guide-surface parity: for .feather saves the dialog discloses
+// which guide surface type the document will store (the canonical type
+// name, exactly what the open dialog's parity strip classifies as
+// exact) and that reopening rebuilds the default shape of that type —
+// the .feather format stores the surface's type, not its dimensions.
 
 import 'dart:io';
 
@@ -30,11 +36,19 @@ class SaveAsDialog extends StatefulWidget {
     required this.format,
     required this.baseName,
     this.initialDir,
+    this.guideSurfaceName,
   });
 
   final ExportFormat format;
   final String baseName;
   final String? initialDir;
+
+  /// Loop-58: canonical guide-surface type name the host will store in a
+  /// .feather document (guideSurfaceTypeName of the live surface). When
+  /// set and [format] is [ExportFormat.featherProject], a disclosure row
+  /// shows the name so the save side matches the open dialog's parity
+  /// strip. Null for non-project formats — no row then.
+  final String? guideSurfaceName;
 
   @override
   State<SaveAsDialog> createState() => _SaveAsDialogState();
@@ -197,6 +211,52 @@ class _SaveAsDialogState extends State<SaveAsDialog> {
               ),
             ),
             const SizedBox(height: 12),
+            if (widget.format == ExportFormat.featherProject &&
+                widget.guideSurfaceName != null) ...[
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.darkGlassLight.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                  border: Border.all(color: AppTheme.glassBorder),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.view_in_ar_rounded,
+                        size: 14, color: AppTheme.textTertiary),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Guide surface: ${widget.guideSurfaceName}',
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppTheme.textSecondary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 1),
+                          const Text(
+                            'stored by type — reopens with the default shape',
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: AppTheme.textTertiary,
+                              fontSize: 9,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             Row(
               children: [
                 Expanded(

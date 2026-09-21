@@ -26,6 +26,7 @@ import 'package:vector_math/vector_math_64.dart' show Vector2, Vector3;
 
 import 'package:feather_krita/theme/app_theme.dart';
 import 'package:feather_krita/state/editor_state.dart';
+import 'package:feather_krita/engine/guide_surface.dart';
 import 'package:feather_krita/engine/stroke_manager.dart';
 import 'package:feather_krita/ffi/krita_bindings.dart';
 import 'package:feather_krita/io/app_dirs.dart';
@@ -220,6 +221,7 @@ class _MainScreenState extends State<MainScreen> {
       builder: (_) => ExportScreen(
         isPro: _state.isPro,
         baseName: _state.fileName.replaceAll(RegExp(r'\.feather$'), ''),
+        guideSurfaceName: guideSurfaceTypeName(_state.guideSurface.type),
         exporter: _runExport,
         onUpgrade: () => _toast('Pro upgrade is not wired yet — stay tuned!'),
         onToast: _toast,

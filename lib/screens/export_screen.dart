@@ -42,6 +42,7 @@ class ExportScreen extends StatefulWidget {
     required this.onUpgrade,
     required this.onClose,
     this.baseName = 'Untitled',
+    this.guideSurfaceName,
     this.onToast,
   });
 
@@ -50,6 +51,11 @@ class ExportScreen extends StatefulWidget {
   final VoidCallback onUpgrade;
   final VoidCallback onClose;
   final String baseName;
+
+  /// Loop-58: the live guide surface's canonical type name, threaded to
+  /// the Save-As dialog's .feather disclosure row (parity with the open
+  /// dialog's strip). Null keeps the row hidden.
+  final String? guideSurfaceName;
 
   /// Optional toast channel (host screen's ScaffoldMessenger). When
   /// provided, copy-path/show-in-folder confirmations route through it
@@ -114,6 +120,7 @@ class _ExportScreenState extends State<ExportScreen> {
         format: _selected!,
         baseName: widget.baseName,
         initialDir: _defaultDir(),
+        guideSurfaceName: widget.guideSurfaceName,
       ),
     );
     if (chosen == null || chosen.isEmpty) return;

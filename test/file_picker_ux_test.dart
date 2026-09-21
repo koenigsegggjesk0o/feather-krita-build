@@ -23,11 +23,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feather_krita/screens/main_screen.dart';
 import 'package:feather_krita/state/editor_state.dart';
 import 'package:feather_krita/widgets/open_project_dialog.dart';
+import 'package:feather_krita/widgets/save_as_dialog.dart';
+import 'package:feather_krita/models/export_format.dart';
 import 'package:feather_krita/io/recent_projects.dart';
 
 Widget _host(EditorState state) => MaterialApp(home: MainScreen(state: state));
 
 Widget _dialogHost(OpenProjectDialog dialog) =>
+    MaterialApp(home: Scaffold(body: Center(child: Builder(builder: (_) => dialog))));
+
+Widget _widgetHost(Widget dialog) =>
     MaterialApp(home: Scaffold(body: Center(child: Builder(builder: (_) => dialog))));
 
 void main() {
@@ -236,6 +241,105 @@ void main() {
           reason: 'tapping Copy path must surface a SnackBar');
       expect(find.text('Path copied to clipboard'), findsOneWidget,
           reason: 'tapping Copy path must confirm via a snackbar');
+    });
+  });
+
+  group('Loop-58 guide-surface parity', () {
+    testWidgets(
+        'Open dialog shows the parity strip after a row tap (aliased name)',
+        (tester) async {
+      final dir = Directory.systemTemp.createTempSync('feather_parity_open');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file =
+          File('${dir.path}${Platform.pathSeparator}aliased.feather');
+      file.writeAsStringSync('{"version":2,"fileName":"aliased.feather",'
+          '"guideSurface":"torus",'
+          '"strokes":{"strokes":[]}}');
+
+      final recentsOverride =
+          File('${dir.path}${Platform.pathSeparator}recent_projects.json');
+      testRecentsFileOverride = recentsOverride;
+      addTearDown(() => testRecentsFileOverride = null);
+
+      await tester.pumpWidget(_dialogHost(
+        OpenProjectDialog(initialDir: dir.path),
+      ));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      // No path in the field yet → no verdict on screen.
+      expect(find.textContaining('Guide surface:'), findsNothing,
+          reason: 'the strip must stay hidden until a file is picked');
+
+      // Tapping the candidate row fills the path field; the strip must
+      // appear in the SAME frame with the aliased verdict.
+      await tester.tap(find.text('aliased.feather'));
+      await tester.pump();
+
+      expect(find.text('Guide surface: Ring / Torus'), findsOneWidget,
+          reason: 'the strip must show the resolved type, not the raw name');
+      expect(find.text('"torus" opens as Ring / Torus'), findsOneWidget,
+          reason: 'the aliased detail must render verbatim');
+    });
+
+    testWidgets(
+        'Open dialog strip distinguishes exact from unknown-name fallback',
+        (tester) async {
+      final dir = Directory.systemTemp.createTempSync('feather_parity_two');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      File('${dir.path}${Platform.pathSeparator}exact.feather')
+          .writeAsStringSync('{"version":2,"guideSurface":"Sphere"}');
+      File('${dir.path}${Platform.pathSeparator}odd.feather')
+          .writeAsStringSync('{"version":2,"guideSurface":"Wobbly"}');
+
+      final recentsOverride =
+          File('${dir.path}${Platform.pathSeparator}recent_projects.json');
+      testRecentsFileOverride = recentsOverride;
+      addTearDown(() => testRecentsFileOverride = null);
+
+      await tester.pumpWidget(_dialogHost(
+        OpenProjectDialog(initialDir: dir.path),
+      ));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      // Canonical name → exact roundtrip verdict.
+      await tester.tap(find.text('exact.feather'));
+      await tester.pump();
+      expect(find.text('Guide surface: Sphere'), findsOneWidget);
+      expect(find.text('Sphere — opens exactly as saved'), findsOneWidget);
+
+      // Unknown name → the SAME resolved type (Sphere) but the detail
+      // must now warn that the stored name is not known.
+      await tester.tap(find.text('odd.feather'));
+      await tester.pump();
+      expect(find.text('Guide surface: Sphere'), findsOneWidget);
+      expect(find.text('"Wobbly" is not a known surface — opens as Sphere'),
+          findsOneWidget);
+      expect(find.text('Sphere — opens exactly as saved'), findsNothing,
+          reason: 'the stale exact verdict must be replaced');
+    });
+
+    testWidgets(
+        'Save-As dialog for .feather discloses the stored guide surface',
+        (tester) async {
+      await tester.pumpWidget(_widgetHost(const SaveAsDialog(
+        format: ExportFormat.featherProject,
+        baseName: 'doc',
+        guideSurfaceName: 'Cylinder',
+      )));
+      await tester.pump();
+
+      expect(find.text('Guide surface: Cylinder'), findsOneWidget);
+      expect(find.text('stored by type — reopens with the default shape'),
+          findsOneWidget);
+
+      // Non-project formats carry no guide-surface row.
+      await tester.pumpWidget(_widgetHost(const SaveAsDialog(
+        format: ExportFormat.png,
+        baseName: 'doc',
+      )));
+      await tester.pump();
+      expect(find.textContaining('Guide surface:'), findsNothing,
+          reason: 'only .feather saves disclose the guide surface');
     });
   });
 }
