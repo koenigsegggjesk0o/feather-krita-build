@@ -94,17 +94,31 @@ def main():
     for name, (asset, ctype) in ARTIFACTS.items():
         zpath = f'/tmp/v43rel/{name}.zip'
         out = f'/tmp/v43rel/{asset}'
-        subprocess.run(['curl', '-sL', '-H', f'Authorization: token {TOKEN}',
-                        f'{HEAD}/repos/{BUILD_REPO}/actions/artifacts/'
-                        f'{wanted[name]}/zip', '-o', zpath], check=True)
-        with zipfile.ZipFile(zpath) as z:
-            # find the single payload inside the artifact zip
-            cands = [n for n in z.namelist()
-                     if n.endswith(('.zip', '.apk')) and not n.endswith('/')]
-            if not cands:
-                sys.exit(f'FATAL: no payload in artifact {name}: {z.namelist()}')
-            with z.open(cands[0]) as src, open(out, 'wb') as dst:
-                dst.write(src.read())
+        member = None
+        for attempt in range(3):  # CDN truncation retries
+            subprocess.run(['curl', '-sfL', '--retry', '3', '--retry-all-errors',
+                            '-H', f'Authorization: token {TOKEN}',
+                            f'{HEAD}/repos/{BUILD_REPO}/actions/artifacts/'
+                            f'{wanted[name]}/zip', '-o', zpath], check=True)
+            try:
+                with zipfile.ZipFile(zpath) as z:
+                    cands = [n for n in z.namelist()
+                             if n.endswith(('.zip', '.apk')) and not n.endswith('/')]
+                    if not cands:
+                        sys.exit(f'FATAL: no payload in artifact {name}: {z.namelist()}')
+                    member = cands[0]
+                    with z.open(member) as src, open(out, 'wb') as dst:
+                        while True:
+                            chunk = src.read(1 << 20)
+                            if not chunk:
+                                break
+                            dst.write(chunk)
+                break  # clean extraction
+            except (EOFError, zipfile.BadZipFile) as e:
+                print(f'{name}: attempt {attempt+1} failed ({e!r}); retrying...')
+                member = None
+        if member is None:
+            sys.exit(f'FATAL: {name} extraction failed after retries')
         sz = os.path.getsize(out)
         print(f'{name}: {cands[0]} -> {out} ({sz/1e6:.1f} MB)')
         if sz < 1_000_000:
