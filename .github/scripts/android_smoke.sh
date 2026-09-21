@@ -3,9 +3,10 @@
 # after the emulator has booted (the action executes `script` one sh -c
 # per LINE, so variables and line continuations do not survive there;
 # this file gives the smoke real bash). Installs the real-engine APK
-# pinned to arm64-v8a (Android 11+ ARM translation), launches the app,
-# soaks 90 s, fails on a dead process or a FATAL EXCEPTION, and leaves a
-# screenshot + per-pid logcat as evidence. Krita source untouched.
+# pinned to arm64-v8a (Android 11+ ARM translation), starts the activity
+# explicitly via am start -W, polls for the process, soaks 90 s, fails on
+# a dead process or a FATAL EXCEPTION, and leaves a screenshot + filtered
+# logcat as evidence. Krita source untouched.
 set -euo pipefail
 
 PKG='com.featherkrita.feather_krita'
@@ -20,11 +21,13 @@ adb shell pm list packages | grep featherkrita \
   || { echo 'FATAL: package missing after install'; exit 1; }
 
 adb logcat -c || true
-# monkey's own exit code is noisy under ARM translation (it can report 1
-# right after a successful launch) — treat it as informational; the
-# pidof poll below is the authoritative launch check.
-adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 \
-  || echo 'monkey exit nonzero — proceeding to the process poll'
+
+# Explicit deterministic launch (monkey's single event proved unreliable
+# under translation — attempt 5 injected it and nothing forked). -W waits
+# for the launch to complete and prints its Status.
+echo '--- am start -W ---'
+adb shell am start -W -n "$PKG/.MainActivity" || true
+echo '--- end am start ---'
 
 PID=""
 for i in $(seq 1 40); do
@@ -36,7 +39,10 @@ for i in $(seq 1 40); do
 done
 if [ -z "$PID" ]; then
   echo 'FATAL: app process never appeared'
-  adb logcat -d | tail -200
+  adb logcat -d 2>/dev/null \
+    | grep -iE 'featherkrita|FATAL EXCEPTION|AndroidRuntime|ActivityTaskManager|ActivityManager|Unsupported|CANNOT LINK|linker|Fatal signal' \
+    | tail -300 || true
+  adb logcat -d 2>/dev/null | tail -80 || true
   exit 1
 fi
 
@@ -45,13 +51,16 @@ sleep 90
 PID2=$(adb shell pidof "$PKG" | tr -d '\r' || true)
 if [ -z "$PID2" ]; then
   echo 'FATAL: app process died during soak'
-  adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime' | tail -60
+  adb logcat -d 2>/dev/null \
+    | grep -iE 'featherkrita|FATAL EXCEPTION|AndroidRuntime|Unsupported|CANNOT LINK|linker|Fatal signal' \
+    | tail -300 || true
   exit 1
 fi
 
 adb shell dumpsys window | grep mCurrentFocus || true
-adb logcat --pid="$PID2" -d > app_logcat.txt || adb logcat -d > app_logcat.txt
-if grep -q 'FATAL EXCEPTION' app_logcat.txt; then
+adb logcat --pid="$PID2" -d > app_logcat.txt 2>/dev/null \
+  || adb logcat -d > app_logcat.txt || true
+if grep -q 'FATAL EXCEPTION' app_logcat.txt 2>/dev/null; then
   echo 'FATAL: app crashed during soak'
   grep -A 40 'FATAL EXCEPTION' app_logcat.txt | head -80
   exit 1
