@@ -136,20 +136,30 @@ def main():
             sys.exit(f'FATAL: {out} suspiciously small')
         uploads.append((out, asset, ctype))
 
-    # 3. create the release on the app repo
-    rel = api(f'{HEAD}/repos/{REPO}/releases', 'POST', {
-        'tag_name': TAG,
-        'target_commitish': 'feather-krita-flutter',
-        'name': 'v0.43 — Android real-engine boot (strict smoke green)',
-        'body': BODY,
-        'draft': False,
-        'prerelease': False,
-    })
+    # 3. create the release on the app repo (idempotent: reuse if exists)
+    try:
+        rel = api(f'{HEAD}/repos/{REPO}/releases/tags/{TAG}')
+        print('release exists, reusing:', rel['html_url'])
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
+        rel = api(f'{HEAD}/repos/{REPO}/releases', 'POST', {
+            'tag_name': TAG,
+            'target_commitish': 'feather-krita-flutter',
+            'name': 'v0.43 — Android real-engine boot (strict smoke green)',
+            'body': BODY,
+            'draft': False,
+            'prerelease': False,
+        })
+        print('release created:', rel['html_url'])
     rel_id = rel['id']
-    print('release created:', rel['html_url'])
+    have = {a['name'] for a in api(f'{HEAD}/repos/{REPO}/releases/{rel_id}').get('assets', [])}
 
-    # 4. upload assets
+    # 4. upload assets (skip any already present)
     for out, asset, ctype in uploads:
+        if asset in have:
+            print('asset already present:', asset)
+            continue
         url = (f'{HEAD}/repos/{REPO}/releases/{rel_id}/assets'
                f'?name={asset}')
         data = open(out, 'rb').read()
