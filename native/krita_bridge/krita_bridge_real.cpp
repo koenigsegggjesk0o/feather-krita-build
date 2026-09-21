@@ -76,6 +76,167 @@
 #include <zlib.h>
 
 // ---------------------------------------------------------------------------
+// Android host bootstrap (loop-61). The Flutter app hosts this library via
+// Dart FFI (DynamicLibrary.open -> dlopen), so NO JNI_OnLoad ever runs and
+// Qt's private g_javaVm stays null — yet Krita/KF5/Qt static initializers
+// in the merged engine image DO touch JNI: QJNIEnvironmentPrivate's ctor
+// derefs the VM without a null check (vm->GetEnv, Qt 5.15 qjni.cpp) and a
+// QStandardPaths::writableLocation path-cache static crashes the process at
+// dlopen time (fault addr 0x0, run 35590595766 backtrace: ctor at
+// libkrita_bridge+0x8c4a90 -> QStandardPaths(17) -> QJNIObjectPrivate ->
+// QJNIEnvironmentPrivate). The loop-43 emulator harness hit the identical
+// static-initializer wall (runs 35510837084/35513090509) and PROVED the fix
+// set below in smoke_jni.cpp:
+//   1. vminject — Qt's setter (QtAndroidPrivate::setJavaVM) is hidden in
+//      the 5.15.2 android build; only the reader javaVM() is exported, as
+//      a two/three-instruction thunk. Recover the runtime's JavaVM via
+//      JNI_GetCreatedJavaVMs (libart) and write it straight into the
+//      global behind the reader's prologue (pattern-verified per arch;
+//      any mismatch logs and skips instead of guessing).
+//   2. KCatalog::catalogLocaleDir interpose — the KCatalog static probe
+//      derefs a null Android context on this deps bundle; interposing with
+//      an empty-result stub makes KLocalizedString fall back to source
+//      strings (exactly right for a headless engine).
+//   3. QAndroidJniObject::javaObject interpose — serves a REAL
+//      AssetManager (constructed through the injected VM) so any residual
+//      probe path sees a valid object instead of aborting in ART.
+// The wrapper TU is the FIRST object on the merge link line, so this
+// constructor is init_array[0] of the merged engine — it runs before every
+// Krita/KF5 static that needs it. Krita source is NEVER modified; this is
+// bridge glue (allowed change surface #2).
+// ---------------------------------------------------------------------------
+#if defined(__ANDROID__)
+#include <android/log.h>
+#include <dlfcn.h>
+#include <jni.h>
+
+// File-scope (internal linkage) so the javaObject() interpose above can
+// serve it; written by the host-init constructor below.
+static jobject g_fkr_asset_mgr = nullptr;
+
+extern "C" {
+
+// --- proven interposes (verbatim semantics from loop-43 smoke_jni.cpp) ----
+
+// QString KCatalog::catalogLocaleDir(const QByteArray&, const QString&) —
+// sret pointer first; a null d-pointer is the null QString.
+__attribute__((visibility("default")))
+void _ZN8KCatalog16catalogLocaleDirERK10QByteArrayRK7QString(
+    void* sret, const void* /*component*/, const void* /*language*/) {
+    *static_cast<void**>(sret) = nullptr;
+}
+
+// jobject QAndroidJniObject::javaObject() const — serves the bootstrapped
+// AssetManager (or null when the VM never appeared).
+__attribute__((visibility("default")))
+void* _ZNK17QAndroidJniObject10javaObjectEv(const void* /*this*/) {
+    return g_fkr_asset_mgr;
+}
+
+} // extern "C"
+
+namespace {
+
+typedef jint (*FkrGetCreatedJavaVMs_t)(JavaVM**, jsize, jsize*);
+
+// Recover the ART VM of this (already Java-hosted) process. libart.so is
+// not a public library but is always mapped in an app process; the dlsym
+// fallback covers runners where it is already in the global solist.
+JavaVM* fkr_runtime_vm() {
+    FkrGetCreatedJavaVMs_t fn = nullptr;
+    if (void* h = dlopen("libart.so", RTLD_NOW | RTLD_GLOBAL)) {
+        fn = reinterpret_cast<FkrGetCreatedJavaVMs_t>(dlsym(h, "JNI_GetCreatedJavaVMs"));
+    }
+    if (!fn) fn = reinterpret_cast<FkrGetCreatedJavaVMs_t>(dlsym(RTLD_DEFAULT, "JNI_GetCreatedJavaVMs"));
+    if (!fn) return nullptr;
+    JavaVM* vms[4] = {nullptr, nullptr, nullptr, nullptr};
+    jsize n = 0;
+    fn(vms, 4, &n);
+    return (n > 0 && vms[0] != nullptr) ? vms[0] : nullptr;
+}
+
+// Locate Qt's g_javaVm through the exported javaVM() reader thunk, by
+// exact prologue pattern per architecture (loop-43 technique; the reader
+// is a pure global load, so the global's address is recoverable from the
+// instruction encoding). Returns nullptr when the prologue does not match
+// — the caller logs and continues (no guessing writes).
+void* fkr_qt_g_java_vm_slot() {
+    void* sym = dlsym(RTLD_DEFAULT, "_ZN16QtAndroidPrivate6javaVMEv");
+    if (sym == nullptr) return nullptr;
+    unsigned char* p = static_cast<unsigned char*>(sym);
+#if defined(__x86_64__)
+    // mov rax,[rip+disp32]; ret  — 8 bytes
+    static const unsigned char kPat[8] = {0x48, 0x8b, 0x05, 0, 0, 0, 0, 0xc3};
+    for (int i = 0; i < 8; ++i) {
+        if (i >= 3 && i <= 6) continue;
+        if (p[i] != kPat[i]) return nullptr;
+    }
+    int32_t disp = 0;
+    std::memcpy(&disp, p + 3, 4);
+    return p + 7 + disp;
+#elif defined(__aarch64__)
+    // adrp x0, <page>; ldr x0,[x0,#off]; ret  — 12 bytes
+    uint32_t w0 = 0, w1 = 0, w2 = 0;
+    std::memcpy(&w0, p, 4);
+    std::memcpy(&w1, p + 4, 4);
+    std::memcpy(&w2, p + 8, 4);
+    if ((w0 & 0x9F00001Fu) != 0x90000000u) return nullptr;   // adrp x0, <label>
+    if ((w1 & 0xFFC003FFu) != 0xF9400000u) return nullptr;   // ldr x0,[x0,#off]
+    if (w2 != 0xD65F03C0u) return nullptr;                   // ret
+    int64_t immlo = int64_t(w0 >> 29) & 0x3;
+    int64_t immhi = int64_t(w0 >> 5) & 0x7FFFF;
+    int64_t imm = (immhi << 2) | immlo;                       // 21 bits
+    if (imm & (int64_t(1) << 20)) imm -= (int64_t(1) << 21);  // sign-extend
+    uintptr_t page = (reinterpret_cast<uintptr_t>(p) & ~uintptr_t(0xFFF)) +
+                     (uintptr_t)(imm << 12);
+    uintptr_t off = uint64_t(w1 >> 10 & 0xFFFu) * 8u;
+    return reinterpret_cast<void*>(page + off);
+#else
+    return nullptr;
+#endif
+}
+
+// init_array[0] of the merged engine: runs before every Krita/KF5/Qt
+// load-time static (the wrapper TU is the first object on the merge link
+// line). Best-effort at every step; a skipped step only reproduces the
+// pre-loop-61 behavior (loud tombstone) instead of a worse one.
+struct FkrQtHostInit {
+    FkrQtHostInit() {
+        const auto log = [](const char* msg) {
+            __android_log_print(ANDROID_LOG_INFO, "krita_bridge", "host-init: %s", msg);
+        };
+        JavaVM* vm = fkr_runtime_vm();
+        if (vm == nullptr) { log("no runtime VM found — vminject skipped"); return; }
+        void* slot = fkr_qt_g_java_vm_slot();
+        if (slot == nullptr) { log("javaVM() prologue mismatch — vminject skipped"); return; }
+        *static_cast<JavaVM* volatile*>(slot) = vm;
+        log("g_javaVm injected (runtime VM)");
+
+        // Real AssetManager for the javaObject() interpose (probes that
+        // reach AAssetManager_fromJava abort on a null object).
+        JNIEnv* env = nullptr;
+        if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK || env == nullptr) {
+            log("no env on the loading thread — AssetManager skipped");
+            return;
+        }
+        jclass c = env->FindClass("android/content/res/AssetManager");
+        if (c == nullptr) { env->ExceptionClear(); log("AssetManager class not found"); return; }
+        jmethodID ctor = env->GetMethodID(c, "<init>", "()V");
+        if (ctor == nullptr) { env->ExceptionClear(); log("AssetManager ctor not found"); return; }
+        jobject o = env->NewObject(c, ctor);
+        if (o == nullptr) { env->ExceptionClear(); log("AssetManager construction failed"); return; }
+        g_fkr_asset_mgr = env->NewGlobalRef(o);
+        env->DeleteLocalRef(o);
+        env->DeleteLocalRef(c);
+        log("real AssetManager acquired (global ref)");
+    }
+};
+const FkrQtHostInit fkr_qt_host_init_instance;
+
+} // namespace
+#endif // __ANDROID__
+
+// ---------------------------------------------------------------------------
 // Glue: minimal PKZIP entry extraction for .kpp preset files.
 // (Serialization only — the extracted XML is parsed by Krita's own code.)
 // ---------------------------------------------------------------------------
