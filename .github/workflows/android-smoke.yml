@@ -1,16 +1,17 @@
 name: Android Emulator Smoke
 
-# Loop-60: auto-verification that the real-engine Android APK actually
+# Loop-60/61: auto-verification that the real-engine Android APK actually
 # INSTALLS and BOOTS on an Android emulator. Runs after every completed
 # Build Feather-Krita App run (workflow_run) and on demand
 # (workflow_dispatch) so a loop can test it without waiting for a fresh
-# app build. The APK ships arm64-v8a engine .so only (libkrita_bridge.so
-# = bridge glue + 959 krita objects, plus the Qt5/KF5/icu runtime), so
-# the x86_64 emulator must run it through the Android 11+ ARM
-# translation: the install pins --abi arm64-v8a to force that path (a
-# fat-APK x86_64 extraction would silently drop the engine and the smoke
-# would test the wrong thing). Krita source is never touched here; this
-# workflow lives ONLY in the builder repo (the app repo has no runners).
+# app build. Since loop-61 the APK is a FAT real-engine bundle for BOTH
+# arm64-v8a (device deliverable) and x86_64 (emulator-testable) — the
+# x86_64 engine on the x86_64 CI emulator runs NATIVELY (no ARM
+# translation), which retires the loop-60 KNOWN LIMITATION (arm64-only
+# bundle SIGSEGV under Android 11+ ARM translation, API 30+31). The
+# install is NOT ABI-pinned: the emulator extracts its native x86_64 set
+# (engine included). Krita source is never touched here; this workflow
+# lives ONLY in the builder repo (the app repo has no runners).
 
 on:
   workflow_dispatch:
@@ -48,39 +49,40 @@ jobs:
           APK=$(find apk -name '*.apk' | head -1)
           test -n "$APK" || { echo 'FATAL: no APK in artifact'; exit 1; }
           ls -lh "$APK"
-          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libkrita_bridge.so' \
-            || { echo 'FATAL: engine .so missing from APK'; exit 1; }
-          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libQt5Core_arm64-v8a.so' \
-            || { echo 'FATAL: Qt runtime missing from APK'; exit 1; }
-          NB=$(unzip -l "$APK" | grep -c 'lib/arm64-v8a/.*\.so')
-          echo "arm64 .so count: $NB"
-          [ "$NB" -ge 5 ] || { echo 'FATAL: bundle too small'; exit 1; }
-          unzip -p "$APK" lib/arm64-v8a/libkrita_bridge.so > /tmp/libkrita_bridge.so
           RE=$(find /usr/local/lib/android/sdk/ndk -name 'llvm-readelf' | sort | tail -1)
           test -n "$RE" || RE=readelf
-          "$RE" -h /tmp/libkrita_bridge.so | grep -q 'AArch64' \
-            || { echo 'FATAL: engine .so is not AArch64'; exit 1; }
+          # per-ABI: engine .so present, Qt runtime present, bundle big
+          # enough, ELF machine matches (AArch64 / X86-64)
+          for ABI in arm64-v8a x86_64; do
+            unzip -l "$APK" | grep -q "lib/$ABI/libkrita_bridge.so" \
+              || { echo "FATAL: engine .so missing from APK ($ABI)"; exit 1; }
+            unzip -l "$APK" | grep -q "lib/$ABI/libQt5Core_${ABI}.so" \
+              || { echo "FATAL: Qt runtime missing from APK ($ABI)"; exit 1; }
+            NB=$(unzip -l "$APK" | grep -c "lib/$ABI/.*\.so")
+            echo "$ABI .so count: $NB"
+            [ "$NB" -ge 5 ] || { echo "FATAL: bundle too small ($ABI)"; exit 1; }
+            unzip -p "$APK" "lib/$ABI/libkrita_bridge.so" > "/tmp/bridge_$ABI.so"
+            case "$ABI" in
+              arm64-v8a) ARCHPAT='AArch64' ;;
+              x86_64)    ARCHPAT='X86-64' ;;
+            esac
+            "$RE" -h "/tmp/bridge_$ABI.so" | grep -q "$ARCHPAT" \
+              || { echo "FATAL: engine .so is not $ARCHPAT ($ABI)"; "$RE" -h "/tmp/bridge_$ABI.so" | head -8; exit 1; }
+          done
           AAPT=$(find /usr/local/lib/android/sdk/build-tools -name aapt2 | sort | tail -1)
           "$AAPT" dump badging "$APK" | grep -q "package: name='com.featherkrita.feather_krita'" \
             || { echo 'FATAL: unexpected package'; "$AAPT" dump badging "$APK" | head -5; exit 1; }
           "$AAPT" dump badging "$APK" | grep -q 'launchable-activity' \
             || { echo 'FATAL: no launchable activity'; exit 1; }
-          echo 'APK audit OK'
+          echo 'APK audit OK (arm64-v8a + x86_64 real engine)'
 
   emulator-boot:
-    # KNOWN LIMITATION (loop-60): the released APK bundles the arm64-v8a
-    # engine ONLY (libkrita_bridge.so = bridge glue + 959 krita objects +
-    # Qt5/KF5/icu). On the x86_64 CI emulator the app installs and LAUNCHES
-    # (am start -W: Status ok / COLD, process forked, alive at 10 s) but
-    # SIGSEGVs during Flutter/engine init under the Android 11+ ARM
-    # translation (Fatal signal 11, fault addr 0x0, right after the
-    # libc++_shared native-bridge load; reproduced on the API 30 AND API
-    # 31 images). This is a translation-layer wall, NOT an app defect —
-    # the real fix is an x86_64 engine build in krita-build.yml (future
-    # roadmap) or real arm64 device runners. Until then this job runs as
-    # EVIDENCE COLLECTION with continue-on-error, while the apk-audit job
-    # above stays a STRICT required gate for every app build.
-    continue-on-error: true
+    # Loop-61: with the x86_64 engine bundled (fat APK), the emulator boot
+    # is NATIVE on the x86_64 CI runner (no ARM translation) — the loop-60
+    # KNOWN LIMITATION is retired and this job is now a STRICT gate: every
+    # green app build must install, launch and soak the real engine on the
+    # API 30 x86_64 emulator without crashing. Evidence (screenshot +
+    # filtered logcat) uploads on every outcome.
     needs: apk-audit
     runs-on: ubuntu-22.04
     timeout-minutes: 40
@@ -113,7 +115,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           ls -la /dev/kvm
           [ -w /dev/kvm ] && echo 'KVM writable OK' || echo 'KVM still not writable'
-      - name: Boot emulator, install APK, launch, soak (evidence run — see KNOWN LIMITATION)
+      - name: Boot emulator, install APK, launch, soak (strict gate)
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
