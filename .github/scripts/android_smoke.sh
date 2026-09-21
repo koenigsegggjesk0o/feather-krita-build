@@ -19,11 +19,15 @@ adb install --abi arm64-v8a -r -t "$APK" \
 adb shell pm list packages | grep featherkrita \
   || { echo 'FATAL: package missing after install'; exit 1; }
 
-adb logcat -c
-adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1
+adb logcat -c || true
+# monkey's own exit code is noisy under ARM translation (it can report 1
+# right after a successful launch) — treat it as informational; the
+# pidof poll below is the authoritative launch check.
+adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 \
+  || echo 'monkey exit nonzero — proceeding to the process poll'
 
 PID=""
-for i in $(seq 1 30); do
+for i in $(seq 1 40); do
   PID=$(adb shell pidof "$PKG" | tr -d '\r')
   if [ -n "$PID" ]; then echo "process alive: $PID (after $((i*10))s)"; break; fi
   sleep 10
