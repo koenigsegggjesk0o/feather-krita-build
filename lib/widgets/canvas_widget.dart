@@ -35,6 +35,7 @@ import 'package:feather_krita/theme/app_theme.dart';
 import 'package:feather_krita/state/editor_state.dart';
 import 'package:feather_krita/engine/synthetic_dab.dart';
 import 'package:feather_krita/engine/guide_surface.dart';
+import 'package:feather_krita/engine/scene_pipeline.dart';
 import 'package:feather_krita/engine/stroke_manager.dart';
 import 'package:feather_krita/models/stroke.dart';
 import 'package:feather_krita/ffi/krita_bindings.dart';
@@ -513,15 +514,22 @@ class _ScenePainter extends CustomPainter {
       _drawMirrorPlanes(canvas, size, vp, view);
     }
 
-    // Guide surface.
-    _drawGuideSurface(canvas, size, vp, view);
-
-    // Existing strokes.
-    for (final stroke in state.strokes.strokes) {
-      if (!stroke.isVisible) continue;
-      _drawStroke(canvas, size, vp, stroke,
-          isMirror: stroke.mirrorOfId != null);
-    }
+    // Unified depth-sorted scene pass (loop-50 pipeline): surface
+    // triangles and stroke ribbons live in ONE back-to-front draw list,
+    // so paint occludes correctly behind curved guides and stroke widths
+    // are true perspective (anchored at the default orbit distance).
+    final items = buildUnifiedDrawList(
+      surface: _buildSurfaceInput(state),
+      strokes: _buildStrokeInputs(state),
+      camera: SceneCameraInput(
+        position: state.camera.position,
+        view: view,
+        viewProjection: vp,
+        fovYRadians: state.camera.projection.fovYRadians,
+      ),
+      viewport: size,
+    );
+    _drawSceneItems(canvas, items);
 
     // Live stroke.
     if (drawing && livePoints.isNotEmpty) {
@@ -618,201 +626,145 @@ class _ScenePainter extends CustomPainter {
     if (state.mirrorZ) drawPlane(Vector3(0, 0, 1), AppTheme.primaryBlue);
   }
 
-  // ----- Guide surface ---------------------------------------------------
+  // ----- Unified scene pipeline inputs -----------------------------------
 
-  void _drawGuideSurface(Canvas canvas, Size size, Matrix4 vp, Matrix4 view) {
+  /// Surface pass input: world-transformed mesh + the legacy per-triangle
+  /// shading contract (tint × texture sample, fill alpha rising from
+  /// 0.35 bare glass to 0.95 painted) resolved into a single sampler.
+  SceneSurfaceInput _buildSurfaceInput(EditorState state) {
     final surface = state.guideSurface;
     final mesh = surface.mesh;
-    final indices = mesh.indices;
-    final positions = mesh.positions;
-    final uvs = mesh.uvs;
-    final camPos = state.camera.position;
-
-    // Pre-compute world positions for all vertices.
     final world = List<Vector3>.generate(
-      positions.length,
-      (i) => surface.transform.transform3(positions[i].clone()),
+      mesh.positions.length,
+      (i) => surface.transform.transform3(mesh.positions[i].clone()),
       growable: false,
     );
-
-    final tris = <_Triangle>[];
-    for (var i = 0; i < indices.length; i += 3) {
-      final i0 = indices[i];
-      final i1 = indices[i + 1];
-      final i2 = indices[i + 2];
-      final w0 = world[i0];
-      final w1 = world[i1];
-      final w2 = world[i2];
-
-      // Backface cull (geometric normal vs view direction).
-      final e1 = w1 - w0;
-      final e2 = w2 - w0;
-      final n = e1.cross(e2);
-      if (n.length2 < 1e-12) continue;
-      final centroid = (w0 + w1 + w2).scaled(1.0 / 3.0);
-      final toCam = camPos - centroid;
-      if (n.dot(toCam) < 0) continue; // back-facing
-
-      // Project.
-      final s0 = _project(w0, vp, size);
-      final s1 = _project(w1, vp, size);
-      final s2 = _project(w2, vp, size);
-      if (s0 == null || s1 == null || s2 == null) continue;
-
-      // Camera-space depth (for painter's sort).
-      final cv = view.transform3(centroid.clone());
-      // UV centroid → texture sample.
-      final uv = (uvs[i0] + uvs[i1] + uvs[i2]).scaled(1.0 / 3.0);
-      tris.add(_Triangle(s0, s1, s2, cv.z, uv));
-    }
-
-    tris.sort((a, b) => a.depth.compareTo(b.depth));
-
-    final surfaceTint = Color.fromARGB(
+    final tint = Color.fromARGB(
       255,
-      (state.guideSurface.color.x * 255).round().clamp(0, 255),
-      (state.guideSurface.color.y * 255).round().clamp(0, 255),
-      (state.guideSurface.color.z * 255).round().clamp(0, 255),
+      (surface.color.x * 255).round().clamp(0, 255),
+      (surface.color.y * 255).round().clamp(0, 255),
+      (surface.color.z * 255).round().clamp(0, 255),
     );
-
-    for (final t in tris) {
-      final sample = state.texture.sample(t.uv.x, t.uv.y);
-      final sA = sample[3] / 255.0;
-      final blendR = (surfaceTint.red * (1 - sA) + sample[0] * sA).round();
-      final blendG = (surfaceTint.green * (1 - sA) + sample[1] * sA).round();
-      final blendB = (surfaceTint.blue * (1 - sA) + sample[2] * sA).round();
-      final alpha = (0.35 + 0.6 * sA).clamp(0.0, 1.0);
-      final path = Path()
-        ..moveTo(t.s0.dx, t.s0.dy)
-        ..lineTo(t.s1.dx, t.s1.dy)
-        ..lineTo(t.s2.dx, t.s2.dy)
-        ..close();
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = Color.fromARGB(
-              (alpha * 255).round(), blendR, blendG, blendB)
-          ..style = PaintingStyle.fill,
-      );
-      // Subtle edge.
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = const Color(0x15FFFFFF)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.4,
-      );
-    }
+    return SceneSurfaceInput(
+      positions: world,
+      indices: mesh.indices,
+      uvs: mesh.uvs,
+      sampleColor: (uv) {
+        final s = state.texture.sample(uv.x, uv.y);
+        final sA = s[3] / 255.0;
+        return Color.fromARGB(
+          ((0.35 + 0.6 * sA) * 255).round(),
+          (tint.r * 255.0 * (1 - sA) + s[0] * sA).round(),
+          (tint.g * 255.0 * (1 - sA) + s[1] * sA).round(),
+          (tint.b * 255.0 * (1 - sA) + s[2] * sA).round(),
+        );
+      },
+    );
   }
 
-  // ----- Strokes ---------------------------------------------------------
+  /// Stroke pass inputs: world-space samples for every visible stroke.
+  List<SceneStrokeInput> _buildStrokeInputs(EditorState state) {
+    return [
+      for (final stroke in state.strokes.strokes)
+        if (stroke.isVisible)
+          SceneStrokeInput(
+            points: [
+              for (final p in stroke.points)
+                stroke.transform.transform3(p.position.clone()),
+            ],
+            pressures: [for (final p in stroke.points) p.pressure],
+            thickness: stroke.thickness,
+            color: Color(stroke.color),
+            isMirror: stroke.mirrorOfId != null,
+          ),
+    ];
+  }
 
-  void _drawStroke(Canvas canvas, Size size, Matrix4 vp, Stroke stroke,
-      {required bool isMirror}) {
-    if (stroke.points.isEmpty) return;
-    final pts = <Offset>[];
-    final widths = <double>[];
-    final distScale = (state.camera.currentDistance / 6.0).clamp(0.3, 3.0);
-    for (final p in stroke.points) {
-      final w = stroke.transform.transform3(p.position.clone());
-      final s = _project(w, vp, size);
-      if (s == null) {
-        if (pts.isNotEmpty) {
-          _strokeSegment(canvas, pts, widths, stroke.color, isMirror);
-          pts.clear();
-          widths.clear();
-        }
-        continue;
+  /// Draws the pipeline's ordered primitives (back-to-front).
+  void _drawSceneItems(Canvas canvas, List<SceneDrawItem> items) {
+    for (final item in items) {
+      if (item is SceneTri) {
+        final path = Path()
+          ..moveTo(item.s0.dx, item.s0.dy)
+          ..lineTo(item.s1.dx, item.s1.dy)
+          ..lineTo(item.s2.dx, item.s2.dy)
+          ..close();
+        canvas.drawPath(
+          path,
+          Paint()
+            ..color = item.color
+            ..style = PaintingStyle.fill,
+        );
+        // Subtle edge.
+        canvas.drawPath(
+          path,
+          Paint()
+            ..color = const Color(0x15FFFFFF)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 0.4,
+        );
+      } else if (item is SceneSegment) {
+        canvas.drawLine(
+          item.a,
+          item.b,
+          Paint()
+            ..color = item.color
+            ..strokeWidth = item.widthPx
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round
+            ..style = PaintingStyle.stroke,
+        );
+      } else if (item is SceneDot) {
+        canvas.drawCircle(
+          item.center,
+          item.radius,
+          Paint()..color = item.color,
+        );
       }
-      pts.add(s);
-      widths.add(stroke.thickness * 0.5 * distScale *
-          (0.4 + 0.6 * p.pressure));
-    }
-    if (pts.isNotEmpty) {
-      _strokeSegment(canvas, pts, widths, stroke.color, isMirror);
-    }
-  }
-
-  void _strokeSegment(
-      Canvas canvas, List<Offset> pts, List<double> widths, int color,
-      bool isMirror) {
-    if (pts.length == 1) {
-      canvas.drawCircle(
-        pts.first,
-        widths.first / 2,
-        Paint()..color = _strokeColor(color, isMirror),
-      );
-      return;
-    }
-    for (var i = 1; i < pts.length; i++) {
-      final w = (widths[i - 1] + widths[i]) * 0.5;
-      canvas.drawLine(
-        pts[i - 1],
-        pts[i],
-        Paint()
-          ..color = _strokeColor(color, isMirror)
-          ..strokeWidth = w
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round
-          ..style = PaintingStyle.stroke,
-      );
     }
   }
 
   void _drawLiveStroke(Canvas canvas, Size size, Matrix4 vp) {
     if (livePoints.isEmpty) return;
-    final distScale = (state.camera.currentDistance / 6.0).clamp(0.3, 3.0);
     final paint = Paint()
       ..color = Color(liveColor)
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..style = PaintingStyle.stroke;
     final glow = Paint()
-      ..color = Color(liveColor).withOpacity(0.35)
+      ..color = Color(liveColor).withValues(alpha: 0.35)
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..style = PaintingStyle.stroke
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
 
-    Offset? prev;
+    // Same perspective-correct width as committed strokes (loop-50), so a
+    // stroke does not jump in width when it commits.
+    SceneProjection? prev;
     for (final p in livePoints) {
-      final s = _project(p.position.clone(), vp, size);
+      final s = projectScenePoint(p.position, vp, size);
       if (s == null) {
         prev = null;
         continue;
       }
+      final w = sceneStrokeWidthPx(
+        thickness: liveThickness,
+        pressure: p.pressure,
+        clipW: s.clipW,
+        referenceDepth: kSceneReferenceDepth,
+      );
       if (prev != null) {
-        final w = liveThickness * 0.5 * distScale * (0.4 + 0.6 * p.pressure);
-        canvas.drawLine(prev, s, glow..strokeWidth = w + 3);
-        canvas.drawLine(prev, s, paint..strokeWidth = w);
+        canvas.drawLine(prev.screen, s.screen, glow..strokeWidth = w + 3);
+        canvas.drawLine(prev.screen, s.screen, paint..strokeWidth = w);
       } else {
-        canvas.drawCircle(s, liveThickness * 0.25 * distScale, paint);
+        canvas.drawCircle(s.screen, w * 0.5, paint);
       }
       prev = s;
     }
   }
 
-  Color _strokeColor(int argb, bool isMirror) {
-    final c = Color(argb);
-    if (!isMirror) return c;
-    return c.withOpacity(0.55);
-  }
-
   @override
   bool shouldRepaint(covariant _ScenePainter old) => true;
-}
-
-// ---------------------------------------------------------------------------
-// Geometry helpers.
-// ---------------------------------------------------------------------------
-
-class _Triangle {
-  const _Triangle(this.s0, this.s1, this.s2, this.depth, this.uv);
-  final Offset s0;
-  final Offset s1;
-  final Offset s2;
-  final double depth;
-  final Vector2 uv;
 }
 
 /// Projects a world-space point to screen space. Returns `null` if the
