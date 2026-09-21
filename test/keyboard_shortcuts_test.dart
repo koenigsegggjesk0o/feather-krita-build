@@ -29,6 +29,7 @@ import 'package:feather_krita/state/editor_state.dart';
 import 'package:feather_krita/widgets/canvas_widget.dart';
 import 'package:feather_krita/io/app_dirs.dart';
 import 'package:feather_krita/io/recent_projects.dart';
+import 'package:feather_krita/engine/texture_image.dart';
 
 Widget _host(EditorState state) => MaterialApp(home: MainScreen(state: state));
 
@@ -59,6 +60,9 @@ Future<void> _sendKey(WidgetTester tester, LogicalKeyboardKey key) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   SharedPreferences.setMockInitialValues(<String, Object>{});
+  // The async texture-image raster (loop-51) is exercised nowhere here;
+  // keep the painter on the synchronous flat-fallback path.
+  TextureImageCache.enabled = false;
 
   // Isolate the recents store so Ctrl+S's recordRecentProject call doesn't
   // touch the developer's real recent_projects.json.

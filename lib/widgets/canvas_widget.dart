@@ -5,8 +5,9 @@
 //
 // A software-rendered 3D viewport built on [CustomPainter]. It:
 //   - Renders the active [GuideSurface] as a backface-culled, depth-sorted
-//     triangle mesh textured by sampling [TexturePainter] at each
-//     triangle's UV centroid (a real software texture mapper).
+//     triangle mesh mapped PER FRAGMENT from the rasterized guide texture
+//     (drawVertices + ImageShader; loop-51), falling back to the legacy
+//     per-triangle flat sample while the texture image decodes.
 //   - Renders all 3D strokes as projected polylines with per-point
 //     thickness, plus the in-progress "live" stroke.
 //   - Draws a ground grid and translucent mirror planes.
@@ -24,6 +25,8 @@
 // the input handling and engine wiring above it stay the same.
 
 import 'dart:math' as math;
+import 'dart:typed_data' show Float64List;
+import 'dart:ui' show Vertices, VertexMode;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -37,6 +40,9 @@ import 'package:feather_krita/engine/synthetic_dab.dart';
 import 'package:feather_krita/engine/guide_surface.dart';
 import 'package:feather_krita/engine/scene_pipeline.dart';
 import 'package:feather_krita/engine/stroke_manager.dart';
+import 'package:feather_krita/engine/texture_image.dart';
+import 'package:feather_krita/engine/texture_painter.dart'
+    show applySurfaceContract;
 import 'package:feather_krita/models/stroke.dart';
 import 'package:feather_krita/ffi/krita_bindings.dart';
 import 'package:feather_krita/utils/stroke_smoother.dart';
@@ -469,6 +475,16 @@ class _HudOverlay extends StatelessWidget {
 // Scene painter (software 3D renderer).
 // ---------------------------------------------------------------------------
 
+// Identity UV transform for the surface shader (no matrix4 param in
+// this Flutter version's ImageShader).
+final Float64List _identityShaderMatrix =
+    Float64List.fromList(const [
+  1, 0, 0, 0, //
+  0, 1, 0, 0, //
+  0, 0, 1, 0, //
+  0, 0, 0, 1,
+]);
+
 class _ScenePainter extends CustomPainter {
   _ScenePainter({
     required this.state,
@@ -529,7 +545,18 @@ class _ScenePainter extends CustomPainter {
       ),
       viewport: size,
     );
-    _drawSceneItems(canvas, items);
+
+    // loop-51: rasterize the guide texture with the shading contract
+    // baked in (async, cached per texture version / tint) and map it
+    // per-fragment across the surface triangles. Null until the first
+    // decode lands — the flat per-triangle paint covers those frames.
+    TextureImageCache.refresh(
+      state.texture,
+      tintR: state.guideSurface.color.x,
+      tintG: state.guideSurface.color.y,
+      tintB: state.guideSurface.color.z,
+    );
+    _drawSceneItems(canvas, items, TextureImageCache.current);
 
     // Live stroke.
     if (drawing && livePoints.isNotEmpty) {
@@ -631,6 +658,8 @@ class _ScenePainter extends CustomPainter {
   /// Surface pass input: world-transformed mesh + the legacy per-triangle
   /// shading contract (tint × texture sample, fill alpha rising from
   /// 0.35 bare glass to 0.95 painted) resolved into a single sampler.
+  /// The contract math lives in [applySurfaceContract] so the whole-
+  /// buffer bake for per-fragment mapping blends identically.
   SceneSurfaceInput _buildSurfaceInput(EditorState state) {
     final surface = state.guideSurface;
     final mesh = surface.mesh;
@@ -651,13 +680,9 @@ class _ScenePainter extends CustomPainter {
       uvs: mesh.uvs,
       sampleColor: (uv) {
         final s = state.texture.sample(uv.x, uv.y);
-        final sA = s[3] / 255.0;
-        return Color.fromARGB(
-          ((0.35 + 0.6 * sA) * 255).round(),
-          (tint.r * 255.0 * (1 - sA) + s[0] * sA).round(),
-          (tint.g * 255.0 * (1 - sA) + s[1] * sA).round(),
-          (tint.b * 255.0 * (1 - sA) + s[2] * sA).round(),
-        );
+        final c = applySurfaceContract(
+            s[0], s[1], s[2], s[3], tint.r, tint.g, tint.b);
+        return Color.fromARGB(c[3], c[0], c[1], c[2]);
       },
     );
   }
@@ -680,8 +705,19 @@ class _ScenePainter extends CustomPainter {
     ];
   }
 
-  /// Draws the pipeline's ordered primitives (back-to-front).
-  void _drawSceneItems(Canvas canvas, List<SceneDrawItem> items) {
+  /// Draws the pipeline's ordered primitives (back-to-front). Surface
+  /// triangles carrying UV corners are texture-mapped per fragment from
+  /// [surfaceImage] when it is ready; otherwise they fall back to their
+  /// flat sampled color (identical to the legacy centroid paint).
+  void _drawSceneItems(
+      Canvas canvas, List<SceneDrawItem> items, dynamic surfaceImage) {
+    final surfaceShader = surfaceImage == null
+        ? null
+        : ImageShader(surfaceImage, TileMode.clamp, TileMode.clamp,
+            _identityShaderMatrix,
+            filterQuality: FilterQuality.low);
+    final imgW = surfaceImage?.width.toDouble() ?? 1.0;
+    final imgH = surfaceImage?.height.toDouble() ?? 1.0;
     for (final item in items) {
       if (item is SceneTri) {
         final path = Path()
@@ -689,12 +725,33 @@ class _ScenePainter extends CustomPainter {
           ..lineTo(item.s1.dx, item.s1.dy)
           ..lineTo(item.s2.dx, item.s2.dy)
           ..close();
-        canvas.drawPath(
-          path,
-          Paint()
-            ..color = item.color
-            ..style = PaintingStyle.fill,
-        );
+        if (surfaceShader != null &&
+            item.uv0 != null &&
+            item.uv1 != null &&
+            item.uv2 != null) {
+          // Per-fragment texture mapping (loop-51): the baked image
+          // already carries the tint × texture × fill-alpha contract, so
+          // plain source-over of the mapped texels is the final paint.
+          final verts = Vertices(
+            VertexMode.triangles,
+            [item.s0, item.s1, item.s2],
+            textureCoordinates: [
+              Offset(item.uv0!.dx * imgW, item.uv0!.dy * imgH),
+              Offset(item.uv1!.dx * imgW, item.uv1!.dy * imgH),
+              Offset(item.uv2!.dx * imgW, item.uv2!.dy * imgH),
+            ],
+          );
+          canvas.drawVertices(
+              verts, BlendMode.srcOver, Paint()..shader = surfaceShader);
+          verts.dispose();
+        } else {
+          canvas.drawPath(
+            path,
+            Paint()
+              ..color = item.color
+              ..style = PaintingStyle.fill,
+          );
+        }
         // Subtle edge.
         canvas.drawPath(
           path,

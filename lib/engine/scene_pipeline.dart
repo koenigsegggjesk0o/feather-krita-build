@@ -20,6 +20,16 @@
 //   - Camera-space depth shared by surface AND stroke primitives, sorted
 //     back-to-front → correct mutual occlusion between paint and surface.
 //
+// loop-51: the surface pass now emits PERSPECTIVE-CORRECT texture data.
+// Every surface triangle carries its per-vertex UV corners so the painter
+// can map the rasterized guide texture PER FRAGMENT (drawVertices +
+// ImageShader) instead of painting one flat centroid sample per triangle,
+// and screen-large triangles are adaptively subdivided (grid evaluated in
+// WORLD space, UVs interpolated u/w-style) so the rasterizer's affine UV
+// interpolation stays faithful on close-up views. The per-triangle flat
+// color remains as the frame-0 fallback paint for the window before the
+// texture image finishes decoding.
+//
 // The output primitives are plain data (screen-space), so the caller can
 // draw them with any backend — CustomPainter today, the pluggable
 // hardware renderer later. Pure Dart: no widget bindings, fully unit
@@ -52,6 +62,21 @@ const double kSceneAmbient = 0.62;
 const double kMinWidthScale = 0.12;
 const double kMaxWidthScale = 5.0;
 
+/// Screen-space area (px²) above which a surface triangle is subdivided
+/// before rasterization. Below it, the rasterizer's affine UV
+/// interpolation over the triangle is visually indistinguishable from the
+/// perspective-correct mapping; above it, the [kTexSubdivideFactor]² grid
+/// bounds the drift. Default-pose guide spheres stay well below this
+/// (≈ 300–700 px² per triangle), so subdivision only engages on close-up
+/// views where it is actually needed.
+const double kTexSubdivideAreaPx = 2200.0;
+
+/// Subdivision factor for screen-large surface triangles: the triangle
+/// is split into [kTexSubdivideFactor]² sub-triangles over the triangular
+/// barycentric lattice, so each split vertex is projected exactly rather
+/// than lerped in screen space.
+const int kTexSubdivideFactor = 2;
+
 /// One drawable primitive in the unified, back-to-front scene list.
 abstract class SceneDrawItem {
   const SceneDrawItem(this.depth, this.seq);
@@ -69,7 +94,8 @@ abstract class SceneDrawItem {
 
 /// A projected, shaded surface triangle.
 class SceneTri extends SceneDrawItem {
-  const SceneTri(this.s0, this.s1, this.s2, this.color, double depth, int seq)
+  const SceneTri(this.s0, this.s1, this.s2, this.color, double depth, int seq,
+      {this.uv0, this.uv1, this.uv2})
       : super(depth, seq);
 
   final Offset s0;
@@ -78,7 +104,18 @@ class SceneTri extends SceneDrawItem {
 
   /// Final fill color — texture/tint blending AND the translucency alpha
   /// are resolved by the caller's sampler before the pipeline sees it.
+  /// Used as the flat fallback paint when the texture image has not
+  /// finished decoding; with UV corners present the painter prefers
+  /// per-fragment texture mapping.
   final Color color;
+
+  /// Normalized UV corners for per-fragment texture mapping (loop-51).
+  /// Never null from [buildSurfaceItems] — null only on legacy flat
+  /// emission. The painter maps the rasterized guide texture across the
+  /// triangle with these via drawVertices.
+  final Offset? uv0;
+  final Offset? uv1;
+  final Offset? uv2;
 }
 
 /// A stroke ribbon segment between two consecutive visible samples,
@@ -261,7 +298,58 @@ Color shadeSegment(
 Color applyMirrorAlpha(Color color) =>
     color.withValues(alpha: (color.a * 0.55).clamp(0.0, 1.0));
 
-/// Builds the surface pass items (culled + projected triangles).
+/// Perspective-correct interpolation of the surface UV at barycentric
+/// coordinates [bary] across a triangle whose vertices carry clip-space
+/// ws [clipW] and texture coordinates [uvs].
+///
+/// Interpolates u/w and 1/w linearly (the screen-space quantities a
+/// rasterizer actually interpolates) and divides — the same math a GPU
+/// applies per fragment. With uniform clipW this reduces exactly to the
+/// plain barycentric lerp.
+Vector2 perspectiveCorrectUv(
+    List<double> bary, List<double> clipW, List<Vector2> uvs) {
+  var wSum = 0.0;
+  var u = 0.0;
+  var v = 0.0;
+  for (var i = 0; i < 3; i++) {
+    final w = bary[i] / clipW[i];
+    wSum += w;
+    u += w * uvs[i].x;
+    v += w * uvs[i].y;
+  }
+  return Vector2(u / wSum, v / wSum);
+}
+
+void _emitSurfaceTri({
+  required List<SceneDrawItem> items,
+  required SceneSurfaceInput surface,
+  required SceneCameraInput camera,
+  required List<Vector3> world,
+  required List<Offset> screen,
+  required List<Vector2> uv,
+  required int seq,
+}) {
+  final centroidWorld = (world[0] + world[1] + world[2]).scaled(1.0 / 3.0);
+  final depth = camera.view.transform3(centroidWorld.clone()).z;
+  // Flat fallback paint: plain average of the (already perspective-
+  // correct) UV corners — identical to the legacy centroid sample on
+  // unsubdivided triangles.
+  final uvCentroid = (uv[0] + uv[1] + uv[2]).scaled(1.0 / 3.0);
+  items.add(SceneTri(
+    screen[0], screen[1], screen[2], surface.sampleColor(uvCentroid), depth,
+    seq,
+    uv0: Offset(uv[0].x, uv[0].y),
+    uv1: Offset(uv[1].x, uv[1].y),
+    uv2: Offset(uv[2].x, uv[2].y),
+  ));
+}
+
+/// Builds the surface pass items (culled + projected triangles), each
+/// carrying perspective-correct UV corners for per-fragment texture
+/// mapping. Screen-large triangles (area > [kTexSubdivideAreaPx]) are
+/// split over a [kTexSubdivideFactor]² world-space barycentric grid so
+/// split vertices are projected exactly and their UVs interpolated
+/// u/w-style ([perspectiveCorrectUv]).
 List<SceneDrawItem> buildSurfaceItems({
   required SceneSurfaceInput surface,
   required SceneCameraInput camera,
@@ -275,9 +363,12 @@ List<SceneDrawItem> buildSurfaceItems({
   var seq = seqStart;
 
   for (var i = 0; i < indices.length; i += 3) {
-    final w0 = positions[indices[i]];
-    final w1 = positions[indices[i + 1]];
-    final w2 = positions[indices[i + 2]];
+    final i0 = indices[i];
+    final i1 = indices[i + 1];
+    final i2 = indices[i + 2];
+    final w0 = positions[i0];
+    final w1 = positions[i1];
+    final w2 = positions[i2];
 
     // Backface cull (geometric normal vs view direction).
     final e1 = w1 - w0;
@@ -293,12 +384,85 @@ List<SceneDrawItem> buildSurfaceItems({
     final s2 = projectScenePoint(w2, camera.viewProjection, viewport);
     if (s0 == null || s1 == null || s2 == null) continue;
 
-    final depth = camera.view.transform3(centroid.clone()).z;
-    final uv = (uvs[indices[i]] + uvs[indices[i + 1]] + uvs[indices[i + 2]])
-        .scaled(1.0 / 3.0);
-    items.add(SceneTri(
-        s0.screen, s1.screen, s2.screen, surface.sampleColor(uv), depth, seq));
-    seq++;
+    final baseUv = [uvs[i0], uvs[i1], uvs[i2]];
+    final clipW = [s0.clipW, s1.clipW, s2.clipW];
+
+    // Screen-space area decides whether the rasterizer's affine UV
+    // interpolation would visibly drift from the perspective-correct
+    // mapping on this triangle.
+    final area =
+            ((s1.screen.dx - s0.screen.dx) * (s2.screen.dy - s0.screen.dy) -
+                    (s2.screen.dx - s0.screen.dx) *
+                        (s1.screen.dy - s0.screen.dy))
+                .abs() *
+            0.5;
+
+    if (area <= kTexSubdivideAreaPx) {
+      _emitSurfaceTri(
+        items: items,
+        surface: surface,
+        camera: camera,
+        world: [w0, w1, w2],
+        screen: [s0.screen, s1.screen, s2.screen],
+        uv: baseUv,
+        seq: seq++,
+      );
+      continue;
+    }
+
+    // Subdivide over the triangular barycentric lattice: lattice points
+    // Q(a,b) = (1−(a+b)/k)·v0 + (a/k)·v1 + (b/k)·v2 for integers a,b ≥ 0
+    // with a+b ≤ k, each evaluated in WORLD space and projected exactly
+    // (no screen-space lerp), each UV interpolated u/w-style. The k²
+    // sub-triangles are the "upper" Q(a,b),Q(a+1,b),Q(a,b+1) for
+    // a+b ≤ k−1 and the "lower" Q(a+1,b),Q(a+1,b+1),Q(a,b+1) for
+    // a+b ≤ k−2 — both wind the same way as v0→v1→v2.
+    const k = kTexSubdivideFactor;
+    final latScreen = List<Offset?>.filled((k + 1) * (k + 1), null);
+    final latUv = List<Vector2?>.filled((k + 1) * (k + 1), null);
+    final latWorld = List<Vector3?>.filled((k + 1) * (k + 1), null);
+    for (var a = 0; a <= k; a++) {
+      for (var b = 0; a + b <= k; b++) {
+        final bary = [1.0 - (a + b) / k, a / k, b / k];
+        final world = w0 * bary[0] + w1 * bary[1] + w2 * bary[2];
+        final proj = projectScenePoint(world, camera.viewProjection, viewport);
+        // Convex combination of visible vertices stays in front of the
+        // near plane (clip w is linear in world space and positive here).
+        final g = a * (k + 1) + b;
+        latWorld[g] = world;
+        latScreen[g] = proj!.screen;
+        latUv[g] = perspectiveCorrectUv(bary, clipW, baseUv);
+      }
+    }
+    Vector3 lw(int a, int b) => latWorld[a * (k + 1) + b]!;
+    Offset ls(int a, int b) => latScreen[a * (k + 1) + b]!;
+    Vector2 lu(int a, int b) => latUv[a * (k + 1) + b]!;
+    for (var a = 0; a <= k; a++) {
+      for (var b = 0; a + b <= k; b++) {
+        if (a + b <= k - 1) {
+          _emitSurfaceTri(
+            items: items,
+            surface: surface,
+            camera: camera,
+            world: [lw(a, b), lw(a + 1, b), lw(a, b + 1)],
+            screen: [ls(a, b), ls(a + 1, b), ls(a, b + 1)],
+            uv: [lu(a, b), lu(a + 1, b), lu(a, b + 1)],
+            seq: seq++,
+          );
+        }
+        if (a + b <= k - 2) {
+          _emitSurfaceTri(
+            items: items,
+            surface: surface,
+            camera: camera,
+            world: [lw(a + 1, b), lw(a + 1, b + 1), lw(a, b + 1)],
+            screen: [ls(a + 1, b), ls(a + 1, b + 1), ls(a, b + 1)],
+            uv: [lu(a + 1, b), lu(a + 1, b + 1), lu(a, b + 1)],
+            seq: seq++,
+          );
+        }
+      }
+    }
   }
   return items;
 }

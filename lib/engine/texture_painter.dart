@@ -10,6 +10,12 @@
 // The buffer is laid out as a row-major Uint8List of size
 // width * height * 4 bytes (R, G, B, A — not premultiplied internally;
 // premultiplication is applied only during composite math).
+//
+// loop-51: adds a mutation serial ([TexturePainter.version]) so render
+// consumers can rasterize the texture exactly once per content change,
+// plus the shared guide-surface shading contract ([applySurfaceContract],
+// [bakeSurfaceContractImage]) used by both the whole-buffer bake for
+// per-fragment texture mapping and the painter's per-UV fallback sampler.
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -167,6 +173,17 @@ class TexturePainter {
   final List<Uint8List> _undoStack;
   final List<Uint8List> _redoStack;
 
+  /// Mutation serial: bumped whenever the pixel buffer actually changes
+  /// (dabs that modify pixels, clear, fill, undo, redo, restore). Render
+  /// consumers (the 3D painter's texture-image cache) rasterize the
+  /// texture only when this serial moves.
+  int _version = 0;
+
+  /// Current mutation serial.
+  int get version => _version;
+
+  void _bumpVersion() => _version++;
+
   /// Whether a stroke-scoped undo transaction is currently open (see
   /// [beginStrokeUndo]). While open, [paintDab] does NOT push its own
   /// undo snapshot — the transaction's single entry covers the stroke.
@@ -199,6 +216,7 @@ class TexturePainter {
   void clear({bool pushUndo = true}) {
     if (pushUndo) _pushUndo();
     _pixels.fillRange(0, _pixels.length, 0);
+    _bumpVersion();
   }
 
   /// Fills the texture with a solid color.
@@ -210,6 +228,7 @@ class TexturePainter {
       _pixels[i + 2] = b;
       _pixels[i + 3] = a;
     }
+    _bumpVersion();
   }
 
   /// Number of entries currently on the undo stack. Exposed for tests
@@ -259,6 +278,7 @@ class TexturePainter {
     _redoStack.add(Uint8List.fromList(_pixels));
     final prev = _undoStack.removeLast();
     _pixels.setAll(0, prev);
+    _bumpVersion();
     return true;
   }
 
@@ -269,6 +289,7 @@ class TexturePainter {
     _undoStack.add(Uint8List.fromList(_pixels));
     final next = _redoStack.removeLast();
     _pixels.setAll(0, next);
+    _bumpVersion();
     return true;
   }
 
@@ -465,6 +486,7 @@ class TexturePainter {
         modified++;
       }
     }
+    if (modified > 0) _bumpVersion();
     return modified;
   }
 
@@ -745,6 +767,7 @@ class TexturePainter {
           'Snapshot length ${snapshot.length} does not match texture size ${_pixels.length}');
     }
     _pixels.setAll(0, snapshot);
+    _bumpVersion();
   }
 
   /// Resets the undo / redo history (does not modify current pixels).
@@ -752,4 +775,51 @@ class TexturePainter {
     _undoStack.clear();
     _redoStack.clear();
   }
+}
+
+/// Applies the guide-surface shading contract to one RGBA texel:
+/// RGB = tint·(1−α_tex) + tex·α_tex and A = (0.35 + 0.6·α_tex)·255 — the
+/// translucent-glass ramp from bare glass (α 0.35) to fully painted
+/// (α 0.95). [tintR]/[tintG]/[tintB] are 0..1 channel doubles.
+///
+/// Single source of truth shared by [bakeSurfaceContractImage] (whole-
+/// buffer bake for per-fragment mapping) and the canvas painter's per-UV
+/// fallback sampler, so both paths blend identically.
+List<int> applySurfaceContract(
+    int r, int g, int b, int a, double tintR, double tintG, double tintB) {
+  final sA = a / 255.0;
+  int ch(double t, int s) =>
+      (t * 255.0 * (1 - sA) + s * sA).round().clamp(0, 255);
+  return [
+    ch(tintR, r),
+    ch(tintG, g),
+    ch(tintB, b),
+    ((0.35 + 0.6 * sA) * 255).round().clamp(0, 255),
+  ];
+}
+
+/// Bakes the guide-surface shading contract (tint × texture × fill-alpha
+/// ramp, see [applySurfaceContract]) over the whole texture into a NEW
+/// RGBA8 buffer. The input buffer is never mutated. The result is what
+/// the 3D painter uploads as a ui.Image and maps per-fragment across the
+/// guide surface.
+Uint8List bakeSurfaceContractImage({
+  required Uint8List pixels,
+  required int width,
+  required int height,
+  required double tintR,
+  required double tintG,
+  required double tintB,
+}) {
+  assert(pixels.length == width * height * 4);
+  final out = Uint8List(pixels.length);
+  for (var i = 0; i < pixels.length; i += 4) {
+    final c = applySurfaceContract(pixels[i], pixels[i + 1], pixels[i + 2],
+        pixels[i + 3], tintR, tintG, tintB);
+    out[i] = c[0];
+    out[i + 1] = c[1];
+    out[i + 2] = c[2];
+    out[i + 3] = c[3];
+  }
+  return out;
 }

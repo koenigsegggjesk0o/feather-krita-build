@@ -20,12 +20,16 @@ import 'package:feather_krita/state/editor_state.dart';
 import 'package:feather_krita/widgets/canvas_widget.dart';
 import 'package:feather_krita/widgets/joystick_widget.dart';
 import 'package:feather_krita/widgets/stroke_list_panel.dart';
+import 'package:feather_krita/engine/texture_image.dart';
 
 Widget _host(EditorState state) => MaterialApp(home: MainScreen(state: state));
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   SharedPreferences.setMockInitialValues(<String, Object>{});
+  // The async texture-image raster (loop-51) is exercised nowhere here;
+  // keep the painter on the synchronous flat-fallback path.
+  TextureImageCache.enabled = false;
 
   testWidgets('editor mounts the real 3D canvas, panels and docks',
       (tester) async {

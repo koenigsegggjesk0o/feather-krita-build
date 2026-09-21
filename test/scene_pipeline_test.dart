@@ -90,7 +90,12 @@ void main() {
         viewport: _viewport,
       );
 
-      final tri = items.whereType<SceneTri>().single;
+      // The 2-unit surface triangle is screen-huge, so the pipeline
+      // subdivides it (loop-51) — all sub-tris sit on the same z=0 plane
+      // at depth −6 and share the unified ordering.
+      final tris = items.whereType<SceneTri>().toList();
+      expect(tris, isNotEmpty);
+      final tri = tris.first;
       final segs = items.whereType<SceneSegment>().toList();
       expect(segs.length, 2);
       final behindSeg = segs.firstWhere((s) => s.depth < tri.depth);
@@ -205,10 +210,15 @@ void main() {
       final cam = _camera();
       final items = buildSurfaceItems(
           surface: _surface(), camera: cam, viewport: _viewport, seqStart: 0);
-      final tri = items.whereType<SceneTri>().single;
-      expect(tri.color, const Color(0xFF808080));
-      // Depth: camera-space z of the z=0 centroid = −6.
-      expect(tri.depth, closeTo(-6, 1e-9));
+      // Screen-huge triangle (≈1040 px wide) → 2×2 triangular-lattice
+      // subdivision (loop-51).
+      final tris = items.whereType<SceneTri>().toList();
+      expect(tris.length, 4);
+      for (final tri in tris) {
+        expect(tri.color, const Color(0xFF808080));
+        // Depth: camera-space z of the z=0 centroid = −6.
+        expect(tri.depth, closeTo(-6, 1e-9));
+      }
     });
   });
 
