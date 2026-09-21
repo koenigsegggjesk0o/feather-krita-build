@@ -12,7 +12,7 @@ class MainActivity: FlutterActivity() {
             // .so WITHOUT calling JNI_OnLoad, leaving g_javaVm null and
             // crashing every Qt/KF5 JNI path at runtime (fault 0x0 in
             // QJNIEnvironmentPrivate ctor, triggered by
-            // krita_brush_set_size → KLocalizedString::toString()).
+            // krita_brush_set_size -> KLocalizedString::toString()).
             // Must run BEFORE Flutter's FFI first touches the bridge:
             // companion init = Activity creation, which precedes the
             // Flutter engine's Dart-side DynamicLibrary.open call.

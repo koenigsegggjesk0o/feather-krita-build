@@ -286,53 +286,44 @@ const FkrQtHostInit fkr_qt_host_init_instance;
 // When the Kotlin side calls System.loadLibrary("krita_bridge") (MainActivity
 // companion init), Android's ART calls this function with the process's
 // JavaVM. We capture it and inject it straight into Qt's internal g_javaVm
-// slot (same slot the host-init constructor targets, but the host-init runs
-// at dlopen time before JNI_OnLoad fires — so the host-init cannot see the
-// VM; JNI_OnLoad can). This makes every Qt/KF5 JNI path work at runtime:
-// the crash at krita_brush_set_size → KLocalizedString::toString() →
-// QJNIEnvironmentPrivate ctor (fault 0x0, null g_javaVm) is eliminated.
-// The catalogLocaleDir interpose CANNOT intercept this path because the
-// call chain is intra-library within libKF5I18n (direct calls bypass the
-// PLT/interpose); only a real JavaVM injection fixes it. Krita source is
-// NEVER touched; this is bridge glue only (allowed change surface #2).
+// slot so every QJNIEnvironmentPrivate path works at runtime.
+//
+// DIAGNOSTIC VERSION (beacon 5 iteration 2): the previous beacon 5 build
+// (builder commit 1755c04) failed smoke with "JNI_ERR returned from
+// JNI_OnLoad" — ART's signal handler caught a SIGSEGV in JNI_OnLoad and
+// returned JNI_ERR (no tombstone because ART catches the signal). This
+// version adds granular step-by-step logging to pinpoint the crash, and
+// skips the AssetManager creation (eliminates that variable). If the last
+// log line is "step 2", the crash is in fkr_qt_g_java_vm_slot(); if "step 3",
+// the crash is in the slot write (read-only memory or bad address).
 // ---------------------------------------------------------------------------
 extern "C" __attribute__((visibility("default")))
 jint JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
-    g_fkr_jni_vm = vm;
     __android_log_print(ANDROID_LOG_INFO, "krita_bridge",
-                        "JNI_OnLoad: JavaVM captured");
+                        "JNI_OnLoad: step 1 - JavaVM captured %p", vm);
+    g_fkr_jni_vm = vm;
+
     void* slot = fkr_qt_g_java_vm_slot();
+    __android_log_print(ANDROID_LOG_INFO, "krita_bridge",
+                        "JNI_OnLoad: step 2 - slot found at %p", slot);
+
     if (slot != nullptr) {
+        // Probe: read the current value before writing (a bad slot address
+        // would crash on the read, pinpointing the issue).
+        JavaVM* old = *static_cast<JavaVM* volatile*>(slot);
+        __android_log_print(ANDROID_LOG_INFO, "krita_bridge",
+                            "JNI_OnLoad: step 3a - slot read OK, old value %p", old);
+
         *static_cast<JavaVM* volatile*>(slot) = vm;
         __android_log_print(ANDROID_LOG_INFO, "krita_bridge",
-                            "JNI_OnLoad: g_javaVm injected (slot found)");
+                            "JNI_OnLoad: step 3b - VM written to slot");
     } else {
         __android_log_print(ANDROID_LOG_INFO, "krita_bridge",
-                            "JNI_OnLoad: javaVM() slot not found — vminject deferred");
+                            "JNI_OnLoad: slot is null — vminject deferred");
     }
-    // Real AssetManager for the javaObject() interpose (probes that reach
-    // AAssetManager_fromJava abort on a null object). This supersedes the
-    // host-init's AssetManager acquisition (which could never run because
-    // the VM was never available at dlopen time).
-    JNIEnv* env = nullptr;
-    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK &&
-        env != nullptr) {
-        jclass c = env->FindClass("android/content/res/AssetManager");
-        if (c != nullptr) {
-            jmethodID ctor = env->GetMethodID(c, "<init>", "()V");
-            if (ctor != nullptr) {
-                jobject o = env->NewObject(c, ctor);
-                if (o != nullptr) {
-                    g_fkr_asset_mgr = env->NewGlobalRef(o);
-                    env->DeleteLocalRef(o);
-                    __android_log_print(ANDROID_LOG_INFO, "krita_bridge",
-                                        "JNI_OnLoad: real AssetManager acquired");
-                }
-            }
-            env->DeleteLocalRef(c);
-        }
-        env->ExceptionClear();
-    }
+
+    __android_log_print(ANDROID_LOG_INFO, "krita_bridge",
+                        "JNI_OnLoad: step 4 - returning JNI_VERSION_1_6");
     return JNI_VERSION_1_6;
 }
 
