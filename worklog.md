@@ -2080,3 +2080,17 @@ Work Log:
 Stage Summary:
 - The open dialog now tells the truth about what a document's guide-surface name will restore as (exact / aliased / unknown→Sphere / missing→Sphere) before the user commits to loading, and the save dialog discloses exactly what gets stored. The silent-fallback hole is closed with test-locked copy at every level.
 - NEXT for beacon 2: poll build-app on this push (green → release v0.41-guide-parity via the release-script pattern @ APP_RUN_ID <green run> APP_SHA <beacon sha>; derive the v41 script from release_v40.py and replace ALL version-specific strings INCLUDING the tag suffix — loop-57's lesson); atomic mirror sync; FINAL beacon.
+
+---
+Task ID: 5-loop-58 (beacon 2 — FINAL: guide-surface parity shipped, v0.41 released)
+Agent: Z.ai Code (main, autonomous loop)
+Task: CI, release, loop closure
+
+Work Log:
+- App-repo runs on the beacon push failed with the KNOWN no-runner environment classification — IGNORED per the standing note. The AUTHORITATIVE run is on the builder repo: build-app 35573713587 @ 3d54da4 (mirror of beacon 1 + worklog) GREEN (~6 min).
+- RELEASED v0.41-guide-parity (release id 392773271, scripts/release_v41.py @ APP_RUN_ID 35573713587, APP_SHA 3571a03): 3 assets uploaded (state=uploaded) — linux real-engine zip 47.5MB, windows real-engine zip 40.2MB, android real-engine APK 119.1MB. Release script derived from v40 with EVERY version-specific string replaced (tag suffix 'guide-parity' included — loop-57's mis-derived-tag lesson applied); release notes body rewritten fresh for this loop. Clean first-try release.
+- Session totals: 2 app commits (3571a03 feature+worklog beacon 1, this FINAL; release script rides this FINAL commit) + 2 builder mirror commits (3d54da4 beacon 1, this FINAL) + 1 green CI run + 1 release. Analyze 0 err/0 warn (67 infos, AT baseline); suite 192/192 GREEN (178 baseline + 14 net new; keyboard_shortcuts flake did NOT fire). Krita source byte-identical upstream; analysis_options.yaml and pubspec.lock untouched. No box wipe this loop.
+
+Stage Summary:
+- LOOP-58 CLOSED END-TO-END — GUIDE-SURFACE PARITY: open-dialog verdict strip (exact / aliased / unknown→Sphere / missing→Sphere, same-frame, color-coded) + save-dialog .feather disclosure row, backed by a strict name parser that keeps the tolerant loader bit-identical. 14 new tests; suite 192/192.
+- Handoff notes for 5-loop-59: (1) Feather-3D follow-ups remaining from the handoff list: emulator smoke wired as a workflow_run auto-trigger after krita-build greens; family-aware FLOW (needs an engine-authoritative no-flow-family list first — do NOT guess); (2) other standing candidates: light-rig gizmo polish, guide-surface shape-parameter persistence (the dialogs now disclose that only the TYPE roundtrips — actually persisting dims/transform would be the natural loop-59+ additive .feather extension, version stays 2, tolerant parse); (3) keyboard_shortcuts Ctrl+N/Ctrl+S flake remains live (~1 hang in ~4 runs) — rerun solo, never bisect; (4) app-repo no-runner CI failures classified (environment) — ignore; (5) widget tests keep ALL disk I/O synchronous; TextureImageCache.enabled=false stays in both widget test mains; (6) verify /home/z/fkr-step1 FIRST at every tick, checkpoint commits early and often; atomic mirror_sync.py (GITHUB_TOKEN env only) is the ONLY sync path; release-script derivation must replace ALL version strings INCLUDING the tag suffix and the body headline (loop-57 lesson, applied in v41).
