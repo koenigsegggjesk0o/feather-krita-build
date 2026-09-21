@@ -1320,7 +1320,7 @@ jobs:
             -l"Qt5PrintSupport_${{ matrix.abi }}" \
             $KFLIBS $VPLIBS \
             "$QZLIB" \
-            -lz -llog \
+            -lz -llog -ldl \
             -o artifact/lib/libkrita_bridge.so
           echo "link rc=$?"
           ls -la artifact/lib/
