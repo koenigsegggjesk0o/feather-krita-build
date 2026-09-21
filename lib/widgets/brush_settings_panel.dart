@@ -7,7 +7,10 @@
 //   - Size (1 – 500 px)
 //   - Opacity (0 – 100 %)
 //   - Flow (0 – 100 %, 5-loop-40 — per-dab build-up rate, engine ABI)
-//   - Hardness (0 – 100 %, 5-loop-40 — mask fade, engine ABI rebuild)
+//   - Hardness (0 – 100 %, 5-loop-40 — mask fade, engine ABI rebuild);
+//     family-aware since 5-loop-49: paintop families without a hardness
+//     dimension get NO slider (a note explains the absence), mirroring
+//     Krita's own per-paintop option availability
 //   - Spacing (0 – 100 %)
 //   - Smudge (0 – 100 %)
 //   - Colour swatch (opens [showGlassColorPicker])
@@ -111,22 +114,27 @@ class BrushSettingsPanel extends StatelessWidget {
 
                       // Hardness (5-loop-40): mask fade through the real
                       // engine (set_hardness ABI rebuilds the mask
-                      // generator). 0 = fully soft gaussian, 1 = hard disk.
-                      // Disabled (5-loop-41) when the loaded preset's
-                      // paintop family has no hardness dimension, mirroring
-                      // Krita's own per-paintop option availability.
-                      GlassSlider(
-                        value: state.brushHardness,
-                        min: 0,
-                        max: 1,
-                        divisions: 100,
-                        label: 'Hardness',
-                        icon: Icons.adjust_rounded,
-                        accent: AppTheme.toolLight,
-                        enabled: state.activePaintopSupportsHardness,
-                        onChanged: state.setBrushHardness,
-                        valueFormatter: (v) => '${(v * 100).round()}%',
-                      ),
+                      // generator). 0 = fully soft gaussian, 1 = hard
+                      // disk. Family-aware (5-loop-41 data, 5-loop-49 UX):
+                      // paintop families without a hardness dimension get
+                      // NO slider — Krita's own brush editors offer no
+                      // hardness option for them — just a compact note
+                      // explaining the absence. Unknown / undeclared
+                      // families keep the slider (manual control).
+                      if (state.activePaintopSupportsHardness)
+                        GlassSlider(
+                          value: state.brushHardness,
+                          min: 0,
+                          max: 1,
+                          divisions: 100,
+                          label: 'Hardness',
+                          icon: Icons.adjust_rounded,
+                          accent: AppTheme.toolLight,
+                          onChanged: state.setBrushHardness,
+                          valueFormatter: (v) => '${(v * 100).round()}%',
+                        )
+                      else
+                        _NoHardnessNote(family: state.activePaintopId),
                       const SizedBox(height: 12),
 
                       // Spacing.
@@ -298,22 +306,30 @@ class _PresetChip extends StatelessWidget {
                       ),
                       if (familyLabel.isNotEmpty) ...[
                         const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: AppTheme.accentSoft,
-                            borderRadius:
-                                BorderRadius.circular(AppTheme.radiusSmall),
-                          ),
-                          child: Text(
-                            familyLabel,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppTheme.accent,
-                              fontSize: 9,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.3,
+                        // Flexible: the badge degrades to an ellipsis on
+                        // pathological widths instead of overflowing
+                        // (5-loop-49 — widget tests surfaced this under
+                        // the Ahem test font's wide metrics).
+                        Flexible(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: AppTheme.accentSoft,
+                              borderRadius: BorderRadius.circular(
+                                  AppTheme.radiusSmall),
+                            ),
+                            child: Text(
+                              familyLabel,
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                              softWrap: false,
+                              style: const TextStyle(
+                                color: AppTheme.accent,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.3,
+                              ),
                             ),
                           ),
                         ),
@@ -336,6 +352,56 @@ class _PresetChip extends StatelessWidget {
                 color: AppTheme.textTertiary, size: 20),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// A compact note rendered in place of the hardness slider when the loaded
+/// preset's paintop family has no hardness dimension (5-loop-49). Mirrors
+/// Krita: the brush editor simply offers no hardness option for these
+/// families — hiding the dead slider beats greying it out, and the note
+/// keeps the panel self-explanatory (why did the slider disappear?) while
+/// giving widget tests a stable handle.
+///
+/// By construction [family] is non-empty here: the note renders only when
+/// [EditorState.activePaintopSupportsHardness] is false, which cannot
+/// happen for an undeclared family.
+class _NoHardnessNote extends StatelessWidget {
+  const _NoHardnessNote({required this.family});
+
+  /// The engine-declared paintop family, e.g. "spraybrush".
+  final String family;
+
+  /// Same capitalization rule as the preset chip's family badge so the
+  /// panel speaks of the family consistently.
+  String get _familyLabel {
+    final f = family.trim();
+    return f[0].toUpperCase() + f.substring(1);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          const Icon(Icons.adjust_rounded,
+              size: 14, color: AppTheme.textTertiary),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(
+              'Hardness not available for $_familyLabel',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTheme.textTertiary,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

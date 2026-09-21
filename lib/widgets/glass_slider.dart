@@ -46,8 +46,11 @@ class GlassSlider extends StatefulWidget {
   final double height;
 
   /// When false the slider ignores all input (drag, tap, keyboard) and is
-  /// rendered dimmed (5-loop-41: used to grey out the hardness slider for
-  /// paintop families without a hardness dimension).
+  /// rendered dimmed. Generic capability: 5-loop-41 used it to grey out
+  /// the hardness slider for hardness-less paintop families; 5-loop-49
+  /// went further and REMOVED that slider (the panel renders a family
+  /// note instead), leaving [enabled] available for future per-family
+  /// gating.
   final bool enabled;
 
   @override
