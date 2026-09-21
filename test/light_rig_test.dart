@@ -260,4 +260,62 @@ void main() {
           closeTo(el0 + 50 * kLightElevationDegPerPx, 1e-9));
     });
   });
+
+  group('one-tap presets (loop-57)', () {
+    test('every preset applies through the canonical setters exactly', () {
+      // The UI feeds setSunAzimuthElevationDeg + setIntensity — the same
+      // setters the orbit drag and the power dial use. Azimuth/elevation
+      // roundtrip through the direction vector via atan2/asin, so the
+      // getters reproduce the preset degrees up to fp noise (~1e-13 deg,
+      // bounded at 1e-9 here); the intensity is stored raw (clamp no-op)
+      // and must be BIT-EXACT.
+      for (final preset in kSunLightPresets) {
+        final rig = SceneLightRig();
+        rig.setSunAzimuthElevationDeg(preset.azimuthDeg, preset.elevationDeg);
+        rig.setIntensity(preset.intensity);
+
+        expect(rig.sunAzimuthDeg, closeTo(preset.azimuthDeg % 360.0, 1e-9),
+            reason: '${preset.label} azimuth');
+        expect(rig.sunElevationDeg, closeTo(preset.elevationDeg, 1e-9),
+            reason: '${preset.label} elevation');
+        expect(rig.intensity, preset.intensity,
+            reason: '${preset.label} intensity');
+        expect(rig.direction.length, closeTo(1.0, 1e-9),
+            reason: '${preset.label} direction stays unit-length');
+      }
+    });
+
+    test('presets are pre-clamped into the rig valid arcs', () {
+      for (final preset in kSunLightPresets) {
+        expect(preset.elevationDeg,
+            inInclusiveRange(kMinSunElevationDeg, kMaxSunElevationDeg),
+            reason: '${preset.label} elevation must never trip the clamp');
+        expect(preset.intensity, inInclusiveRange(0.0, 1.0),
+            reason: '${preset.label} intensity must never trip the clamp');
+      }
+    });
+
+    test('the Rim preset backlights the model from the default camera', () {
+      // Default camera sits at (0, 0, 6) looking down -z; the sun sits
+      // OPPOSITE the light direction. Rim's azimuth 270° must place the
+      // sun at negative z — behind the model — and elevated.
+      final rim = kSunLightPresets.singleWhere((p) => p.label == 'Rim');
+      final rig = SceneLightRig();
+      rig.setSunAzimuthElevationDeg(rim.azimuthDeg, rim.elevationDeg);
+      final sun = rig.direction.scaled(-1);
+      expect(sun.z, lessThan(0.0),
+          reason: 'Rim sun must be behind the model from the default view');
+      expect(sun.y, greaterThan(0.0), reason: 'Rim sun sits above the horizon');
+    });
+
+    test('the Noon preset lights from high above the default camera', () {
+      final noon = kSunLightPresets.singleWhere((p) => p.label == 'Noon');
+      final rig = SceneLightRig();
+      rig.setSunAzimuthElevationDeg(noon.azimuthDeg, noon.elevationDeg);
+      final sun = rig.direction.scaled(-1);
+      expect(sun.y, greaterThan(0.9), reason: 'Noon sun is near the zenith');
+      expect(sun.z, greaterThan(0.0),
+          reason: 'Noon sun is on the camera side (front-top key)');
+    });
+  });
 }

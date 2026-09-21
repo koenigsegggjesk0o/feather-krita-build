@@ -230,6 +230,64 @@ void main() {
         reason: 'the HUD power readout must follow the slider');
   });
 
+  testWidgets('light preset row applies one-tap sun setups (loop-57)',
+      (tester) async {
+    final state = EditorState();
+    addTearDown(state.dispose);
+    await tester.pumpWidget(_host(state));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.text('Light'));
+    await tester.pump(const Duration(milliseconds: 450));
+    expect(state.activeTool, Tool.light);
+
+    // All three curated presets render as chips above the dial.
+    final noon = find.byKey(const ValueKey('light_preset_noon'));
+    final golden = find.byKey(const ValueKey('light_preset_golden_hour'));
+    final rim = find.byKey(const ValueKey('light_preset_rim'));
+    expect(noon, findsOneWidget);
+    expect(golden, findsOneWidget);
+    expect(rim, findsOneWidget);
+
+    // Park the rig somewhere non-default first: a preset tap must land
+    // EXACTLY on the preset values — any orbit interference would drift
+    // them — and must never move the camera.
+    state.lightRig.orbitBy(-120, 60);
+    state.lightRig.setIntensity(0.2);
+    await tester.pump();
+    final cameraBefore = state.camera.position.clone();
+
+    // Golden hour: az 45°, el 8°, power 55% — HUD follows the same frame.
+    await tester.tap(golden);
+    await tester.pump();
+    expect(state.lightRig.sunAzimuthDeg, closeTo(45.0, 1e-9),
+        reason: 'the tap must set the golden-hour azimuth, not orbit it');
+    expect(state.lightRig.sunElevationDeg, closeTo(8.0, 1e-9),
+        reason: 'the tap must set the golden-hour elevation');
+    expect(state.lightRig.intensity, 0.55);
+    expect(find.textContaining('power 55%'), findsOneWidget,
+        reason: 'the HUD power readout must follow the preset');
+
+    // Noon: full-strength high front-top key.
+    await tester.tap(noon);
+    await tester.pump();
+    expect(state.lightRig.sunAzimuthDeg, closeTo(90.0, 1e-9));
+    expect(state.lightRig.sunElevationDeg, closeTo(80.0, 1e-9));
+    expect(state.lightRig.intensity, 1.0);
+    expect(find.textContaining('power 100%'), findsOneWidget);
+
+    // Rim: backlit from the default camera.
+    await tester.tap(rim);
+    await tester.pump();
+    expect(state.lightRig.sunAzimuthDeg, closeTo(270.0, 1e-9));
+    expect(state.lightRig.sunElevationDeg, closeTo(20.0, 1e-9));
+    expect(state.lightRig.intensity, 0.85);
+
+    // Gesture isolation: the three taps never nudged the camera.
+    expect(state.camera.position, cameraBefore,
+        reason: 'a preset tap must never orbit the camera');
+  });
+
   testWidgets('open dialog restores a saved project document', (tester) async {
     final state = EditorState();
     addTearDown(state.dispose);

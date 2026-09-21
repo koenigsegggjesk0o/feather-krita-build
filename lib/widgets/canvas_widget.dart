@@ -41,6 +41,8 @@ import 'package:feather_krita/state/editor_state.dart';
 import 'package:feather_krita/widgets/glass_slider.dart';
 import 'package:feather_krita/engine/synthetic_dab.dart';
 import 'package:feather_krita/engine/guide_surface.dart';
+import 'package:feather_krita/engine/light_rig.dart'
+    show SunLightPreset, kSunLightPresets;
 import 'package:feather_krita/engine/scene_pipeline.dart';
 import 'package:feather_krita/engine/stroke_manager.dart';
 import 'package:feather_krita/engine/texture_image.dart';
@@ -412,7 +414,14 @@ class CanvasWidgetState extends State<CanvasWidget>
                   // tool is active. The slider sits above the HUD block
                   // and wins the gesture arena over the canvas, so
                   // dragging it never orbits the camera or the sun.
-                  if (state.activeTool == Tool.light)
+                  if (state.activeTool == Tool.light) ...[
+                    _LightPresetRow(
+                      state: state,
+                      onLightChanged: () {
+                        widget.state.notify();
+                        setState(() {});
+                      },
+                    ),
                     _LightIntensityPanel(
                       state: state,
                       onLightChanged: () {
@@ -420,12 +429,92 @@ class CanvasWidgetState extends State<CanvasWidget>
                         setState(() {});
                       },
                     ),
+                  ],
                 ],
               ),
             ),
           ),
         );
       },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Light preset row (loop-57).
+// ---------------------------------------------------------------------------
+
+/// One-tap curated sun setups for the Light tool (loop-57). Each chip
+/// feeds the rig's canonical parametrization — the SAME setters the orbit
+/// drag and the power dial use — so a preset lands exactly where those
+/// controls would have put the sun, and the HUD + scene re-light the same
+/// frame. The chips' GestureDetectors win the arena over the canvas, so a
+/// tap can never orbit the sun or the camera.
+class _LightPresetRow extends StatelessWidget {
+  const _LightPresetRow({
+    required this.state,
+    required this.onLightChanged,
+  });
+
+  final EditorState state;
+  final VoidCallback onLightChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      left: 12,
+      // Above the intensity panel (bottom 88 + 44 slider height + 6 gap).
+      bottom: 138,
+      child: SizedBox(
+        width: 230,
+        child: Row(
+          children: [
+            for (final preset in kSunLightPresets)
+              Expanded(child: _buildChip(preset)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChip(SunLightPreset preset) {
+    final key =
+        'light_preset_${preset.label.toLowerCase().replaceAll(' ', '_')}';
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: GestureDetector(
+        key: ValueKey(key),
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          state.lightRig
+              .setSunAzimuthElevationDeg(preset.azimuthDeg, preset.elevationDeg);
+          state.lightRig.setIntensity(preset.intensity);
+          onLightChanged();
+        },
+        child: GlassContainer(
+          height: 26,
+          borderRadius: AppTheme.radiusMedium,
+          color: AppTheme.darkGlass.withValues(alpha: 0.45),
+          child: Center(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Text(
+                  preset.label,
+                  maxLines: 1,
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

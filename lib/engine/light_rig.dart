@@ -135,3 +135,34 @@ class SceneLightRig {
     );
   }
 }
+
+/// A curated one-tap sun setup for the Light tool (loop-57).
+///
+/// Values are the rig's canonical parametrization — sun azimuth/elevation
+/// in DEGREES and the diffuse intensity in [0, 1]. Elevations are
+/// pre-clamped into [[kMinSunElevationDeg], [kMaxSunElevationDeg]], so
+/// applying a preset never trips the rig's safety clamps. Azimuth is
+/// world-referenced: 90° puts the sun toward the default camera (+z,
+/// high-front "Noon" key), 270° puts it behind the model — the "Rim"
+/// preset's backlit look from the default orbit pose.
+class SunLightPreset {
+  const SunLightPreset(
+      this.label, this.azimuthDeg, this.elevationDeg, this.intensity);
+
+  final String label;
+  final double azimuthDeg;
+  final double elevationDeg;
+  final double intensity;
+}
+
+/// The Light tool's preset row, left to right. Applying a preset goes
+/// through [SceneLightRig.setSunAzimuthElevationDeg] + [SceneLightRig
+/// .setIntensity] — the exact setters the orbit drag and the power dial
+/// use — so a preset lands where those controls would have put the sun
+/// and every consumer (HUD, .feather persistence, scene lighting) sees
+/// the same state.
+const List<SunLightPreset> kSunLightPresets = [
+  SunLightPreset('Noon', 90, 80, 1.0),
+  SunLightPreset('Golden hour', 45, 8, 0.55),
+  SunLightPreset('Rim', 270, 20, 0.85),
+];
