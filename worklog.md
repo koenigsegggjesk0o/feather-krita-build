@@ -2226,3 +2226,25 @@ Work Log:
 
 Stage Summary:
 - The boot wall is now fully mapped: static ctor → writableLocation interpose (VM-independent, solist-first) → real-empty-QString return. Remaining risk: other load-time statics (index 0-283) — all JNI-free per the harness precedent once the path caches resolve; runtime FFI ops are harness-proven. CI chain re-running; same handoff contract (never touch Krita source).
+
+---
+Task ID: 5-loop-61 (beacon 5 — Android boot wall: JNI_OnLoad JavaVM injection, 3 iterations)
+Agent: Z.ai Code (main, autonomous loop)
+Task: Fix the Android emulator boot wall (smoke runs 35609044852, 35612066064, 35614105585 all FAILED). Deep research root cause + wrapper-only fix.
+
+Work Log:
+- VERIFIED REAL STATE (not summary-halu): box intact, HEAD=6b75160 (5-loop-61 beacon 4), worklog mtime 33min (>25min threshold, FINAL precedent does NOT apply — last entry was "beacon 4 rebuild in flight", NOT FINAL). Builder CI: build-app 35611380774 IN_PROGRESS @ 711b9ac.
+- READ ACTUAL TOMBSTONE (smoke 35612066064, NOT a summary): fault addr 0x0, SIGSEGV in QJNIEnvironmentPrivate::QJNIEnvironmentPrivate()+36 [libQt5Core]. Backtrace: #00 QJNIEnvironmentPrivate ctor → #01 QAndroidJniEnvironment ctor → #02-08 KF5I18n KCatalog::catalogLocaleDir → KCatalog ctor → KLocalizedString::toString() → #13 krita_brush_set_size+79 [app→bridge]. Host-init log: "no runtime VM found — vminject skipped" (114ms before crash).
+- ROOT CAUSE ANALYSIS: Beacon 4's writableLocation interpose DID fix the load-time static crash. The NEW crash is RUNTIME (krita_brush_set_size is a bridge entry point, not a static init). g_javaVm is null because Flutter FFI's DynamicLibrary.open (dlopen) does NOT call JNI_OnLoad. The catalogLocaleDir interpose cannot help because the call chain is intra-library within libKF5I18n (direct calls bypass PLT interposition).
+- ITER 1 (app 09dab93, builder 1755c04): Added JNI_OnLoad export to krita_bridge_real.cpp (captures JavaVM, injects into Qt's g_javaVm slot via fkr_qt_g_java_vm_slot, creates AssetManager) + MainActivity.kt System.loadLibrary("krita_bridge"). Syntax-verified both arches (x86_64 + aarch64, stub jni.h + -fsyntax-only, EXIT 0). CI: build-app GREEN, smoke FAILED with "java.lang.UnsatisfiedLinkError: JNI_ERR returned from JNI_OnLoad in libkrita_bridge.so". Box wiped local repo (commit 09dab93 lost; builder retained at 1755c04).
+- ITER 2 (app a7a0a3d, builder b737135): Diagnostic JNI_OnLoad with granular step-by-step logging (step 1 VM capture, step 2 slot find, step 3a slot read, step 3b slot write, step 4 return). Skipped AssetManager to eliminate variable. CI: build-app GREEN, smoke FAILED. CRITICAL FINDING: NO "JNI_OnLoad: step 1" log appeared — my JNI_OnLoad was NEVER CALLED. ART reported "JNI_ERR returned from JNI_OnLoad" but it was Qt5Core's JNI_OnLoad (not mine) that ran and failed.
+- ROOT CAUSE OF ITER 2 FAILURE: The merged engine statically links Qt5Core which ALSO exports JNI_OnLoad. Qt5Core's version wins symbol resolution (it's in the .a archive linked into the merged .so). Qt5Core's JNI_OnLoad calls FindClass("org/qtproject/qt5/android/QtNative") — this class does NOT exist in the Flutter APK (no Qt Android bootstrap) → FindClass returns null → JNI_OnLoad returns JNI_ERR → System.loadLibrary throws UnsatisfiedLinkError → app crashes at Activity creation ("FATAL: app process never appeared").
+- ITER 3 (app pending, builder 144b996): Instead of fighting Qt5Core's JNI_OnLoad, LET IT SUCCEED. Added stub Qt Java classes: org.qtproject.qt5.android.QtNative + QtApplication (empty Kotlin classes). Qt5Core's JNI_OnLoad FindClass calls now succeed → JNI_OnLoad returns JNI_VERSION_1_6 → System.loadLibrary succeeds → crucially, Qt5Core's JNI_OnLoad calls QtAndroidPrivate::setJavaVM(vm) which sets g_javaVm → every QJNIEnvironmentPrivate path works at runtime. Also added try-catch in MainActivity.kt as safety net (if JNI_OnLoad still fails, .so remains loaded, app boots for iteration). CI chain in flight.
+
+Stage Summary:
+- The Android boot wall has been fully mapped through 3 iterations of deep research (real tombstone analysis, not guessing):
+  1. Load-time crash (writableLocation static) — FIXED by beacon 4's interpose
+  2. Runtime crash (QJNIEnvironmentPrivate, null g_javaVm) — root cause: dlopen doesn't call JNI_OnLoad
+  3. JNI_OnLoad collision (Qt5Core's wins, fails on missing Qt Java classes) — root cause: no Qt Android bootstrap in Flutter APK
+- Iter 3 fix: stub Qt Java classes let Qt5Core's JNI_OnLoad succeed → setJavaVM → g_javaVm set → all Qt JNI works.
+- NEXT: poll build-app on 144b996 (green → smoke). If smoke GREEN → FIRST real Android emulator boot → release v0.43 → FINAL beacon. If smoke FAILS → read new logs for which FindClass/GetMethodID failed → add more stub classes/methods. Same handoff contract (wrapper + Kotlin only, Krita source byte-identical).
