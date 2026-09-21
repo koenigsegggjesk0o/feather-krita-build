@@ -134,7 +134,8 @@ void main(List<String> args) {
         'hardness=${p1.currentHardness} name=${p1.currentPresetName} '
         'paintop=${p1.currentPaintopId}');
     _check(p1.currentSize == 40.0, 'basic-5 size == 40 (MaskGenerator diameter)');
-    _check(p1.currentOpacity == 1.0, 'basic-5 opacity == 1.0 (Krita/opacity = 100)');
+    _check(p1.currentOpacity == 1.0,
+        'basic-5 opacity == 1.0 (no master-opacity param in XML -> default)');
     _check((p1.currentSpacing - 0.1).abs() < 1e-9,
         'basic-5 spacing == 0.1 (Brush spacing attr)');
     _check(p1.currentHardness == 0.0, 'basic-5 hardness == 0 (hfade = 1)');
@@ -158,13 +159,20 @@ void main(List<String> args) {
         '($pmCount entries)');
     _check(paramMap.length == pmCount,
         'presetParams() length == presetParamCount ($pmCount)');
-    _check(paramMap['Krita/opacity'] == '100',
-        "basic-5 map[Krita/opacity] == '100' (master slider)");
-    final masterOpacity = double.tryParse(paramMap['Krita/opacity'] ?? '');
-    _check(masterOpacity != null &&
-            (masterOpacity / 100.0 - p1.currentOpacity).abs() < 1e-9,
-        'map[Krita/opacity] derives currentOpacity '
-        '(${masterOpacity}/100 == ${p1.currentOpacity})');
+    // Ground truth (CDATA-parsed fixture XML): basic-5 carries
+    // ColorSource/Type='plain' and CompositeOp='normal'; it has NO
+    // Krita/opacity <param> — the master slider is implicit in this stock
+    // preset, so the curated opacity getter defaults to 1.0.
+    _check(paramMap['ColorSource/Type'] == 'plain',
+        "basic-5 map[ColorSource/Type] == 'plain' (raw settings surface)");
+    _check(paramMap['CompositeOp'] == 'normal',
+        "basic-5 map[CompositeOp] == 'normal' (paint mode default)");
+    _check(paramMap['Krita/opacity'] == null,
+        'basic-5 raw map carries no Krita/opacity key (implicit master '
+        'opacity in this preset — asserting the documented absence)');
+    _check(p1.currentOpacity == 1.0,
+        'absent Krita/opacity param -> curated opacity stays at the '
+        '1.0 default (derivation counterpart)');
     _check(p1.presetParamNameAt(pmCount) == null &&
             p1.presetParamValueAt(pmCount) == null,
         'param name/value at index==count is null (bounds kept)');
@@ -181,7 +189,8 @@ void main(List<String> args) {
         'opacity=${p2.currentOpacity} spacing=${p2.currentSpacing} '
         'hardness=${p2.currentHardness} paintop=${p2.currentPaintopId}');
     _check(p2.currentSize == 50.0, 'eraser size == 50 (MaskGenerator diameter)');
-    _check(p2.currentOpacity == 1.0, 'eraser opacity == 1.0 (Krita/opacity = 100)');
+    _check(p2.currentOpacity == 1.0,
+        'eraser opacity == 1.0 (no master-opacity param in XML -> default)');
     _check((p2.currentHardness - 0.13).abs() < 1e-9,
         'eraser hardness == 0.13 (hfade = 0.87)');
     _check(p2.isEraserPreset,
@@ -200,6 +209,17 @@ void main(List<String> args) {
     final emParams = p2.presetParams();
     _check(emParams['CompositeOp']?.toLowerCase() == 'erase',
         "eraser map[CompositeOp] == 'erase' (raw settings surface)");
+    // Unlike basic-5, the eraser stock preset DOES carry the master
+    // slider: Krita/opacity='100' in its raw settings map, and the
+    // curated opacity getter derives from it (100/100 == 1.0).
+    final eraserMaster = double.tryParse(emParams['Krita/opacity'] ?? '');
+    _check(emParams['Krita/opacity'] == '100',
+        "eraser map[Krita/opacity] == '100' (this stock carries the "
+        'master slider basic-5 omits)');
+    _check(eraserMaster != null &&
+            (eraserMaster / 100.0 - p2.currentOpacity).abs() < 1e-9,
+        'eraser map[Krita/opacity] derives currentOpacity '
+        '(${eraserMaster}/100 == ${p2.currentOpacity})');
     p2.dispose();
 
     // --- engine-side preset scan (preset-families campaign, 5-loop-47) ---
