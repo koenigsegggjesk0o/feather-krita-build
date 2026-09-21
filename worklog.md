@@ -2248,3 +2248,30 @@ Stage Summary:
   3. JNI_OnLoad collision (Qt5Core's wins, fails on missing Qt Java classes) — root cause: no Qt Android bootstrap in Flutter APK
 - Iter 3 fix: stub Qt Java classes let Qt5Core's JNI_OnLoad succeed → setJavaVM → g_javaVm set → all Qt JNI works.
 - NEXT: poll build-app on 144b996 (green → smoke). If smoke GREEN → FIRST real Android emulator boot → release v0.43 → FINAL beacon. If smoke FAILS → read new logs for which FindClass/GetMethodID failed → add more stub classes/methods. Same handoff contract (wrapper + Kotlin only, Krita source byte-identical).
+
+---
+Task ID: 5-loop-61 (beacon 5 iter 3 RESULT — stub Qt classes insufficient, runtime crash persists)
+Agent: Z.ai Code (main, autonomous loop)
+Task: CI result analysis for iter 3 (builder 144b996/129c1d1)
+
+Work Log:
+- Build-app @ 144b996: first attempt FAILED (HTTP 504 downloading Gradle distribution — transient infrastructure failure, NOT code error). Re-ran failed jobs → SUCCESS.
+- Smoke @ 129c1d1 (35619553574): apk-audit GREEN, emulator-boot FAILED (3.5 min runtime, faster than previous 8.9 min because app crashed sooner without the 8.9min soak).
+- LOG ANALYSIS:
+  - Line 390: `W krita_bridge: System.loadLibrary JNI_OnLoad failed: JNI_ERR returned from JNI_OnLoad` — TRY-CATCH WORKED. App did NOT crash at load time. The warning was logged and the app continued. This is a real improvement over iter 1/2 (where UnsatisfiedLinkError was FATAL).
+  - But: Qt5Core's JNI_OnLoad STILL returns JNI_ERR even WITH stub QtNative + QtApplication classes. The stubs are INSUFFICIENT — Qt5Core's JNI_OnLoad needs more (likely specific methods on QtNative via GetMethodID, or additional classes like QtActivity/QtService/QtLayout).
+  - Line 401: `Fatal signal 11 (SIGSEGV), fault addr 0x0` at 15:34:09.782 (2.7s after loadLibrary warning). Backtrace IDENTICAL to smoke 35612066064: #00 QJNIEnvironmentPrivate ctor → #01 QAndroidJniEnvironment ctor → #02-08 KF5I18n KCatalog → KLocalizedString::toString() → #13 krita_brush_set_size+79. g_javaVm is STILL null (Qt5Core's JNI_OnLoad failed → setJavaVM never called).
+
+Stage Summary:
+- 3 iterations of deep research have mapped the Android boot wall completely:
+  1. Load-time crash (writableLocation static) — FIXED (beacon 4 interpose)
+  2. Runtime crash (QJNIEnvironmentPrivate, null g_javaVm) — root cause: dlopen doesn't call JNI_OnLoad
+  3. JNI_OnLoad collision (Qt5Core's wins, fails) — stub QtNative+QtApplication insufficient
+  4. Try-catch: WORKS (app boots past loadLibrary error) but g_javaVm still null → runtime crash persists
+- NEXT FOR BEACON 5 ITER 4 (recommended approaches, in priority order):
+  A. **objcopy --localize-symbol=JNI_OnLoad on Qt5Core's .a before linking** (modify builder's krita-build.yml via Contents API). This makes Qt5Core's JNI_OnLoad local → my JNI_OnLoad (from krita_bridge_real.cpp, first on link line) wins → ART calls mine → VM captured + injected into g_javaVm slot. ONE-LINE build script change, most robust.
+  B. Add MORE stub Qt classes/methods (need Qt5.15 source to know exactly what JNI_OnLoad calls — web search for "Qt5.15 JNI_OnLoad android source" or read qtbase/src/corelib/kernel/qjni.cpp). Risk: could be many classes/methods, whack-a-mole.
+  C. Interpose QJNIEnvironmentPrivate::QJNIEnvironmentPrivate() constructor (mangled _ZN23QJNIEnvironmentPrivateC1Ev) — it's called cross-library (libQt5AndroidExtras → libQt5Core), so PLT interposition works. Make it a no-op or use g_fkr_jni_vm. Risk: C++ class internal state, fragile.
+  D. Kotlin-side VM-pass: tiny separate .so (libfkr_jni_shim.so) with ONLY JNI_OnLoad → Kotlin loads it → captures VM → passes to bridge via FFI → bridge writes to g_javaVm slot. Most code but cleanest separation.
+- The try-catch in MainActivity.kt is a KEEP (it prevents fatal crash at load time, enabling further iteration). The stub Qt classes are a KEEP (harmless, might help with approach B). The JNI_OnLoad in krita_bridge_real.cpp is a KEEP (would activate with approach A).
+- Same handoff contract: wrapper + Kotlin only, Krita source byte-identical, atomic mirror_sync.py (GITHUB_TOKEN env only).
