@@ -67,6 +67,16 @@ final Vector3 kSceneKeyLight =
 /// up to 1.0, so fully-lit geometry doubles an ambient-only sample.
 const double kSceneAmbient = 0.62;
 
+/// World-length squared below which a ribbon segment's tangent is
+/// considered degenerate (loop-55). Two consecutive samples closer than
+/// 1e-6 world units (on a ~1.4-radius scene) are precision noise: their
+/// direction carries no shading information, and fed raw into
+/// [shadeSegment] the zero tangent cross-products NaN out and drop the
+/// segment to the ambient floor — visible as dark flecks on
+/// slowly-drawn strokes. buildStrokeItems instead inherits the nearest
+/// non-degenerate tangent (see the flushRun comment for the ordering).
+const double kDegenerateTangentLength2 = 1e-12;
+
 /// Clamp for the perspective width scale. Prevents singular widths near
 /// the camera (clipW → 0) and ultra-thin strokes when zoomed far out.
 const double kMinWidthScale = 0.12;
@@ -490,7 +500,10 @@ List<SceneDrawItem> buildSurfaceItems({
 /// [keyLight] / [lightIntensity] forward to [shadeSegment] (null / 1.0 =
 /// the legacy fixed light). Lone dots have no tangent, so they stay at
 /// the ambient floor regardless of intensity — the diffuse term is
-/// undefined without a normal.
+/// undefined without a normal. Degenerate (zero-length) tangents inside
+/// a run inherit the nearest non-degenerate neighbour tangent (loop-55)
+/// so slow strokes shade continuously; a run with no good tangent at
+/// all keeps the legacy ambient behaviour.
 List<SceneDrawItem> buildStrokeItems({
   required SceneStrokeInput stroke,
   required SceneCameraInput camera,
@@ -538,6 +551,46 @@ List<SceneDrawItem> buildStrokeItems({
       ));
       seq++;
     } else {
+      // Tangent table (loop-55): segment i-1 (between run[i-1] and
+      // run[i]) shades with tangents[i-1]. A coincident sample pair —
+      // slow pointer movement, pressure resampling, smoothing
+      // densification — produces a zero-length tangent whose cross
+      // products NaN out in shadeSegment, dropping that segment to the
+      // ambient floor while its neighbours stay lit: dark flecks along
+      // the stroke. Each degenerate segment therefore inherits the
+      // NEAREST non-degenerate tangent — the previous one first (the
+      // common case: the pointer resumed moving), else the first good
+      // one ahead (a degenerate prefix, e.g. the touch-down burst).
+      // Segments are visited in order, so the carried lastGood index
+      // makes the backward case O(1); a run with NO good tangent at all
+      // keeps the legacy behaviour (zero tangent → ambient floor, the
+      // documented lone-dot contract).
+      final tangents = List<Vector3>.generate(
+        run.length - 1,
+        (i) => runWorld[i + 1] - runWorld[i],
+      );
+      int? lastGood;
+      for (var i = 0; i < tangents.length; i++) {
+        if (tangents[i].length2 >= kDegenerateTangentLength2) {
+          lastGood = i;
+          break;
+        }
+      }
+      Vector3 tangentAt(int i) {
+        if (tangents[i].length2 >= kDegenerateTangentLength2) {
+          lastGood = i;
+          return tangents[i];
+        }
+        if (lastGood != null) return tangents[lastGood!];
+        for (var j = i + 1; j < tangents.length; j++) {
+          if (tangents[j].length2 >= kDegenerateTangentLength2) {
+            lastGood = j;
+            return tangents[j];
+          }
+        }
+        return tangents[i]; // all degenerate → legacy ambient path
+      }
+
       for (var i = 1; i < run.length; i++) {
         final p0 = run[i - 1];
         final p1 = run[i];
@@ -555,7 +608,7 @@ List<SceneDrawItem> buildStrokeItems({
         );
         final midWorld = (runWorld[i - 1] + runWorld[i]).scaled(0.5);
         final depth = camera.view.transform3(midWorld.clone()).z;
-        final tangent = runWorld[i] - runWorld[i - 1];
+        final tangent = tangentAt(i - 1);
         final color = shadeSegment(baseColor, tangent, midWorld,
             camera.position,
             keyLight: keyLight, lightIntensity: lightIntensity);

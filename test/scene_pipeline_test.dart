@@ -278,4 +278,124 @@ void main() {
       expect(_r(seg.color), lessThan(255));
     });
   });
+
+  group('degenerate tangent inheritance (loop-55)', () {
+    // Straight strokes along +x at z=0, camera on the z axis. Each
+    // segment's expected color is computed by calling shadeSegment with
+    // the SAME inputs buildStrokeItems must produce (inherited tangent +
+    // the segment's own mid) — same function, same arguments, so the
+    // emitted color must match bit-for-bit.
+    test('a coincident pair mid-run shades continuously, not ambient', () {
+      final cam = _camera();
+      final base = const Color(0xFF808080);
+      final items = buildStrokeItems(
+          stroke: _stroke(points: [
+            Vector3(0, 0, 0),
+            Vector3(1, 0, 0),
+            Vector3(1, 0, 0), // coincident pair → zero-length tangent
+            Vector3(2, 0, 0),
+          ]),
+          camera: cam,
+          viewport: _viewport,
+          seqStart: 0);
+      final segs = items.whereType<SceneSegment>().toList();
+      expect(segs.length, 3);
+      // The degenerate middle segment INHERITED the previous (1,0,0)
+      // tangent and shades at its own mid — no dark fleck.
+      final expected = shadeSegment(
+          base, Vector3(1, 0, 0), Vector3(1, 0, 0), cam.position);
+      expect(_r(segs[1].color), _r(expected));
+      expect(_g(segs[1].color), _g(expected));
+      expect(_b(segs[1].color), _b(expected));
+      // The old bug's symptom: the fleck sat at the ambient floor while
+      // the stroke was lit. Inherited shading clears it.
+      expect(_r(segs[1].color), _r(segs[0].color),
+          reason: 'same tangent, mids 0.5 apart on a 6-unit orbit: '
+              'the Lambert ramp differs by well under a rounding step');
+      // The two straight segments shade from their own real tangents.
+      expect(_r(segs[0].color),
+          _r(shadeSegment(base, Vector3(1, 0, 0), Vector3(0.5, 0, 0),
+              cam.position)));
+      expect(_r(segs[2].color),
+          _r(shadeSegment(base, Vector3(1, 0, 0), Vector3(1.5, 0, 0),
+              cam.position)));
+    });
+
+    test('a degenerate prefix inherits the first good tangent ahead', () {
+      // Touch-down burst: the first two samples coincide, so segment 0
+      // has no previous good tangent and must look AHEAD.
+      final cam = _camera();
+      final base = const Color(0xFF808080);
+      final items = buildStrokeItems(
+          stroke: _stroke(points: [
+            Vector3(0, 0, 0),
+            Vector3(0, 0, 0),
+            Vector3(1, 0, 0),
+            Vector3(2, 0, 0),
+          ]),
+          camera: cam,
+          viewport: _viewport,
+          seqStart: 0);
+      final segs = items.whereType<SceneSegment>().toList();
+      expect(segs.length, 3);
+      final expected = shadeSegment(
+          base, Vector3(1, 0, 0), Vector3(0, 0, 0), cam.position);
+      expect(_r(segs[0].color), _r(expected));
+      expect(_g(segs[0].color), _g(expected));
+      expect(_b(segs[0].color), _b(expected));
+      expect(_r(segs[0].color), greaterThan((0x80 * kSceneAmbient).round()),
+          reason: 'inherited shading must clear the ambient floor');
+    });
+
+    test('a run with no good tangent keeps the legacy ambient behaviour',
+        () {
+      final items = buildStrokeItems(
+          stroke: _stroke(points: [
+            Vector3(0, 0, 0),
+            Vector3(0, 0, 0),
+            Vector3(0, 0, 0),
+          ]),
+          camera: _camera(),
+          viewport: _viewport,
+          seqStart: 0);
+      final segs = items.whereType<SceneSegment>().toList();
+      expect(segs.length, 2);
+      for (final seg in segs) {
+        expect(_r(seg.color).isNaN, isFalse);
+        // Ambient floor exactly: base 0x80 scaled by kSceneAmbient.
+        expect(_r(seg.color), (0x80 * kSceneAmbient).round());
+        expect(_g(seg.color), (0x80 * kSceneAmbient).round());
+        expect(_b(seg.color), (0x80 * kSceneAmbient).round());
+      }
+    });
+
+    test('interleaved degenerate segments keep following the run direction',
+        () {
+      // slow-fast-slow pointer pattern: BOTH degenerate segments share
+      // mid (1,0,0) and inherit tangent (1,0,0), so their colors match
+      // each other exactly and follow the direction the stroke moved.
+      final cam = _camera();
+      final base = const Color(0xFF808080);
+      final items = buildStrokeItems(
+          stroke: _stroke(points: [
+            Vector3(0, 0, 0),
+            Vector3(1, 0, 0),
+            Vector3(1, 0, 0),
+            Vector3(1, 0, 0),
+            Vector3(2, 0, 0),
+          ]),
+          camera: cam,
+          viewport: _viewport,
+          seqStart: 0);
+      final segs = items.whereType<SceneSegment>().toList();
+      expect(segs.length, 4);
+      final expected = shadeSegment(
+          base, Vector3(1, 0, 0), Vector3(1, 0, 0), cam.position);
+      expect(_r(segs[1].color), _r(expected));
+      expect(_r(segs[2].color), _r(expected));
+      expect(_g(segs[1].color), _g(expected));
+      expect(_b(segs[2].color), _b(expected));
+      expect(_r(segs[1].color), greaterThan((0x80 * kSceneAmbient).round()));
+    });
+  });
 }
