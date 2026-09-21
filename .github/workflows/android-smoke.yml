@@ -1,0 +1,152 @@
+name: Android Emulator Smoke
+
+# Loop-60: auto-verification that the real-engine Android APK actually
+# INSTALLS and BOOTS on an Android emulator. Runs after every completed
+# Build Feather-Krita App run (workflow_run) and on demand
+# (workflow_dispatch) so a loop can test it without waiting for a fresh
+# app build. The APK ships arm64-v8a engine .so only (libkrita_bridge.so
+# = bridge glue + 959 krita objects, plus the Qt5/KF5/icu runtime), so
+# the x86_64 emulator must run it through the Android 11+ ARM
+# translation: the install pins --abi arm64-v8a to force that path (a
+# fat-APK x86_64 extraction would silently drop the engine and the smoke
+# would test the wrong thing). Krita source is never touched here; this
+# workflow lives ONLY in the builder repo (the app repo has no runners).
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Build Feather-Krita App"]
+    types: [completed]
+
+jobs:
+  apk-audit:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Resolve source build-app run
+        id: src
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            RID=${{ github.event.workflow_run.id }}
+          else
+            RID=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/workflows/build-app.yml/runs?status=success&per_page=1" \
+              | python3 -c 'import sys,json;print(json.load(sys.stdin)["workflow_runs"][0]["id"])')
+          fi
+          echo "run_id=$RID" >> "$GITHUB_OUTPUT"
+          echo "source run: $RID"
+      - name: Download real-engine APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: feather-krita-android-real-engine
+          run-id: ${{ steps.src.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk
+      - name: Audit APK (engine .so present, arch correct, manifest sane)
+        run: |
+          APK=$(find apk -name '*.apk' | head -1)
+          test -n "$APK" || { echo 'FATAL: no APK in artifact'; exit 1; }
+          ls -lh "$APK"
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libkrita_bridge.so' \
+            || { echo 'FATAL: engine .so missing from APK'; exit 1; }
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libQt5Core_arm64-v8a.so' \
+            || { echo 'FATAL: Qt runtime missing from APK'; exit 1; }
+          NB=$(unzip -l "$APK" | grep -c 'lib/arm64-v8a/.*\.so')
+          echo "arm64 .so count: $NB"
+          [ "$NB" -ge 5 ] || { echo 'FATAL: bundle too small'; exit 1; }
+          unzip -p "$APK" lib/arm64-v8a/libkrita_bridge.so > /tmp/libkrita_bridge.so
+          RE=$(find /usr/local/lib/android/sdk/ndk -name 'llvm-readelf' | sort | tail -1)
+          test -n "$RE" || RE=readelf
+          "$RE" -h /tmp/libkrita_bridge.so | grep -q 'AArch64' \
+            || { echo 'FATAL: engine .so is not AArch64'; exit 1; }
+          AAPT=$(find /usr/local/lib/android/sdk/build-tools -name aapt2 | sort | tail -1)
+          "$AAPT" dump badging "$APK" | grep -q "package: name='com.featherkrita.feather_krita'" \
+            || { echo 'FATAL: unexpected package'; "$AAPT" dump badging "$APK" | head -5; exit 1; }
+          "$AAPT" dump badging "$APK" | grep -q 'launchable-activity' \
+            || { echo 'FATAL: no launchable activity'; exit 1; }
+          echo 'APK audit OK'
+
+  emulator-boot:
+    needs: apk-audit
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - name: Resolve source build-app run
+        id: src
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            RID=${{ github.event.workflow_run.id }}
+          else
+            RID=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/workflows/build-app.yml/runs?status=success&per_page=1" \
+              | python3 -c 'import sys,json;print(json.load(sys.stdin)["workflow_runs"][0]["id"])')
+          fi
+          echo "run_id=$RID" >> "$GITHUB_OUTPUT"
+      - name: Download real-engine APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: feather-krita-android-real-engine
+          run-id: ${{ steps.src.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk
+      - name: KVM check
+        run: |
+          ls -la /dev/kvm || { echo 'FATAL: /dev/kvm unavailable on this runner'; exit 1; }
+      - name: Boot emulator, install APK, launch, soak
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -no-snapshot
+          boot-timeout: 900
+          script: |
+            APK=$(find apk -name '*.apk' | head -1)
+            echo "installing: $APK"
+            adb install --abi arm64-v8a -r -t "$APK" \
+              || { echo 'FATAL: adb install failed'; adb devices; exit 1; }
+            adb shell pm list packages | grep featherkrita \
+              || { echo 'FATAL: package missing after install'; exit 1; }
+            adb logcat -c
+            adb shell monkey -p com.featherkrita.feather_krita -c android.intent.category.LAUNCHER 1
+            PID=""
+            for i in $(seq 1 30); do
+              PID=$(adb shell pidof com.featherkrita.feather_krita | tr -d '\r')
+              if [ -n "$PID" ]; then echo "process alive: $PID (after $((i*10))s)"; break; fi
+              sleep 10
+            done
+            if [ -z "$PID" ]; then
+              echo 'FATAL: app process never appeared'
+              adb logcat -d | tail -200
+              exit 1
+            fi
+            echo "soak 90s (engine init under ARM translation)..."
+            sleep 90
+            PID2=$(adb shell pidof com.featherkrita.feather_krita | tr -d '\r')
+            if [ -z "$PID2" ]; then
+              echo 'FATAL: app process died during soak'
+              adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime' | tail -60
+              exit 1
+            fi
+            adb shell dumpsys window | grep mCurrentFocus || true
+            adb logcat --pid=$PID2 -d > app_logcat.txt || adb logcat -d > app_logcat.txt
+            if grep -q 'FATAL EXCEPTION' app_logcat.txt; then
+              echo 'FATAL: app crashed during soak'
+              grep -A 40 'FATAL EXCEPTION' app_logcat.txt | head -80
+              exit 1
+            fi
+            adb exec-out screencap -p > emulator_smoke.png
+            ls -la emulator_smoke.png app_logcat.txt
+            echo 'ANDROID EMULATOR SMOKE OK'
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-smoke-evidence
+          path: |
+            emulator_smoke.png
+            app_logcat.txt
+          retention-days: 14
+          if-no-files-found: ignore
