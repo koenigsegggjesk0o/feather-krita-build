@@ -279,11 +279,14 @@ jobs:
 
   build-android-real-engine:
     # Android build bundling the REAL Krita engine (merged libkrita_bridge.so
-    # = bridge glue + 959 krita objects in ONE image, NDK arm64-v8a, plus
-    # Qt5/KF5/icu runtime .so via jniLibs), loop-36 (roadmap c). The app's
-    # Dart FFI loader opens 'libkrita_bridge.so' by name on Android, so the
-    # real engine replaces the fallback bridge seamlessly. Krita source:
-    # real v6.0.4, never modified.
+    # = bridge glue + 959 krita objects in ONE image, NDK, plus Qt5/KF5/icu
+    # runtime .so via jniLibs), loop-36 (roadmap c). Since loop-61 the APK
+    # is a FAT real-engine bundle for BOTH arm64-v8a (device deliverable)
+    # and x86_64 (emulator-testable natively on CI x86_64 runners — retires
+    # the loop-60 ARM-translation wall). The app's Dart FFI loader opens
+    # 'libkrita_bridge.so' by name on Android, so the real engine replaces
+    # the fallback bridge seamlessly. Krita source: real v6.0.4, never
+    # modified.
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
@@ -320,97 +323,58 @@ jobs:
           name: krita-brush-engine-android-arm64-v8a
           run-id: ${{ steps.engine_run.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: krita-engine
+          path: krita-engine-arm64
 
-      - name: Bundle real engine into jniLibs (arm64-v8a)
-        run: |
-          JLIB=android/app/src/main/jniLibs/arm64-v8a
-          mkdir -p "$JLIB"
-          cp krita-engine/lib/libkrita_bridge.so "$JLIB/"
-          # runtime .so from the engine bundle (skip any x86_64-named strays)
-          find krita-engine/android/arm64-v8a -name '*.so' ! -name '*x86_64*' \
-            -exec cp {} "$JLIB/" \;
-          ls -la "$JLIB" | head -40
-          NB=$(ls "$JLIB" | wc -l)
-          echo "jniLibs: $NB files"
-          [ "$NB" -ge 5 ] || { echo 'FATAL: bundle too small'; exit 1; }
+      - name: Download real-engine artifact (x86_64)
+        uses: actions/download-artifact@v4
+        with:
+          name: krita-brush-engine-android-x86_64
+          run-id: ${{ steps.engine_run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: krita-engine-x86_64
 
-      - name: DT_NEEDED audit (every dependency present in jniLibs)
+      - name: Bundle real engine into jniLibs (arm64-v8a + x86_64, fat APK)
         run: |
-          JLIB=android/app/src/main/jniLibs/arm64-v8a
-          RE=$(find /usr/local/lib/android/sdk/ndk -name 'llvm-readelf' | sort | tail -1)
-          NEEDS=$("$RE" -d "$JLIB/libkrita_bridge.so" | awk '/\(NEEDED\)/{print $NF}' | tr -d '[]')
-          MISSING=0
-          for n in $NEEDS; do
-            if [ -f "$JLIB/$n" ]; then
-              echo "  bundled: $n"
-            else
-              case "$n" in
-                liblog.so|libz.so|libm.so|libdl.so|libc.so|libandroid.so)
-                  echo "  system: $n" ;;
-                *)
-                  echo "  MISSING: $n"; MISSING=$((MISSING+1)) ;;
-              esac
-            fi
+          for ABI in arm64-v8a x86_64; do
+            JLIB=android/app/src/main/jniLibs/$ABI
+            mkdir -p "$JLIB"
+            cp krita-engine-$ABI/lib/libkrita_bridge.so "$JLIB/"
+            # runtime .so from that ABI's engine bundle (skip strays named
+            # after the OTHER abi — Qt universal-package naming guard)
+            if [ "$ABI" = arm64-v8a ]; then OTHER=x86_64; else OTHER=arm64; fi
+            find "krita-engine-$ABI/android/$ABI" -name '*.so' ! -name "*$OTHER*" \
+              -exec cp {} "$JLIB/" \;
+            ls -la "$JLIB" | head -40
+            NB=$(ls "$JLIB" | wc -l)
+            echo "jniLibs/$ABI: $NB files"
+            [ "$NB" -ge 5 ] || { echo "FATAL: $ABI bundle too small"; exit 1; }
           done
-          # libc++_shared.so must ship in the APK (Qt/KF5 DT_NEEDED it)
-          test -f "$JLIB/libc++_shared.so" || {
-            echo 'FATAL: libc++_shared.so not bundled (required by Qt/KF5 at load)';
-            MISSING=$((MISSING+1));
-          }
-          [ "$MISSING" -eq 0 ] || { echo "FATAL: $MISSING missing libs"; exit 1; }
-          # ---- indirect-UNDEF closure gate (loop-45): bionic resolves
-          # UNDEFs ONLY along the DT_NEEDED load closure; a jniLibs .so
-          # that is present but NOT reachable from libkrita_bridge.so
-          # contributes nothing to symbol resolution (the exact v0.28
-          # defect class: QuaZip via kritastore run 35509208740,
-          # QPrinter/Qt5PrintSupport via kritawidgets run 35509902482).
-          # BFS the NEEDED graph: every bundled lib must be reachable
-          # from libkrita_bridge.so and every NEEDED entry must have a
-          # jniLibs provider (or be a bionic system lib).
-          JLIB="$JLIB" RE_BIN="$RE" python3 - << 'PYEOF'
-          import os, re, subprocess, glob, sys
-          d, re_bin = os.environ['JLIB'], os.environ['RE_BIN']
-          rx = re.compile(r'Shared library: \[([^\]]+)\]')
-          def needed(p):
-              out = subprocess.run([re_bin, '-d', p], capture_output=True, text=True).stdout
-              return rx.findall(out)
-          # libEGL/libGLESv2/libjnigraphics = Android system libs (/system/lib64),
-          # on-device resolution proven by the loop-43/44 green harness runs
-          syslibs = {'liblog.so', 'libz.so', 'libm.so', 'libdl.so', 'libc.so', 'libandroid.so', 'libEGL.so', 'libGLESv2.so', 'libjnigraphics.so'}
-          files = {os.path.basename(p) for p in glob.glob(os.path.join(d, '*.so'))}
-          files.discard('libkrita_bridge.so')
-          seen, stack = {'libkrita_bridge.so'}, ['libkrita_bridge.so']
-          orphan_needed = set()
-          while stack:
-              cur = stack.pop()
-              p = os.path.join(d, cur)
-              if not os.path.exists(p):
-                  if cur not in syslibs: orphan_needed.add(cur)
-                  continue
-              for n in needed(p):
-                  if n not in seen:
-                      seen.add(n); stack.append(n)
-          unreached = sorted(files - seen)
-          if unreached:
-              print('FATAL: jniLibs present but NOT reachable in DT_NEEDED closure:', unreached)
-              sys.exit(1)
-          if orphan_needed:
-              print('FATAL: NEEDED entries with no jniLibs provider and not system libs:', sorted(orphan_needed))
-              sys.exit(1)
-          print('indirect closure gate OK: %d bundled libs reachable from libkrita_bridge.so' % len(files))
-          PYEOF
+
+      - name: DT_NEEDED audit (every dependency present, per ABI)
+        # loop-61: the audit now runs against BOTH jniLibs ABIs via the
+        # extracted .github/scripts/android_dt_audit.sh (logic identical
+        # to the loop-45 arm64-only inline version, verified green).
+        run: |
+          RE=$(find /usr/local/lib/android/sdk/ndk -name 'llvm-readelf' | sort | tail -1)
+          test -n "$RE" || RE=readelf
+          bash .github/scripts/android_dt_audit.sh android/app/src/main/jniLibs/arm64-v8a "$RE"
+          bash .github/scripts/android_dt_audit.sh android/app/src/main/jniLibs/x86_64 "$RE"
 
       - name: Build Android APK (release, real engine)
         run: flutter build apk --release
 
-      - name: Verify APK contains the engine + runtime
+      - name: Verify APK contains the engine + runtime (both ABIs)
         run: |
           APK=build/app/outputs/flutter-apk/app-release.apk
-          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libkrita_bridge.so' \
-            || { echo 'FATAL: engine .so not in APK'; exit 1; }
-          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libQt5Core_arm64-v8a.so' \
-            || { echo 'FATAL: Qt runtime not in APK'; exit 1; }
+          for ABI in arm64-v8a x86_64; do
+            unzip -l "$APK" | grep -q "lib/$ABI/libkrita_bridge.so" \
+              || { echo "FATAL: engine .so not in APK for $ABI"; exit 1; }
+            unzip -l "$APK" | grep -q "lib/$ABI/libQt5Core_${ABI}.so" \
+              || { echo "FATAL: Qt runtime not in APK for $ABI"; exit 1; }
+            NB=$(unzip -l "$APK" | grep -c "lib/$ABI/.*\.so")
+            echo "$ABI .so count: $NB"
+            [ "$NB" -ge 5 ] || { echo "FATAL: $ABI bundle too small"; exit 1; }
+          done
           cp "$APK" feather-krita-android-real-engine.apk
           ls -lh feather-krita-android-real-engine.apk
 
