@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# loop-60 android emulator smoke — runs INSIDE android-emulator-runner
+# loop-60/61 android emulator smoke — runs INSIDE android-emulator-runner
 # after the emulator has booted (the action executes `script` one sh -c
 # per LINE, so variables and line continuations do not survive there;
 # this file gives the smoke real bash). Installs the real-engine APK
-# pinned to arm64-v8a (Android 11+ ARM translation), starts the activity
-# explicitly via am start -W, polls for the process, soaks 90 s, fails on
-# a dead process or a FATAL EXCEPTION, and leaves a screenshot + filtered
-# logcat as evidence. Krita source untouched.
+# WITHOUT an ABI pin (since loop-61 the fat APK carries the x86_64
+# engine, so on the x86_64 CI emulator the native x86_64 set extracts —
+# no Android 11+ ARM translation; the loop-60 translation wall is
+# retired), starts the activity explicitly via am start -W, polls for
+# the process, soaks 90 s, fails on a dead process or a FATAL EXCEPTION,
+# and leaves a screenshot + filtered logcat as evidence. Krita source
+# untouched.
 set -euo pipefail
 
 PKG='com.featherkrita.feather_krita'
@@ -14,7 +17,10 @@ APK=$(find "${GITHUB_WORKSPACE:-.}/apk" -name '*.apk' -print -quit)
 [ -n "$APK" ] || { echo 'FATAL: no APK under apk/'; exit 1; }
 echo "installing: $APK"
 
-adb install --abi arm64-v8a -r -t "$APK" \
+# No --abi pin: the x86_64 emulator extracts its native x86_64 set,
+# which includes the real engine since loop-61 (fat APK). The package
+# manager's ABI selection is the real-world install path.
+adb install -r -t "$APK" \
   || { echo 'FATAL: adb install failed'; adb devices; exit 1; }
 
 adb shell pm list packages | grep featherkrita \
@@ -23,8 +29,9 @@ adb shell pm list packages | grep featherkrita \
 adb logcat -c || true
 
 # Explicit deterministic launch (monkey's single event proved unreliable
-# under translation — attempt 5 injected it and nothing forked). -W waits
-# for the launch to complete and prints its Status.
+# in the loop-60 arm64-translation runs — attempt 5 injected it and
+# nothing forked). -W waits for the launch to complete and prints its
+# Status.
 echo '--- am start -W ---'
 adb shell am start -W -n "$PKG/.MainActivity" || true
 echo '--- end am start ---'
@@ -46,7 +53,7 @@ if [ -z "$PID" ]; then
   exit 1
 fi
 
-echo 'soak 90s (engine init under ARM translation)...'
+echo 'soak 90s (engine init, native x86_64)...'
 sleep 90
 PID2=$(adb shell pidof "$PKG" | tr -d '\r' || true)
 if [ -z "$PID2" ]; then
