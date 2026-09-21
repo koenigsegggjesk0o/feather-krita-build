@@ -169,21 +169,39 @@ void main() {
         reason: 'a successful export must report its output path');
   });
 
-  testWidgets('light tool toggles the grid overlay flag', (tester) async {
+  testWidgets('light tool activates and canvas drags orbit the key light',
+      (tester) async {
     final state = EditorState();
     addTearDown(state.dispose);
     await tester.pumpWidget(_host(state));
     await tester.pump(const Duration(milliseconds: 100));
-    expect(state.showGrid, isTrue);
+    expect(state.showGrid, isTrue,
+        reason: 'the grid no longer depends on the Light tool (loop-52)');
+    final defaultAz = state.lightRig.sunAzimuth;
+    final defaultEl = state.lightRig.sunElevationDeg;
 
     await tester.tap(find.text('Light'));
     await tester.pump(const Duration(milliseconds: 450));
-    expect(state.showGrid, isFalse);
-    expect(state.showMirrorPlanes, isFalse);
-
-    await tester.tap(find.text('Light'));
-    await tester.pump(const Duration(milliseconds: 450));
+    expect(state.activeTool, Tool.light);
     expect(state.showGrid, isTrue);
+
+    // Drag right + up on the canvas: azimuth increases, elevation rises.
+    // The gizmo + HUD light readout render inside the same frame.
+    final center = tester.getCenter(find.byType(CanvasWidget));
+    final gesture = await tester.startGesture(center);
+    await gesture.moveBy(const Offset(80, -50));
+    await tester.pump(const Duration(milliseconds: 80));
+    await gesture.moveBy(const Offset(80, -50));
+    await tester.pump(const Duration(milliseconds: 80));
+    await gesture.moveBy(const Offset(40, -20));
+    await tester.pump(const Duration(milliseconds: 80));
+    await gesture.up();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(state.lightRig.sunAzimuth, greaterThan(defaultAz));
+    expect(state.lightRig.sunElevationDeg, greaterThan(defaultEl));
+    expect(find.textContaining('sun '), findsOneWidget,
+        reason: 'the HUD must show the live sun azimuth/elevation readout');
   });
 
   testWidgets('open dialog restores a saved project document', (tester) async {

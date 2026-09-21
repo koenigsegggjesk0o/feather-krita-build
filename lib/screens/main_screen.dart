@@ -96,10 +96,11 @@ class _MainScreenState extends State<MainScreen> {
         setState(() => _showStrokeList = !_showStrokeList);
         break;
       case Tool.light:
-        _state.showGrid = !_state.showGrid;
-        _state.showMirrorPlanes = _state.showGrid;
-        _state.notify();
-        return;
+        // loop-52: the Light tool is now a REAL tool — tapping it
+        // ACTIVATES it and one-finger canvas drags orbit the scene key
+        // light (SceneLightRig). The old grid toggle lives on the
+        // Ctrl+G shortcut only.
+        break;
       default:
         break;
     }

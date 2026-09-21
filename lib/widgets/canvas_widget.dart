@@ -134,6 +134,8 @@ class CanvasWidgetState extends State<CanvasWidget>
 
   bool get _isLiquifyTool => widget.state.activeTool == Tool.liquify;
 
+  bool get _isLightTool => widget.state.activeTool == Tool.light;
+
   // ----- Input handling --------------------------------------------------
 
   void _onScaleStart(ScaleStartDetails details) {
@@ -151,6 +153,8 @@ class CanvasWidgetState extends State<CanvasWidget>
         _continueStroke(details.localFocalPoint);
       } else if (_isLiquifyTool) {
         _applyLiquify(details.localFocalPoint);
+      } else if (_isLightTool) {
+        _orbitLight(details.focalPointDelta.dx, details.focalPointDelta.dy);
       } else {
         // Orbit.
         widget.state.camera.handleOneFingerDrag(
@@ -316,6 +320,18 @@ class CanvasWidgetState extends State<CanvasWidget>
     setState(() {});
   }
 
+  /// Light tool drag (loop-52): orbit the scene key light around the
+  /// scene. Horizontal drags sweep the sun's azimuth, vertical drags
+  /// raise / lower its elevation. Two-finger gestures still drive the
+  /// camera (handled in the same callback), so the rig never fights the
+  /// camera orbit.
+  void _orbitLight(double dx, double dy) {
+    if (dx == 0 && dy == 0) return;
+    widget.state.lightRig.orbitBy(dx, dy);
+    widget.state.notify();
+    setState(() {});
+  }
+
   SurfaceRayHit? _raycast(Offset screen) {
     if (_viewport == Size.zero) return null;
     final aspect = _viewport.width / _viewport.height;
@@ -442,6 +458,18 @@ class _HudOverlay extends StatelessWidget {
                   fontSize: 9,
                 ),
               ),
+              if (state.activeTool == Tool.light) ...[
+                const SizedBox(height: 2),
+                Text(
+                  'sun ${state.lightRig.sunElevationDeg.toStringAsFixed(0)}° '
+                      'az ${state.lightRig.sunAzimuthDeg.toStringAsFixed(0)}° · '
+                      'power ${(state.lightRig.intensity * 100).round()}%',
+                  style: const TextStyle(
+                    color: AppTheme.textTertiary,
+                    fontSize: 9,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -544,6 +572,8 @@ class _ScenePainter extends CustomPainter {
         fovYRadians: state.camera.projection.fovYRadians,
       ),
       viewport: size,
+      keyLight: state.lightRig.direction,
+      lightIntensity: state.lightRig.intensity,
     );
 
     // loop-51: rasterize the guide texture with the shading contract
@@ -557,6 +587,13 @@ class _ScenePainter extends CustomPainter {
       tintB: state.guideSurface.color.z,
     );
     _drawSceneItems(canvas, items, TextureImageCache.current);
+
+    // Light tool gizmo (loop-52): a projected sun marker + light ray so
+    // the user sees where the key light sits while orbiting it. Drawn on
+    // top of the scene — it is an editor overlay, not scene geometry.
+    if (state.activeTool == Tool.light) {
+      _drawLightGizmo(canvas, size, vp);
+    }
 
     // Live stroke.
     if (drawing && livePoints.isNotEmpty) {
@@ -779,6 +816,33 @@ class _ScenePainter extends CustomPainter {
         );
       }
     }
+  }
+
+  // ----- Light gizmo ------------------------------------------------------
+
+  void _drawLightGizmo(Canvas canvas, Size size, Matrix4 vp) {
+    // The sun sits OPPOSITE the light direction at a fixed radius, well
+    // outside the default 1.4 guide sphere.
+    final sunWorld = state.lightRig.direction.scaled(-2.6);
+    final sun = _project(sunWorld, vp, size);
+    final target = _project(Vector3.zero(), vp, size);
+    if (sun == null || target == null) return;
+    canvas.drawLine(
+      sun,
+      target,
+      Paint()
+        ..color = AppTheme.toolLight.withValues(alpha: 0.35)
+        ..strokeWidth = 1.2,
+    );
+    canvas.drawCircle(sun, 6.5, Paint()..color = AppTheme.toolLight);
+    canvas.drawCircle(
+      sun,
+      10,
+      Paint()
+        ..color = AppTheme.toolLight.withValues(alpha: 0.45)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4,
+    );
   }
 
   void _drawLiveStroke(Canvas canvas, Size size, Matrix4 vp) {

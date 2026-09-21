@@ -21,6 +21,7 @@ import 'package:flutter/services.dart' show rootBundle;
 
 import 'package:feather_krita/engine/stroke_manager.dart';
 import 'package:feather_krita/engine/camera_controller.dart';
+import 'package:feather_krita/engine/light_rig.dart';
 import 'package:feather_krita/engine/texture_painter.dart';
 import 'package:feather_krita/engine/guide_surface.dart';
 import 'package:feather_krita/engine/synthetic_dab.dart';
@@ -84,6 +85,12 @@ class EditorState extends ChangeNotifier {
   final TexturePainter texture;
   GuideSurface guideSurface;
   final List<BrushPreset> presets;
+
+  /// The scene key-light rig (loop-52): sun azimuth/elevation + diffuse
+  /// intensity, driven by the Light tool's canvas drags and consumed by
+  /// the scene pipeline's Lambert shading. At its defaults it reproduces
+  /// the legacy fixed [kSceneKeyLight] exactly.
+  final SceneLightRig lightRig = SceneLightRig();
 
   KritaBrushEngine? _brushEngine;
 

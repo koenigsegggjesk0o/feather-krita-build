@@ -30,6 +30,13 @@
 // color remains as the frame-0 fallback paint for the window before the
 // texture image finishes decoding.
 //
+// loop-52: the key light became a first-class scene object. Every entry
+// point that shades stroke geometry accepts an optional world-space
+// `keyLight` direction and `lightIntensity` diffuse scale (the Light
+// tool's SceneLightRig); the legacy fixed kSceneKeyLight at intensity 1.0
+// remains the default so every pre-loop-52 call site renders
+// byte-identically.
+//
 // The output primitives are plain data (screen-space), so the caller can
 // draw them with any backend — CustomPainter today, the pluggable
 // hardware renderer later. Pure Dart: no widget bindings, fully unit
@@ -47,9 +54,12 @@ import 'package:vector_math/vector_math_64.dart';
 /// the pre-pipeline heuristic (`distScale == 1` at the default pose).
 const double kSceneReferenceDepth = 6.0;
 
-/// Fixed key light direction (world space, pointing FROM the light).
+/// Default key light direction (world space, pointing FROM the light).
 /// Top-left-front key light — matches the glassmorphism scene's soft
-/// overhead look. Constant for now; the Light tool may drive it later.
+/// overhead look. This is also the SceneLightRig's initial direction, so
+/// a rig at its defaults reproduces the legacy fixed light exactly; the
+/// Light tool (loop-52) drives the per-frame direction through the
+/// optional `keyLight` parameters below.
 final Vector3 kSceneKeyLight =
     Vector3(-0.35, -1.0, -0.55)..normalize();
 
@@ -272,10 +282,15 @@ double sceneStrokeWidthPx({
 /// [tangent] viewed from [cameraPos] toward [mid].
 ///
 /// The view-facing normal N = T × V is lit by the key light; brightness
-/// is floored at [kSceneAmbient]. Mirror strokes keep their alpha dimming
-/// handled by [applyMirrorAlpha] — this function only scales RGB.
+/// is floored at [kSceneAmbient]. [keyLight] (world space, pointing from
+/// the light) and [lightIntensity] (diffuse scale in [0, 1]) come from the
+/// Light tool's rig — null / 1.0 select the legacy fixed
+/// [kSceneKeyLight] at full strength, byte-identical to loop-50. Mirror
+/// strokes keep their alpha dimming handled by [applyMirrorAlpha] — this
+/// function only scales RGB.
 Color shadeSegment(
-    Color color, Vector3 tangent, Vector3 mid, Vector3 cameraPos) {
+    Color color, Vector3 tangent, Vector3 mid, Vector3 cameraPos,
+    {Vector3? keyLight, double lightIntensity = 1.0}) {
   final t = tangent.clone()..normalize();
   final v = (cameraPos - mid)..normalize();
   final n = t.cross(v);
@@ -283,7 +298,10 @@ Color shadeSegment(
   if (n.length2 > 1e-12) {
     n.normalize();
     brightness =
-        (kSceneAmbient + (1.0 - kSceneAmbient) * math.max(0.0, n.dot(kSceneKeyLight)))
+        (kSceneAmbient +
+                (1.0 - kSceneAmbient) *
+                    lightIntensity.clamp(0.0, 1.0) *
+                    math.max(0.0, n.dot(keyLight ?? kSceneKeyLight)))
             .clamp(0.0, 1.0);
   }
   return Color.fromARGB(
@@ -469,11 +487,17 @@ List<SceneDrawItem> buildSurfaceItems({
 
 /// Builds the stroke pass items: camera-facing ribbon segments with
 /// perspective-correct widths, Lambert shading, and per-segment depth.
+/// [keyLight] / [lightIntensity] forward to [shadeSegment] (null / 1.0 =
+/// the legacy fixed light). Lone dots have no tangent, so they stay at
+/// the ambient floor regardless of intensity — the diffuse term is
+/// undefined without a normal.
 List<SceneDrawItem> buildStrokeItems({
   required SceneStrokeInput stroke,
   required SceneCameraInput camera,
   required Size viewport,
   required int seqStart,
+  Vector3? keyLight,
+  double lightIntensity = 1.0,
 }) {
   final items = <SceneDrawItem>[];
   if (stroke.points.isEmpty) return items;
@@ -533,7 +557,8 @@ List<SceneDrawItem> buildStrokeItems({
         final depth = camera.view.transform3(midWorld.clone()).z;
         final tangent = runWorld[i] - runWorld[i - 1];
         final color = shadeSegment(baseColor, tangent, midWorld,
-            camera.position);
+            camera.position,
+            keyLight: keyLight, lightIntensity: lightIntensity);
         items.add(SceneSegment(
           p0.screen,
           p1.screen,
@@ -568,12 +593,15 @@ List<SceneDrawItem> buildStrokeItems({
 
 /// Builds the UNIFIED back-to-front draw list: surface triangles and all
 /// strokes' ribbon segments depth-sorted together, so paint and surface
-/// occlude each other correctly.
+/// occlude each other correctly. [keyLight] / [lightIntensity] drive the
+/// stroke Lambert shading (see [buildStrokeItems]).
 List<SceneDrawItem> buildUnifiedDrawList({
   required SceneSurfaceInput surface,
   required List<SceneStrokeInput> strokes,
   required SceneCameraInput camera,
   required Size viewport,
+  Vector3? keyLight,
+  double lightIntensity = 1.0,
 }) {
   final items = <SceneDrawItem>[
     ...buildSurfaceItems(
@@ -582,7 +610,12 @@ List<SceneDrawItem> buildUnifiedDrawList({
   var seq = items.length;
   for (final stroke in strokes) {
     final strokeItems = buildStrokeItems(
-        stroke: stroke, camera: camera, viewport: viewport, seqStart: seq);
+        stroke: stroke,
+        camera: camera,
+        viewport: viewport,
+        seqStart: seq,
+        keyLight: keyLight,
+        lightIntensity: lightIntensity);
     items.addAll(strokeItems);
     seq += strokeItems.length;
   }
