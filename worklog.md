@@ -1882,3 +1882,17 @@ Work Log:
 Stage Summary:
 - The Light tool is REAL now: it activates, a one-finger drag orbits the scene key light around the model (with a projected sun gizmo + live HUD readout), and stroke ribbons re-light per frame through the pipeline's Lambert path. Defaults are byte-identical to the legacy fixed light, so nothing else moved.
 - NEXT for beacon 2: poll build-app on this push (green → release v0.35-light-rig via the release-script pattern @ APP_RUN_ID <green run> APP_SHA <beacon sha>); atomic mirror sync; FINAL beacon.
+
+---
+Task ID: 5-loop-52 (beacon 2 — FINAL: real scene-light rig shipped, v0.35 released)
+Agent: Z.ai Code (main, autonomous loop)
+Task: CI, release, loop closure
+
+Work Log:
+- build-app 35559724751 (push, 6049b52 mirror of beacon 1) GREEN in ~8 min — all jobs including the full 158-test suite on CI.
+- RELEASED v0.35-light-rig (release id 392691688, scripts/release_v35.py @ APP_RUN_ID 35559724751, APP_SHA c8e04ea): 3 assets uploaded (state=uploaded) — linux real-engine zip 47.4MB, windows real-engine zip 40.2MB, android real-engine APK 119.0MB. Release script committed separately (dc9a6a7) mid-loop as wipe insurance; rides this FINAL sync.
+- Session totals: 2 app commits (c8e04ea feature, dc9a6a7 script) + 2 builder mirror commits (6049b52 beacon 1, this FINAL) + 1 green CI run + 1 release. Analyze 0 err/0 warn (67 infos, AT baseline); suite 158/158 GREEN first try (143 baseline + 15 net new); Krita source byte-identical upstream; analysis_options.yaml and pubspec.lock untouched. No box wipe this loop (last recovery was at loop-51 beacon-1 start).
+
+Stage Summary:
+- LOOP-52 CLOSED END-TO-END — THE LIGHT TOOL IS REAL: tapping Light now activates the tool (previously it toggled the grid and returned without ever becoming active); a one-finger drag orbits the scene key light via SceneLightRig (sun azimuth/elevation sky parametrization, 0.4°/px az + 0.3°/px el, drag up = sun up, elevation clamped [-30°,+88°] against the zenith pole); a diffuse-intensity dial scales the Lambert term down to the pure ambient floor; a projected sun gizmo (dot + ring + light ray) and a live HUD "sun ° az ° · power %" readout give feedback. The pipeline consumes the rig through optional keyLight/lightIntensity params whose defaults are ARGB-exact with the legacy fixed light — zero visual change for existing call sites.
+- Handoff notes for 5-loop-53: (1) Feather-3D follow-ups in rough value order: light rig PERSISTENCE in .feather projects (feather_project.dart encode/decode + a versioned migration), light intensity as a second drag axis or a slider (the HUD readout already shows power%), stroke ribbon caps/normals for very short segments, MSAA-ish edge softening on close-ups; (2) remaining loop-48/49 candidates stand: emulator smoke wired as a workflow_run auto-trigger after krita-build greens, family-aware FLOW (needs an engine-authoritative no-flow-family list first — do NOT guess); (3) keyboard_shortcuts Ctrl+N/Ctrl+S flake remains live (~1 hang in ~4 runs) — rerun solo, never bisect; (4) app-repo no-runner CI failures classified (environment) — ignore; (5) widget tests keep ALL disk I/O synchronous; TextureImageCache.enabled=false is already set in both widget test mains — keep it that way unless a test specifically exercises the cache; (6) box wipes ~20-30 min — checkpoint commits early and often; atomic mirror_sync.py (GITHUB_TOKEN env only) is the ONLY sync path.
