@@ -1981,3 +1981,17 @@ Work Log:
 Stage Summary:
 - Slow strokes no longer show dark shading flecks: degenerate ribbon segments inherit the nearest real tangent and shade continuously with the stroke's actual direction, while every legacy contract (lone dots, all-degenerate runs, byte-exact defaults) survives unchanged. The fix is pure Dart, test-locked, and O(n).
 - NEXT for beacon 2: poll build-app on this push (green → release v0.38-ribbon-tangent-inheritance via the release-script pattern @ APP_RUN_ID <green run> APP_SHA <beacon sha>); atomic mirror sync; FINAL beacon.
+
+---
+Task ID: 5-loop-55 (beacon 2 — FINAL: continuous ribbon shading shipped, v0.38 released)
+Agent: Z.ai Code (main, autonomous loop)
+Task: CI, release, loop closure
+
+Work Log:
+- App-repo runs on the beacon push failed with the KNOWN no-runner environment classification — IGNORED per the standing note. The AUTHORITATIVE run is on the builder repo: build-app 35566544489 @ c8d398d (mirror of beacon 1 + worklog) GREEN (~9.5 min).
+- RELEASED v0.38-ribbon-tangent-inheritance (release id 392728387, scripts/release_v38.py @ APP_RUN_ID 35566544489, APP_SHA 05cdf2d): 3 assets uploaded (state=uploaded) — linux real-engine zip 47.4MB, windows real-engine zip 40.2MB, android real-engine APK 119.0MB. Clean first-try release again.
+- Session totals: 2 app commits (05cdf2d feature, 0f3163d worklog; release script rides this FINAL commit) + 2 builder mirror commits (c8d398d beacon 1, this FINAL) + 1 green CI run + 1 release. Analyze 0 err/0 warn (67 infos, AT baseline); suite 167/167 GREEN (163 baseline + 4 net new); Krita source byte-identical upstream; analysis_options.yaml and pubspec.lock untouched. No box wipe this loop.
+
+Stage Summary:
+- LOOP-55 CLOSED END-TO-END — CONTINUOUS RIBBON SHADING: degenerate (zero-length) ribbon segments inherit the nearest real tangent instead of dropping to the ambient floor, eliminating the dark flecks that slow strokes showed whenever the pointer emitted coincident samples. Every legacy contract survives (lone dots, all-degenerate runs, byte-exact defaults); 4 new bit-exact tests; suite 167/167.
+- Handoff notes for 5-loop-56: (1) Feather-3D follow-ups in rough value order: MSAA-ish edge softening for the drawVertices path on close-ups (the only remaining loop-51/52 candidate), a light PRESET row (noon / golden hour / rim) feeding the rig for one-tap setups, guide-surface parity check in open/save dialogs; (2) remaining loop-48/49 candidates stand: emulator smoke wired as a workflow_run auto-trigger after krita-build greens, family-aware FLOW (needs an engine-authoritative no-flow-family list first — do NOT guess); (3) keyboard_shortcuts Ctrl+N/Ctrl+S flake remains live (~1 hang in ~4 runs) — rerun solo, never bisect; (4) app-repo no-runner CI failures classified (environment) — ignore; (5) widget tests keep ALL disk I/O synchronous; TextureImageCache.enabled=false stays in both widget test mains; (6) verify /home/z/fkr-step1 FIRST at every tick, checkpoint commits early and often; atomic mirror_sync.py (GITHUB_TOKEN env only) is the ONLY sync path.
