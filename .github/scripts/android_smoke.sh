@@ -47,7 +47,7 @@ done
 if [ -z "$PID" ]; then
   echo 'FATAL: app process never appeared'
   adb logcat -d 2>/dev/null \
-    | grep -iE 'featherkrita|FATAL EXCEPTION|AndroidRuntime|ActivityTaskManager|ActivityManager|Unsupported|CANNOT LINK|linker|Fatal signal' \
+    | grep -iE 'featherkrita|FATAL EXCEPTION|AndroidRuntime|ActivityTaskManager|ActivityManager|Unsupported|CANNOT LINK|linker|Fatal signal|host-init|krita_bridge' \
     | tail -300 || true
   adb logcat -d 2>/dev/null | tail -80 || true
   exit 1
@@ -59,7 +59,7 @@ PID2=$(adb shell pidof "$PKG" | tr -d '\r' || true)
 if [ -z "$PID2" ]; then
   echo 'FATAL: app process died during soak'
   adb logcat -d 2>/dev/null \
-    | grep -iE 'featherkrita|FATAL EXCEPTION|AndroidRuntime|Unsupported|CANNOT LINK|linker|Fatal signal' \
+    | grep -iE 'featherkrita|FATAL EXCEPTION|AndroidRuntime|Unsupported|CANNOT LINK|linker|Fatal signal|host-init|krita_bridge' \
     | tail -300 || true
   exit 1
 fi
