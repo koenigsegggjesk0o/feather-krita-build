@@ -80,9 +80,11 @@ def main():
     # 1. resolve the green build-app run's artifacts
     arts = api(f'{HEAD}/repos/{BUILD_REPO}/actions/runs/{APP_RUN_ID}/artifacts')
     wanted = {}
+    sizes = {}
     for a in arts.get('artifacts', []):
         if a['name'] in ARTIFACTS and not a['expired']:
             wanted[a['name']] = a['id']
+            sizes[a['name']] = a['size_in_bytes']
     missing = set(ARTIFACTS) - set(wanted)
     if missing:
         sys.exit(f'FATAL: missing artifacts on run {APP_RUN_ID}: {missing}')
@@ -95,11 +97,15 @@ def main():
         zpath = f'/tmp/v43rel/{name}.zip'
         out = f'/tmp/v43rel/{asset}'
         member = None
+        want_sz = sizes[name]
         for attempt in range(3):  # CDN truncation retries
             subprocess.run(['curl', '-sfL', '--retry', '3', '--retry-all-errors',
                             '-H', f'Authorization: token {TOKEN}',
                             f'{HEAD}/repos/{BUILD_REPO}/actions/artifacts/'
                             f'{wanted[name]}/zip', '-o', zpath], check=True)
+            if os.path.getsize(zpath) != want_sz:
+                print(f'{name}: attempt {attempt+1}: size {os.path.getsize(zpath)} != {want_sz}; retrying...')
+                continue
             try:
                 with zipfile.ZipFile(zpath) as z:
                     cands = [n for n in z.namelist()
@@ -120,7 +126,7 @@ def main():
         if member is None:
             sys.exit(f'FATAL: {name} extraction failed after retries')
         sz = os.path.getsize(out)
-        print(f'{name}: {cands[0]} -> {out} ({sz/1e6:.1f} MB)')
+        print(f'{name}: {member} -> {out} ({sz/1e6:.1f} MB)')
         if sz < 1_000_000:
             sys.exit(f'FATAL: {out} suspiciously small')
         uploads.append((out, asset, ctype))
