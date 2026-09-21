@@ -264,6 +264,36 @@ KRITA_BRIDGE_API const char* krita_brush_preset_family(KritaBrushContext* handle
 /// Added by the preset-families campaign; back-compat: new function.
 KRITA_BRIDGE_API const char* krita_brush_preset_path(KritaBrushContext* handle, int32_t index);
 
+/// Returns the number of paintop-settings-level parameters captured from
+/// the LAST successfully loaded preset (krita_brush_load_preset): every
+/// `<param name|id="...">` entry in the preset XML with its value (a
+/// value= attribute or the element's text/CDATA), in document order.
+/// Real Krita stock presets expose their full settings surface here
+/// (Krita/opacity, CompositeOp, FlowValue, brush_definition, ...).
+/// Returns 0 before the first load, after a failed load, or on the
+/// fallback/portable bridges (raw map enumeration is a real-engine
+/// capability; curated values remain available through the scalar
+/// getters). Added by the paintop-settings-params campaign (roadmap (f));
+/// back-compat: new function, no struct layout change.
+KRITA_BRIDGE_API int32_t krita_brush_preset_param_count(KritaBrushContext* handle);
+
+/// Returns the parameter NAME at [index] (document order) from the last
+/// successfully loaded preset, or NULL if out of range. The pointer is
+/// owned by the handle and invalidated by the next load_preset call or
+/// the next param-name call on [handle]; copy it if it must outlive
+/// those. Added by the paintop-settings-params campaign; back-compat:
+/// new function.
+KRITA_BRIDGE_API const char* krita_brush_preset_param_name(KritaBrushContext* handle, int32_t index);
+
+/// Returns the parameter VALUE at [index] (document order) from the last
+/// successfully loaded preset, or NULL if out of range. Values are the
+/// raw settings strings (e.g. "100" for Krita/opacity, "erase" for
+/// CompositeOp, full `<Brush ...>` XML for brush_definition). Same
+/// pointer lifetime rules as [krita_brush_preset_param_name], with its
+/// own buffer. Added by the paintop-settings-params campaign;
+/// back-compat: new function.
+KRITA_BRIDGE_API const char* krita_brush_preset_param_value(KritaBrushContext* handle, int32_t index);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

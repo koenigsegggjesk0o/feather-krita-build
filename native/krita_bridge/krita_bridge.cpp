@@ -471,6 +471,28 @@ const char* krita_brush_get_paintop_id(KritaBrushContext* handle) {
     return handle->paintopId.c_str();
 }
 
+// Paintop-settings param map enumeration (roadmap (f)) is a real-engine
+// capability: the fallback bridge keeps only the curated scalar getters,
+// so the raw map is reported as empty (bindings degrade gracefully).
+int32_t krita_brush_preset_param_count(KritaBrushContext* handle) {
+    (void)handle;
+    return 0;
+}
+
+const char* krita_brush_preset_param_name(KritaBrushContext* handle,
+                                          int32_t index) {
+    (void)handle;
+    (void)index;
+    return nullptr;
+}
+
+const char* krita_brush_preset_param_value(KritaBrushContext* handle,
+                                           int32_t index) {
+    (void)handle;
+    (void)index;
+    return nullptr;
+}
+
 bool krita_brush_generate_dab(KritaBrushContext* handle,
                               const BrushInput* input,
                               BrushDab* out_dab) {

@@ -672,7 +672,13 @@ struct KritaBrushContext {
     std::string nameBuffer;
     std::string scanBuffer;
     std::string versionBuffer;
+    std::string paramNameBuffer;
+    std::string paramValueBuffer;
     std::string paintopId;   // declared preset family (paintopid root attr)
+    // Paintop-settings-level params of the last successfully loaded
+    // preset (roadmap (f)): insertion-ordered (name, value) pairs in
+    // document order, exposed via krita_brush_preset_param_count/name/value.
+    std::vector<std::pair<std::string, std::string>> presetParams;
 
     void setError(const std::string& m) { lastError = m; }
     void clearError() { lastError.clear(); }
@@ -844,6 +850,7 @@ int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path) {
     handle->presetPath = info.filePath();
     handle->presetName = info.completeBaseName();
     handle->paintopId.clear();  // re-filled from the root element below
+    handle->presetParams.clear();  // re-filled from the settings params below
 
     QFile f(info.filePath());
     if (!f.open(QIODevice::ReadOnly)) {
@@ -898,7 +905,18 @@ int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path) {
             if (key.isEmpty()) continue;
             QString value = p.attribute("value");
             if (value.isEmpty()) value = p.text().trimmed();
-            if (!value.isEmpty()) params.insert(key, value);
+            if (!value.isEmpty()) {
+                params.insert(key, value);
+                // Keep the insertion-ordered projection in sync (last
+                // duplicate wins, mirroring QHash::insert semantics).
+                const std::string k = key.toStdString();
+                const std::string v = value.toStdString();
+                bool replaced = false;
+                for (auto& kv : handle->presetParams) {
+                    if (kv.first == k) { kv.second = v; replaced = true; break; }
+                }
+                if (!replaced) handle->presetParams.emplace_back(k, v);
+            }
         }
     }
 
@@ -1183,6 +1201,31 @@ const char* krita_brush_get_preset_name(KritaBrushContext* handle) {
 const char* krita_brush_get_paintop_id(KritaBrushContext* handle) {
     if (!handle) return "";
     return handle->paintopId.c_str();
+}
+
+int32_t krita_brush_preset_param_count(KritaBrushContext* handle) {
+    if (!handle) return 0;
+    return static_cast<int32_t>(handle->presetParams.size());
+}
+
+const char* krita_brush_preset_param_name(KritaBrushContext* handle,
+                                          int32_t index) {
+    if (!handle || index < 0 ||
+        size_t(index) >= handle->presetParams.size()) {
+        return nullptr;
+    }
+    handle->paramNameBuffer = handle->presetParams[size_t(index)].first;
+    return handle->paramNameBuffer.c_str();
+}
+
+const char* krita_brush_preset_param_value(KritaBrushContext* handle,
+                                           int32_t index) {
+    if (!handle || index < 0 ||
+        size_t(index) >= handle->presetParams.size()) {
+        return nullptr;
+    }
+    handle->paramValueBuffer = handle->presetParams[size_t(index)].second;
+    return handle->paramValueBuffer.c_str();
 }
 
 bool krita_brush_generate_dab(KritaBrushContext* handle,

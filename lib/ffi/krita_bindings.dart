@@ -307,6 +307,15 @@ typedef _KritaPresetEntryNative = Pointer<Utf8> Function(
 typedef _KritaPresetEntryDart = Pointer<Utf8> Function(
     Pointer<Void> handle, int index);
 
+// Paintop-settings param map of the loaded preset (roadmap (f)). The
+// fallback/portable bridges report an empty map (count 0 / NULL entries).
+typedef _KritaPresetParamCountNative = Int32 Function(Pointer<Void> handle);
+typedef _KritaPresetParamCountDart = int Function(Pointer<Void> handle);
+typedef _KritaPresetParamEntryNative = Pointer<Utf8> Function(
+    Pointer<Void> handle, Int32 index);
+typedef _KritaPresetParamEntryDart = Pointer<Utf8> Function(
+    Pointer<Void> handle, int index);
+
 typedef _KritaBrushGetSizeNative = Double Function(Pointer<Void> handle);
 typedef _KritaBrushGetSizeDart = double Function(Pointer<Void> handle);
 
@@ -533,6 +542,15 @@ class KritaBrushEngine {
   late final _KritaPresetEntryDart _presetPathAt =
       _lib.lookupFunction<_KritaPresetEntryNative, _KritaPresetEntryDart>(
           'krita_brush_preset_path');
+  late final _KritaPresetParamCountDart _presetParamCount = _lib.lookupFunction<
+      _KritaPresetParamCountNative,
+      _KritaPresetParamCountDart>('krita_brush_preset_param_count');
+  late final _KritaPresetParamEntryDart _presetParamNameAt = _lib
+      .lookupFunction<_KritaPresetParamEntryNative, _KritaPresetParamEntryDart>(
+          'krita_brush_preset_param_name');
+  late final _KritaPresetParamEntryDart _presetParamValueAt = _lib
+      .lookupFunction<_KritaPresetParamEntryNative, _KritaPresetParamEntryDart>(
+          'krita_brush_preset_param_value');
 
   /// The brush diameter currently set on the native engine.
   double get currentSize {
@@ -594,6 +612,55 @@ class KritaBrushEngine {
     final ptr = _getPaintopId(_handle);
     if (ptr == nullptr) return '';
     return ptr.toDartString();
+  }
+
+  /// The number of paintop-settings-level parameters captured from the
+  /// last successfully loaded preset (0 before the first load, after a
+  /// failed load, or on the fallback bridge). See [presetParams].
+  int get presetParamCount {
+    _checkAlive();
+    return _presetParamCount(_handle);
+  }
+
+  /// The parameter NAME at [index] (document order) from the last
+  /// successfully loaded preset, or null when out of range.
+  String? presetParamNameAt(int index) {
+    _checkAlive();
+    final ptr = _presetParamNameAt(_handle, index);
+    if (ptr == nullptr) return null;
+    return ptr.toDartString();
+  }
+
+  /// The parameter VALUE at [index] (document order) from the last
+  /// successfully loaded preset, or null when out of range. Values are
+  /// raw settings strings (e.g. "100" for Krita/opacity, "erase" for
+  /// CompositeOp, full `<Brush ...>` XML for brush_definition).
+  String? presetParamValueAt(int index) {
+    _checkAlive();
+    final ptr = _presetParamValueAt(_handle, index);
+    if (ptr == nullptr) return null;
+    return ptr.toDartString();
+  }
+
+  /// The loaded preset's paintop-settings-level parameters (roadmap (f))
+  /// as an insertion-ordered name -> value map: every `<param>` entry in
+  /// the preset XML, exactly as Krita's paintop settings wrote it
+  /// (Krita/opacity, CompositeOp, FlowValue, OpacityValue, ...). The UI
+  /// can render genuine per-preset option surfaces from this without
+  /// hard-coding parameter names. Empty on the fallback bridge and
+  /// before the first successful [loadPreset].
+  Map<String, String> presetParams() {
+    _checkAlive();
+    final n = _presetParamCount(_handle);
+    if (n <= 0) return const <String, String>{};
+    return Map<String, String>.fromEntries(List.generate(n, (i) {
+      final namePtr = _presetParamNameAt(_handle, i);
+      final valuePtr = _presetParamValueAt(_handle, i);
+      return MapEntry(
+        namePtr == nullptr ? '' : namePtr.toDartString(),
+        valuePtr == nullptr ? '' : valuePtr.toDartString(),
+      );
+    }));
   }
 
   /// Sets the brush diameter in pixels.

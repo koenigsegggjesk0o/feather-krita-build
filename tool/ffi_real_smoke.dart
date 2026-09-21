@@ -144,6 +144,32 @@ void main(List<String> args) {
     final pdab = p1.generateDab(const BrushInput(x: 0, y: 0, pressure: 1.0));
     _check(pdab.width >= 36 && pdab.width <= 44,
         'basic-5 dab extent from preset tip (got ${pdab.width})');
+
+    // --- paintop-settings param map exposed to Dart (roadmap (f)) -------
+    // The full <param> surface of the stock preset must cross the app's
+    // own FFI bindings: non-empty, document-ordered, with the exact
+    // settings keys Krita writes, and consistent with the curated
+    // getters derived from the same map.
+    final pmCount = p1.presetParamCount;
+    final paramMap = p1.presetParams();
+    stdout.writeln('  basic-5 param map: $pmCount entries; '
+        'keys=${paramMap.keys.take(8).toList()}');
+    _check(pmCount >= 3, 'basic-5 preset exposes a settings param map '
+        '($pmCount entries)');
+    _check(paramMap.length == pmCount,
+        'presetParams() length == presetParamCount ($pmCount)');
+    _check(paramMap['Krita/opacity'] == '100',
+        "basic-5 map[Krita/opacity] == '100' (master slider)");
+    final masterOpacity = double.tryParse(paramMap['Krita/opacity'] ?? '');
+    _check(masterOpacity != null &&
+            (masterOpacity / 100.0 - p1.currentOpacity).abs() < 1e-9,
+        'map[Krita/opacity] derives currentOpacity '
+        '(${masterOpacity}/100 == ${p1.currentOpacity})');
+    _check(p1.presetParamNameAt(pmCount) == null &&
+            p1.presetParamValueAt(pmCount) == null,
+        'param name/value at index==count is null (bounds kept)');
+    _check(p1.presetParamNameAt(-1) == null,
+        'param name at negative index is null');
     p1.dispose();
 
     // --- stock_eraser_circle: eraser via settings-level CompositeOp ------
@@ -171,6 +197,9 @@ void main(List<String> args) {
     } else {
       _check(false, 'eraser preset dab generated');
     }
+    final emParams = p2.presetParams();
+    _check(emParams['CompositeOp']?.toLowerCase() == 'erase',
+        "eraser map[CompositeOp] == 'erase' (raw settings surface)");
     p2.dispose();
 
     // --- engine-side preset scan (preset-families campaign, 5-loop-47) ---
