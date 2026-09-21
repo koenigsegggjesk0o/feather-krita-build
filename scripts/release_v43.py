@@ -160,7 +160,7 @@ def main():
         if asset in have:
             print('asset already present:', asset)
             continue
-        url = (f'{HEAD}/repos/{REPO}/releases/{rel_id}/assets'
+        url = (f'https://uploads.github.com/repos/{REPO}/releases/{rel_id}/assets'
                f'?name={asset}')
         data = open(out, 'rb').read()
         req = urllib.request.Request(url, data=data, method='POST')
