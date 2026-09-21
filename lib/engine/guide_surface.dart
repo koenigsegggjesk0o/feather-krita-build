@@ -187,6 +187,7 @@ class GuideSurface {
     Vector3? color,
     this.visible = true,
     this.locked = false,
+    this.shapeParams = const <String, num>{},
   })  : transform = transform ?? Matrix4.identity(),
         controlPoints = controlPoints ?? [],
         color = color ?? Vector3(0.4, 0.6, 1.0);
@@ -198,6 +199,13 @@ class GuideSurface {
   Vector3 color;
   bool visible;
   bool locked;
+
+  /// The canonical construction parameters this surface was built with
+  /// (loop-59). Every type factory captures its post-clamp dimensions so
+  /// the .feather writer can persist real shape dimensions in the
+  /// additive guideShape block and [GuideSurface.fromJson] can roundtrip
+  /// them. Empty when built without a capturing factory.
+  final Map<String, num> shapeParams;
 
   /// Inverse of [transform], cached and invalidated on change.
   Matrix4 _inverse = Matrix4.identity();
@@ -231,6 +239,93 @@ class GuideSurface {
       case GuideSurfaceType.customCurve:
         return GuideSurface.plane();
     }
+  }
+
+  /// Builds a surface of [type] from the stored shape parameters of a
+  /// document's additive `guideShape` block (loop-59).
+  ///
+  /// Contract (defaults mirror [forType] exactly):
+  ///  - missing keys fall back to the editor-standard dimensions;
+  ///  - unknown keys and non-numeric values are ignored;
+  ///  - non-finite numbers fall back, negative dimensions mirror the
+  ///    factories' own `.abs()` clamp;
+  ///  - integer tesselation counts floor at a per-key minimum and cap at
+  ///    [kMaxShapeSegments] so a hand-edited file can never ask the mesh
+  ///    builder for a pathological vertex count;
+  ///  - [GuideSurfaceType.customCurve] has no .feather-roundtrippable
+  ///    shape (its control points are not part of the project format),
+  ///    so it rebuilds the same plane [forType] returns.
+  factory GuideSurface.forTypeWithParams(
+    GuideSurfaceType type,
+    Map<String, dynamic>? raw,
+  ) {
+    final p = raw ?? const <String, dynamic>{};
+    switch (type) {
+      case GuideSurfaceType.sphere:
+        return GuideSurface.sphere(
+          radius: _shapeDouble(p, 'radius', 1.4),
+          segments: _shapeInt(p, 'segments', 24, 3),
+          rings: _shapeInt(p, 'rings', 14, 2),
+        );
+      case GuideSurfaceType.cylinder:
+        return GuideSurface.cylinder(
+          radius: _shapeDouble(p, 'radius', 1.0),
+          height: _shapeDouble(p, 'height', 2.0),
+          segments: _shapeInt(p, 'segments', 32, 3),
+        );
+      case GuideSurfaceType.cone:
+        return GuideSurface.cone(
+          radius: _shapeDouble(p, 'radius', 1.0),
+          height: _shapeDouble(p, 'height', 2.0),
+          segments: _shapeInt(p, 'segments', 32, 3),
+        );
+      case GuideSurfaceType.ring:
+        return GuideSurface.ring(
+          majorRadius: _shapeDouble(p, 'majorRadius', 1.0),
+          minorRadius: _shapeDouble(p, 'minorRadius', 0.25),
+          majorSegments: _shapeInt(p, 'majorSegments', 32, 3),
+          minorSegments: _shapeInt(p, 'minorSegments', 12, 3),
+        );
+      case GuideSurfaceType.plane:
+        return GuideSurface.plane(
+          size: _shapeDouble(p, 'size', 2.0),
+          subdivisions: _shapeInt(p, 'subdivisions', 1, 1),
+        );
+      case GuideSurfaceType.customCurve:
+        return GuideSurface.plane(
+          size: _shapeDouble(p, 'size', 2.0),
+          subdivisions: _shapeInt(p, 'subdivisions', 1, 1),
+        );
+    }
+  }
+
+  /// Upper bound for tesselation counts restored from a document.
+  static const int kMaxShapeSegments = 512;
+
+  static double _shapeDouble(
+    Map<String, dynamic> p,
+    String key,
+    double fallback,
+  ) {
+    final v = p[key];
+    if (v is! num) return fallback;
+    final d = v.toDouble();
+    return d.isFinite ? d.abs() : fallback;
+  }
+
+  static int _shapeInt(
+    Map<String, dynamic> p,
+    String key,
+    int fallback,
+    int min,
+  ) {
+    final v = p[key];
+    if (v is! num || !v.isFinite) return fallback;
+    final i = v.round();
+    if (i <= 0) return fallback;
+    return i < min
+        ? min
+        : (i > kMaxShapeSegments ? kMaxShapeSegments : i);
   }
 
   // ----- Factory constructors for each surface type ---------------------
@@ -310,6 +405,11 @@ class GuideSurface {
         indices: indices,
         normals: normals,
       ),
+      shapeParams: <String, num>{
+        'radius': radius,
+        'segments': segments,
+        'rings': rings,
+      },
     );
   }
 
@@ -399,6 +499,11 @@ class GuideSurface {
         indices: indices,
         normals: normals,
       ),
+      shapeParams: <String, num>{
+        'radius': radius,
+        'height': height,
+        'segments': segments,
+      },
     );
   }
 
@@ -461,6 +566,11 @@ class GuideSurface {
         indices: indices,
         normals: normals,
       ),
+      shapeParams: <String, num>{
+        'radius': radius,
+        'height': height,
+        'segments': segments,
+      },
     );
   }
 
@@ -513,6 +623,12 @@ class GuideSurface {
         indices: indices,
         normals: normals,
       ),
+      shapeParams: <String, num>{
+        'majorRadius': majorRadius,
+        'minorRadius': minorRadius,
+        'majorSegments': majorSegments,
+        'minorSegments': minorSegments,
+      },
     );
   }
 
@@ -559,6 +675,10 @@ class GuideSurface {
         indices: indices,
         normals: normals,
       ),
+      shapeParams: <String, num>{
+        'size': size,
+        'subdivisions': subdivisions,
+      },
     );
   }
 
@@ -655,6 +775,11 @@ class GuideSurface {
         normals: normals,
       ),
       controlPoints: controlPoints.map((p) => p.copy()).toList(),
+      shapeParams: <String, num>{
+        'tubeRadius': tubeRadius,
+        'splineSegments': splineSegments,
+        'tubeSegments': tubeSegments,
+      },
     );
   }
 
@@ -803,17 +928,22 @@ class GuideSurface {
   // ----- Serialization --------------------------------------------------
 
   Map<String, dynamic> toJson() {
-    return {
+    final json = <String, dynamic>{
       'type': type.name,
       'transform': transform.storage.toList(),
       'color': [color.x, color.y, color.z],
       'visible': visible,
       'locked': locked,
       'controlPoints': controlPoints.map((p) => p.toJson()).toList(),
-      // We serialize mesh parameters implicitly via the type so that on
-      // load the surface can be regenerated. For non-parametric custom
-      // curves we also store the control points above.
+      // For non-parametric custom curves we also store the control
+      // points above.
     };
+    // Loop-59: carry the canonical construction parameters so a rebuilt
+    // surface keeps its real dimensions, not the type's defaults.
+    if (shapeParams.isNotEmpty) {
+      json['params'] = Map<String, num>.of(shapeParams);
+    }
+    return json;
   }
 
   factory GuideSurface.fromJson(Map<String, dynamic> json) {
@@ -829,27 +959,36 @@ class GuideSurface {
     final locked = json['locked'] as bool? ?? false;
 
     GuideSurface surface;
-    switch (type) {
-      case GuideSurfaceType.sphere:
-        surface = GuideSurface.sphere();
-        break;
-      case GuideSurfaceType.cylinder:
-        surface = GuideSurface.cylinder();
-        break;
-      case GuideSurfaceType.cone:
-        surface = GuideSurface.cone();
-        break;
-      case GuideSurfaceType.ring:
-        surface = GuideSurface.ring();
-        break;
-      case GuideSurfaceType.plane:
-        surface = GuideSurface.plane();
-        break;
-      case GuideSurfaceType.customCurve:
-        surface = controlPoints.isEmpty
-            ? GuideSurface.plane()
-            : GuideSurface.customCurve(controlPoints: controlPoints);
-        break;
+    final rawParams = json['params'];
+    if (rawParams is Map && type != GuideSurfaceType.customCurve) {
+      // Loop-59: stored construction parameters — rebuild with the real
+      // dimensions instead of the type defaults.
+      surface = GuideSurface.forTypeWithParams(type, <String, dynamic>{
+        for (final e in rawParams.entries) e.key.toString(): e.value,
+      });
+    } else {
+      switch (type) {
+        case GuideSurfaceType.sphere:
+          surface = GuideSurface.sphere();
+          break;
+        case GuideSurfaceType.cylinder:
+          surface = GuideSurface.cylinder();
+          break;
+        case GuideSurfaceType.cone:
+          surface = GuideSurface.cone();
+          break;
+        case GuideSurfaceType.ring:
+          surface = GuideSurface.ring();
+          break;
+        case GuideSurfaceType.plane:
+          surface = GuideSurface.plane();
+          break;
+        case GuideSurfaceType.customCurve:
+          surface = controlPoints.isEmpty
+              ? GuideSurface.plane()
+              : GuideSurface.customCurve(controlPoints: controlPoints);
+          break;
+      }
     }
     final transformList = (json['transform'] as List).cast<num>();
     surface.transform = Matrix4.fromList(transformList.map((e) => e.toDouble()).toList());

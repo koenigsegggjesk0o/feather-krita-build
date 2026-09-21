@@ -108,6 +108,30 @@ void main() {
       expect(checkGuideSurfaceParity(null).detail,
           'No guide surface stored — opens as Sphere');
     });
+
+    test('shape-preserved copy is test-locked (loop-59)', () {
+      // Exact + shape block.
+      final exact = checkGuideSurfaceParity('Sphere', hasShapeParams: true);
+      expect(exact.shapeRestored, isTrue);
+      expect(exact.detail,
+          'Sphere — opens exactly as saved (shape preserved)');
+      // Aliased + shape block.
+      final aliased =
+          checkGuideSurfaceParity('torus', hasShapeParams: true);
+      expect(aliased.shapeRestored, isTrue);
+      expect(aliased.detail,
+          '"torus" opens as Ring / Torus (shape preserved)');
+      // Fallback/missing NEVER claim a restored shape: the load path
+      // skips stored params for an unresolvable name.
+      final fallback =
+          checkGuideSurfaceParity('Wobbly', hasShapeParams: true);
+      expect(fallback.shapeRestored, isFalse);
+      expect(fallback.detail,
+          '"Wobbly" is not a known surface — opens as Sphere');
+      final missing = checkGuideSurfaceParity(null, hasShapeParams: true);
+      expect(missing.shapeRestored, isFalse);
+      expect(missing.detail, 'No guide surface stored — opens as Sphere');
+    });
   });
 
   group('scanGuideSurfaceParity (file scan)', () {
@@ -148,6 +172,49 @@ void main() {
       final array = File('${dir.path}${Platform.pathSeparator}array.json');
       array.writeAsStringSync('[1,2,3]');
       expect(scanGuideSurfaceParity(array.path), isNull);
+    });
+
+    test('a document with the guideShape block reports shape preserved (loop-59)',
+        () {
+      final f = File('${dir.path}${Platform.pathSeparator}shaped.feather');
+      f.writeAsStringSync('{"version":2,"fileName":"shaped.feather",'
+          '"guideSurface":"Cylinder",'
+          '"guideShape":{"params":{"radius":1.2,"height":2.4,"segments":32}},'
+          '"strokes":{"strokes":[]}}');
+      final report = scanGuideSurfaceParity(f.path);
+      expect(report, isNotNull);
+      expect(report!.level, GuideSurfaceParityLevel.exact);
+      expect(report.shapeRestored, isTrue);
+      expect(report.detail,
+          'Cylinder — opens exactly as saved (shape preserved)');
+    });
+
+    test('an aliased name with a guideShape block keeps its caveat (loop-59)',
+        () {
+      final f = File('${dir.path}${Platform.pathSeparator}torus.feather');
+      f.writeAsStringSync('{"version":2,"guideSurface":"torus",'
+          '"guideShape":{"params":{"majorRadius":1.2}}}');
+      final report = scanGuideSurfaceParity(f.path);
+      expect(report!.level, GuideSurfaceParityLevel.aliased);
+      expect(report.shapeRestored, isTrue);
+      expect(report.detail, '"torus" opens as Ring / Torus (shape preserved)');
+    });
+
+    test('an empty or corrupt guideShape block does not claim shape (loop-59)',
+        () {
+      final empty = File('${dir.path}${Platform.pathSeparator}empty.feather');
+      empty.writeAsStringSync('{"version":2,"guideSurface":"Sphere",'
+          '"guideShape":{"params":{}}}');
+      expect(scanGuideSurfaceParity(empty.path)!.shapeRestored, isFalse);
+
+      final corrupt =
+          File('${dir.path}${Platform.pathSeparator}badshape.feather');
+      corrupt.writeAsStringSync('{"version":2,"guideSurface":"Sphere",'
+          '"guideShape":"corrupt"}');
+      final report = scanGuideSurfaceParity(corrupt.path);
+      expect(report!.level, GuideSurfaceParityLevel.exact);
+      expect(report.shapeRestored, isFalse);
+      expect(report.detail, 'Sphere — opens exactly as saved');
     });
   });
 }

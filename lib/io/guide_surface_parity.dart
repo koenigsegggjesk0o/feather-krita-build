@@ -21,9 +21,13 @@
 //
 // [checkGuideSurfaceParity] classifies a stored name into the four
 // levels above; [scanGuideSurfaceParity] reads a project file and runs
-// the check on its guideSurface field. Both are pure and synchronous so
-// the dialogs can render the verdict in the same frame and widget tests
-// can assert exact output with no async plumbing.
+// the check on its guideSurface field (loop-59 also reads the additive
+// guideShape block — when present, the exact/aliased detail lines note
+// that the stored shape dimensions are restored too; fallback/missing
+// reports stay without the note because the load path deliberately
+// skips stored params for an unresolvable name). Both are pure and
+// synchronous so the dialogs can render the verdict in the same frame
+// and widget tests can assert exact output with no async plumbing.
 
 import 'dart:convert';
 import 'dart:io';
@@ -63,6 +67,7 @@ class GuideSurfaceParityReport {
     required this.level,
     required this.storedName,
     required this.resolvedType,
+    this.shapeRestored = false,
   });
 
   final GuideSurfaceParityLevel level;
@@ -72,6 +77,12 @@ class GuideSurfaceParityReport {
 
   /// The surface type the restore path will actually build.
   final GuideSurfaceType resolvedType;
+
+  /// Loop-59: true when the document carries the additive guideShape
+  /// params block. Only meaningful for the exact/aliased levels — the
+  /// load path deliberately skips stored params when the name falls
+  /// back, so fallback/missing reports keep this false.
+  final bool shapeRestored;
 
   /// True only when the roundtrip is exactly what the writer emitted.
   bool get isLossless => level == GuideSurfaceParityLevel.exact;
@@ -84,9 +95,13 @@ class GuideSurfaceParityReport {
   String get detail {
     switch (level) {
       case GuideSurfaceParityLevel.exact:
-        return '$surfaceLabel — opens exactly as saved';
+        return shapeRestored
+            ? '$surfaceLabel — opens exactly as saved (shape preserved)'
+            : '$surfaceLabel — opens exactly as saved';
       case GuideSurfaceParityLevel.aliased:
-        return '"$storedName" opens as $surfaceLabel';
+        return shapeRestored
+            ? '"$storedName" opens as $surfaceLabel (shape preserved)'
+            : '"$storedName" opens as $surfaceLabel';
       case GuideSurfaceParityLevel.fallback:
         return '"$storedName" is not a known surface — opens as Sphere';
       case GuideSurfaceParityLevel.missing:
@@ -101,9 +116,14 @@ class GuideSurfaceParityReport {
 /// a null name and an unknown name both end up as a default Sphere, a
 /// known alias keeps its type, and only the canonical display spelling
 /// counts as exact.
-GuideSurfaceParityReport checkGuideSurfaceParity(String? storedName) {
+GuideSurfaceParityReport checkGuideSurfaceParity(
+  String? storedName, {
+  bool hasShapeParams = false,
+}) {
   final type = guideSurfaceTypeFromNameStrict(storedName);
   if (type == null) {
+    // Fallback/missing: the load path skips stored params for an
+    // unresolvable name, so shapeRestored stays false here by design.
     return GuideSurfaceParityReport(
       level: storedName == null
           ? GuideSurfaceParityLevel.missing
@@ -120,6 +140,7 @@ GuideSurfaceParityReport checkGuideSurfaceParity(String? storedName) {
         : GuideSurfaceParityLevel.aliased,
     storedName: storedName,
     resolvedType: type,
+    shapeRestored: hasShapeParams,
   );
 }
 
@@ -135,7 +156,12 @@ GuideSurfaceParityReport? scanGuideSurfaceParity(String path) {
     final dynamic decoded = jsonDecode(f.readAsStringSync());
     if (decoded is! Map<String, dynamic>) return null;
     final raw = decoded['guideSurface'];
-    return checkGuideSurfaceParity(raw is String ? raw : null);
+    final shape = decoded['guideShape'];
+    final params = shape is Map<String, dynamic> ? shape['params'] : null;
+    return checkGuideSurfaceParity(
+      raw is String ? raw : null,
+      hasShapeParams: params is Map && params.isNotEmpty,
+    );
   } catch (_) {
     return null;
   }

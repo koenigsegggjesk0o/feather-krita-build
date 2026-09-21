@@ -15,8 +15,9 @@
 // Loop-58 guide-surface parity: for .feather saves the dialog discloses
 // which guide surface type the document will store (the canonical type
 // name, exactly what the open dialog's parity strip classifies as
-// exact) and that reopening rebuilds the default shape of that type —
-// the .feather format stores the surface's type, not its dimensions.
+// exact). Loop-59 added the additive guideShape block, so the
+// disclosure now also says the shape's dimensions are stored — reopening
+// rebuilds the saved shape, not a type default.
 
 import 'dart:io';
 
@@ -242,7 +243,7 @@ class _SaveAsDialogState extends State<SaveAsDialog> {
                           ),
                           const SizedBox(height: 1),
                           const Text(
-                            'stored by type — reopens with the default shape',
+                            'type + shape dimensions stored — reopens with the saved shape',
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: AppTheme.textTertiary,

@@ -373,4 +373,103 @@ void main() {
       expect(loaded.lightRig.sunElevationDeg, closeTo(state.lightRig.sunElevationDeg, 1e-6));
     });
   });
+
+  group('FeatherProjectDocument guide-surface shape persistence (loop-59)', () {
+    test('a default document captures the editor-standard sphere dims', () {
+      final state = EditorState(fileName: 'Shape.feather');
+      final doc = FeatherProjectDocument.fromEditor(state);
+      expect(doc.hasGuideShape, isTrue);
+      expect(doc.guideShapeParams,
+          {'radius': 1.4, 'segments': 24, 'rings': 14});
+
+      final parsed = FeatherProjectDocument.parse(doc.toJsonString());
+      expect(parsed.hasGuideShape, isTrue);
+      expect(parsed.guideShapeParams, doc.guideShapeParams);
+    });
+
+    test('settings-style dimensions survive save → load exactly', () {
+      final state = EditorState(fileName: 'Cyl.feather')
+        ..setGuideSurface(GuideSurface.cylinder(radius: 1.2, height: 2.4));
+      final doc = FeatherProjectDocument.fromEditor(state);
+      final parsed = FeatherProjectDocument.parse(doc.toJsonString());
+      expect(parsed.guideShapeParams,
+          {'radius': 1.2, 'height': 2.4, 'segments': 32});
+
+      final loaded = EditorState(fileName: 'Y.feather');
+      parsed.applyTo(loaded);
+      expect(loaded.guideSurface.type, GuideSurfaceType.cylinder);
+      expect(loaded.guideSurface.shapeParams,
+          {'radius': 1.2, 'height': 2.4, 'segments': 32});
+      // Same tesselation → same vertex count, and the first vertex is
+      // deterministic from the restored dims (bit-identical here because
+      // 1.2/2.4/32 survive the JSON roundtrip exactly).
+      final reference = GuideSurface.cylinder(radius: 1.2, height: 2.4);
+      expect(
+          loaded.guideSurface.mesh.vertexCount, reference.mesh.vertexCount);
+      expect(loaded.guideSurface.mesh.positions.first.x,
+          reference.mesh.positions.first.x);
+      expect(loaded.guideSurface.mesh.positions.first.y,
+          reference.mesh.positions.first.y);
+      // Contrast with the pre-loop-59 behavior: the type-default rebuild
+      // would have used radius 1.0 / height 2.0.
+      expect(loaded.guideSurface.shapeParams['radius'], isNot(1.0));
+      expect(loaded.guideSurface.shapeParams['height'], isNot(2.0));
+    });
+
+    test('a legacy document without guideShape rebuilds the default shape', () {
+      final legacy = FeatherProjectDocument.parse(
+          '{"version":2,"fileName":"L.feather","guideSurface":"Cylinder",'
+          '"strokes":{"strokes":[],"selectedIds":[],"nextId":1}}');
+      expect(legacy.hasGuideShape, isFalse);
+      final loaded = EditorState(fileName: 'Y.feather');
+      legacy.applyTo(loaded);
+      expect(loaded.guideSurface.type, GuideSurfaceType.cylinder);
+      // Exact pre-loop-59 contract: forType defaults.
+      expect(loaded.guideSurface.shapeParams,
+          {'radius': 1.0, 'height': 2.0, 'segments': 32});
+    });
+
+    test('an unknown surface name deliberately skips the stored params', () {
+      final doc = FeatherProjectDocument.parse(
+          '{"version":2,"fileName":"U.feather","guideSurface":"Hyperboloid",'
+          '"guideShape":{"params":{"radius":9.0}},'
+          '"strokes":{"strokes":[],"selectedIds":[],"nextId":1}}');
+      expect(doc.hasGuideShape, isTrue);
+      final loaded = EditorState(fileName: 'Y.feather');
+      doc.applyTo(loaded);
+      // Fallback contract: default Sphere with the params skipped —
+      // exactly what the parity strip promises ('"Hyperboloid" ... opens
+      // as Sphere').
+      expect(loaded.guideSurface.type, GuideSurfaceType.sphere);
+      expect(loaded.guideSurface.shapeParams,
+          {'radius': 1.4, 'segments': 24, 'rings': 14});
+    });
+
+    test('hand-edited params are sanitized on load', () {
+      final doc = FeatherProjectDocument.parse(
+          '{"version":2,"fileName":"H.feather","guideSurface":"Sphere",'
+          '"guideShape":{"params":{"radius":-3,"segments":0,"rings":1e400}},'
+          '"strokes":{"strokes":[],"selectedIds":[],"nextId":1}}');
+      final loaded = EditorState(fileName: 'Y.feather');
+      doc.applyTo(loaded);
+      final p = loaded.guideSurface.shapeParams;
+      expect(p['radius'], 3.0); // .abs() clamp via _shapeDouble
+      expect(p['segments'], 24); // nonsense → fallback
+      expect(p['rings'], 14); // 1e400 → Infinity → fallback
+      expect(loaded.guideSurface.mesh.vertexCount, greaterThan(0));
+    });
+
+    test('a non-map guideShape block behaves like a pre-loop-59 document', () {
+      final doc = FeatherProjectDocument.parse(
+          '{"version":2,"fileName":"N.feather","guideSurface":"Plane",'
+          '"guideShape":"corrupt",'
+          '"strokes":{"strokes":[],"selectedIds":[],"nextId":1}}');
+      expect(doc.hasGuideShape, isFalse);
+      final loaded = EditorState(fileName: 'Y.feather');
+      doc.applyTo(loaded);
+      expect(loaded.guideSurface.type, GuideSurfaceType.plane);
+      expect(loaded.guideSurface.shapeParams,
+          {'size': 2.0, 'subdivisions': 1});
+    });
+  });
 }

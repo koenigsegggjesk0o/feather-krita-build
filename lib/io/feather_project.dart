@@ -32,6 +32,21 @@
 //                    in a hand-edited file can never degenerate the light.
 //                    Az/el (not the derived direction vector) is what gets
 //                    stored, so the JSON round-trip involves no trig.
+//   guideShape     — OPTIONAL loop-59 extension: {"params": {...}} — the
+//                    canonical construction dimensions of the guide
+//                    surface (radius/segments/rings for a sphere, etc.),
+//                    captured from the live surface by fromEditor. Same
+//                    additive contract as camera/light: older builds
+//                    ignore the unknown key; documents without it rebuild
+//                    the type's editor-standard shape exactly as before.
+//                    On load the params are applied ONLY when the stored
+//                    guideSurface name resolves to a known type — an
+//                    unknown name (parity fallback) deliberately skips
+//                    them so the rebuilt default matches what the open
+//                    dialog's parity strip promises. forTypeWithParams
+//                    floors/caps tesselation counts and mirrors the
+//                    factories' .abs() on dimensions, so hand-edited
+//                    values can never degenerate the mesh.
 //
 // Parsing is tolerant: missing optional fields fall back to sane defaults
 // so v1 documents keep loading after the v2 writer ships.
@@ -73,6 +88,7 @@ class FeatherProjectDocument {
     this.lightAzimuthDeg,
     this.lightElevationDeg,
     this.lightIntensity,
+    this.guideShapeParams,
     List<Stroke>? strokes,
   }) : strokes = strokes ?? <Stroke>[];
 
@@ -119,6 +135,15 @@ class FeatherProjectDocument {
       lightElevationDeg != null &&
       lightIntensity != null;
 
+  /// Optional guide-surface shape dimensions (loop-59). Null when the
+  /// document has no guideShape block; [applyTo] then rebuilds the
+  /// surface exactly as it did before this extension existed.
+  final Map<String, num>? guideShapeParams;
+
+  /// True when a non-empty guideShape params map was present.
+  bool get hasGuideShape =>
+      guideShapeParams != null && guideShapeParams!.isNotEmpty;
+
   final List<Stroke> strokes;
 
   /// The guide surface type for [guideSurfaceName].
@@ -144,6 +169,7 @@ class FeatherProjectDocument {
     final brush = decoded['brush'];
     final cam = decoded['camera'];
     final light = decoded['light'];
+    final shape = decoded['guideShape'];
     final strokesJson = decoded['strokes'];
     final strokeList = strokesJson is Map<String, dynamic>
         ? (strokesJson['strokes'] as List? ?? [])
@@ -205,6 +231,9 @@ class FeatherProjectDocument {
       lightIntensity: light is Map<String, dynamic>
           ? (light['intensity'] as num?)?.toDouble()
           : null,
+      guideShapeParams: _shapeParamsFromJson(
+        shape is Map<String, dynamic> ? shape['params'] : null,
+      ),
       strokes: strokeList
           .whereType<Map<String, dynamic>>()
           .map(Stroke.fromJson)
@@ -235,6 +264,9 @@ class FeatherProjectDocument {
       lightAzimuthDeg: state.lightRig.sunAzimuthDeg,
       lightElevationDeg: state.lightRig.sunElevationDeg,
       lightIntensity: state.lightRig.intensity,
+      guideShapeParams: state.guideSurface.shapeParams.isEmpty
+          ? null
+          : Map<String, num>.of(state.guideSurface.shapeParams),
       strokes: state.strokes.strokes.map((s) => s.copy()).toList(),
     );
   }
@@ -256,10 +288,14 @@ class FeatherProjectDocument {
             '"elevationDeg":${_num(lightElevationDeg!)},'
             '"intensity":${_num(lightIntensity!)}},'
         : '';
+    final shapeJson = hasGuideShape
+        ? '"guideShape":{"params":${jsonEncode(guideShapeParams!)}},'
+        : '';
     return '{"version":$version,'
         '"fileName":"${esc(fileName)}",'
         '"texture":{"width":$textureWidth,"height":$textureHeight},'
         '"guideSurface":"${esc(guideSurfaceName)}",'
+        '$shapeJson'
         '"brush":{"preset":"${esc(brushPreset)}",'
         '"size":${brushSize.toStringAsFixed(2)},'
         '"opacity":${brushOpacity.toStringAsFixed(3)},'
@@ -291,7 +327,18 @@ class FeatherProjectDocument {
       ..setBrushOpacity(brushOpacity)
       ..setBrushColor(brushColor)
       ..setBrushPresetName(brushPreset);
-    state.setGuideSurface(GuideSurface.forType(surfaceType));
+    // Restore the guide surface (loop-59). When the document carries the
+    // additive guideShape block AND the stored surface name resolves to a
+    // known type, rebuild through the stored dimensions. An unknown name
+    // (parity fallback) or a missing block keeps the exact pre-loop-59
+    // behavior — the type's editor-standard shape — matching what the
+    // open dialog's parity strip discloses.
+    final knownSurfaceName = guideSurfaceTypeFromNameStrict(guideSurfaceName);
+    state.setGuideSurface(
+      hasGuideShape && knownSurfaceName != null
+          ? GuideSurface.forTypeWithParams(surfaceType, guideShapeParams!)
+          : GuideSurface.forType(surfaceType),
+    );
 
     final nextId = strokes.fold<int>(1, (m, s) => m > s.id ? m : s.id + 1);
     final snapshot = jsonEncode({
@@ -377,4 +424,16 @@ double? _camTargetAt(Map<String, dynamic> cam, int index) {
   if (t is! List || t.length <= index) return null;
   final v = t[index];
   return v is num ? v.toDouble() : null;
+}
+
+/// Extracts the guideShape params map (loop-59) from a parsed document:
+/// only finite numbers survive, and an absent/invalid/empty map yields
+/// null so the load behaves exactly like a pre-loop-59 document.
+Map<String, num>? _shapeParamsFromJson(dynamic raw) {
+  if (raw is! Map) return null;
+  final out = <String, num>{};
+  raw.forEach((k, v) {
+    if (v is num && v.isFinite) out[k.toString()] = v;
+  });
+  return out.isEmpty ? null : out;
 }

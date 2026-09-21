@@ -329,7 +329,9 @@ void main() {
       await tester.pump();
 
       expect(find.text('Guide surface: Cylinder'), findsOneWidget);
-      expect(find.text('stored by type — reopens with the default shape'),
+      expect(
+          find.text(
+              'type + shape dimensions stored — reopens with the saved shape'),
           findsOneWidget);
 
       // Non-project formats carry no guide-surface row.
