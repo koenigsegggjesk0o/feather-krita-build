@@ -36,6 +36,7 @@ import 'package:vector_math/vector_math_64.dart' hide Colors;
 
 import 'package:feather_krita/theme/app_theme.dart';
 import 'package:feather_krita/state/editor_state.dart';
+import 'package:feather_krita/widgets/glass_slider.dart';
 import 'package:feather_krita/engine/synthetic_dab.dart';
 import 'package:feather_krita/engine/guide_surface.dart';
 import 'package:feather_krita/engine/scene_pipeline.dart';
@@ -405,12 +406,72 @@ class CanvasWidgetState extends State<CanvasWidget>
                   ),
                   // HUD: crosshair + cursor hint.
                   _HudOverlay(state: state, drawing: _drawing),
+                  // Light intensity dial (loop-54): only while the Light
+                  // tool is active. The slider sits above the HUD block
+                  // and wins the gesture arena over the canvas, so
+                  // dragging it never orbits the camera or the sun.
+                  if (state.activeTool == Tool.light)
+                    _LightIntensityPanel(
+                      state: state,
+                      onLightChanged: () {
+                        widget.state.notify();
+                        setState(() {});
+                      },
+                    ),
                 ],
               ),
             ),
           ),
         );
       },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Light intensity panel (loop-54).
+// ---------------------------------------------------------------------------
+
+/// A compact glass slider driving the scene key light's diffuse intensity
+/// while the Light tool is active (loop-54). Until now the HUD's
+/// "power %" readout had no control behind it — the intensity could not
+/// be changed from the UI at all. The rig's own [SceneLightRig.setIntensity]
+/// clamps to [0, 1]; 1% divisions make the keyboard arrows (handled inside
+/// [GlassSlider]) step exactly 1 power point. Positioned above the HUD
+/// block; the slider's own gesture detector wins the arena over the
+/// canvas, so a drag here never orbits the sun or the camera.
+class _LightIntensityPanel extends StatelessWidget {
+  const _LightIntensityPanel({
+    required this.state,
+    required this.onLightChanged,
+  });
+
+  final EditorState state;
+  final VoidCallback onLightChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      left: 12,
+      bottom: 88,
+      child: SizedBox(
+        width: 230,
+        child: GlassSlider(
+          key: const ValueKey('light_intensity_slider'),
+          value: state.lightRig.intensity,
+          min: 0,
+          max: 1,
+          divisions: 100,
+          label: 'Light power',
+          icon: Icons.wb_sunny_outlined,
+          accent: AppTheme.toolLight,
+          valueFormatter: (v) => '${(v * 100).round()}%',
+          onChanged: (v) {
+            state.lightRig.setIntensity(v);
+            onLightChanged();
+          },
+        ),
+      ),
     );
   }
 }

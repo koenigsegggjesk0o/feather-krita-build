@@ -185,6 +185,12 @@ void main() {
     expect(state.activeTool, Tool.light);
     expect(state.showGrid, isTrue);
 
+    // The intensity dial appears with the light tool (loop-54) and was
+    // absent before it.
+    final sliderFinder = find.byKey(const ValueKey('light_intensity_slider'));
+    expect(sliderFinder, findsOneWidget);
+    expect(state.lightRig.intensity, 1.0);
+
     // Drag right + up on the canvas: azimuth increases, elevation rises.
     // The gizmo + HUD light readout render inside the same frame.
     final center = tester.getCenter(find.byType(CanvasWidget));
@@ -202,6 +208,26 @@ void main() {
     expect(state.lightRig.sunElevationDeg, greaterThan(defaultEl));
     expect(find.textContaining('sun '), findsOneWidget,
         reason: 'the HUD must show the live sun azimuth/elevation readout');
+
+    // The dial drives the diffuse intensity: a right drag pins it to the
+    // 100% clamp, a left drag sweeps it to the pure-ambient floor, and
+    // the HUD's power readout follows. Orbiting the sun via the slider
+    // must be impossible — the slider owns the gesture arena.
+    await tester.drag(sliderFinder, const Offset(300, 0));
+    await tester.pump();
+    expect(state.lightRig.intensity, 1.0);
+
+    final azBeforeSweep = state.lightRig.sunAzimuth;
+    final elBeforeSweep = state.lightRig.sunElevationDeg;
+    await tester.drag(sliderFinder, const Offset(-600, 0));
+    await tester.pump();
+    expect(state.lightRig.intensity, 0.0);
+    expect(state.lightRig.sunAzimuth, azBeforeSweep,
+        reason: 'a slider drag must never orbit the sun');
+    expect(state.lightRig.sunElevationDeg, elBeforeSweep,
+        reason: 'a slider drag must never orbit the sun');
+    expect(find.textContaining('power 0%'), findsOneWidget,
+        reason: 'the HUD power readout must follow the slider');
   });
 
   testWidgets('open dialog restores a saved project document', (tester) async {
