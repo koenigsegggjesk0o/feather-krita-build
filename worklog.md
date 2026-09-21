@@ -2430,3 +2430,15 @@ Work Log:
 Stage Summary:
 - Corrected-approach-A is now CI-VALIDATED end-to-end through staging + both audits on real Qt/KF5 artifacts; only the Gradle-side NDK download flake stands between the chain and a hardened APK. Rerun in flight.
 - NEXT (5-loop-68): (1) poll rerun of 35665622608 android job -> expect SUCCESS (NDK re-download usually clean; if the ZIP corruption repeats, it is a CDN-side outage — retry with backoff, consider pinning/priming the NDK via a pre-step using the sdkmanager with --no_https retry loop); (2) on green: poll the auto-fired emulator smoke (expect boot + 90s soak PASSING with the hardened APK — the true end-to-end proof that localizing Qt's JNI_OnLoad hooks does not disturb the bridge's own hook path: MainActivity System.loadLibrary -> our JNI_OnLoad -> VM inject); (3) on full green: release v0.45-android-jni-hardening (release_v44.py convention) OR fold into next milestone; (4) then 5-loop-65 UI follow-ups (active-preset inspector entry, thumbnail caching).
+
+---
+Task ID: 5-loop-67 (addendum — FULL CHAIN GREEN; v0.45-android-jni-hardening RELEASED)
+Agent: Z.ai Code (main, autonomous cron loop)
+
+Work Log:
+- Rerun of build-app 35665622608: android leg cleared the NDK-install flake -> run completed SUCCESS 5/5. Emulator smoke 35667643346 auto-fired and PASSED (apk audit + boot + 90s soak on the HARDENED dual-ABI APK) — end-to-end proof that localizing Qt's JNI_OnLoad hooks leaves the bridge's own hook path fully functional (MainActivity System.loadLibrary -> our JNI_OnLoad -> VM inject -> engine soak).
+- RELEASE v0.45 cut this tick: scripts/release_v45.py (builder 2261fc6, release_v44 idempotent convention) published tag v0.45-android-jni-hardening on the app repo — linux zip 47.5MB + windows real-engine zip 40.2MB + android real-engine APK 191.8MB. First release carrying the 5-loop-65 preset inspector UI + the corrected-approach-A JNI hardening + roadmap (e) cleanup.
+
+Stage Summary:
+- Chain: engine 35651091002 -> build-app 35665622608 (5/5, hardened workflow) -> smoke 35667643346 -> release v0.45. Builder head 2261fc6 (+ release_v45.py); app head 3423bbf + this addendum.
+- NEXT (5-loop-68): (1) 5-loop-65 UI follow-ups — inspector entry point for the ACTIVE preset from the settings panel (short-press/inspector button on the settings panel), thumbnail caching if picker scroll perf regresses; (2) optional: Krita menu/tab feature surface (goal list) — survey the remaining curated-ABI capabilities not yet exposed in UI; (3) watch for double-dispatch after the next mirror sync (push trigger live; cancel twins).
