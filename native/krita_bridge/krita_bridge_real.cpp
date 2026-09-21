@@ -108,7 +108,9 @@
 #if defined(__ANDROID__)
 #include <android/log.h>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <jni.h>
+#include <unistd.h>
 
 // File-scope (internal linkage) so the javaObject() interpose above can
 // serve it; written by the host-init constructor below.
@@ -242,6 +244,100 @@ void* fkr_qt_g_java_vm_slot() {
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// KCatalog probe neutralizer (entry detour) — loop-61 beacon 5 iteration 4.
+//
+// KCatalog::catalogLocaleDir on Android runs a Qt-Extras JNI probe
+// (androidContext() -> callObjectMethod) that aborts the process in a
+// Flutter host (no Qt Activity). The loop-43 harness defeated the probe
+// by PLT-interposing catalogLocaleDir from the solist head; that does NOT
+// transfer to the app: libKF5I18n is a direct DT_NEEDED of this bridge,
+// and bionic resolves a relocation against the CALLING object's local
+// group first — the intra-DSO definition always wins, so no solist-order
+// interposition can take the call (smoke 35632049328 tombstone: the real
+// catalogLocaleDir ran from the KCatalog ctor). The binding-proof counter
+// is to patch the REAL function's entry with a trampoline to our exported
+// interpose, which catches direct, PLT/GOT and any other binding mode.
+// The interpose returns a real empty QString: KLocalizedString finds no
+// catalog and falls back to the source strings (exact harness-green
+// semantics; the engine gates need no translations).
+// Installed once from the host-init ctor (VM-independent) and retried
+// from JNI_OnLoad. Krita source is NEVER touched: this rewrites the
+// process image of the DEPENDENCY at runtime, engine code unchanged.
+// ---------------------------------------------------------------------------
+
+// /proc/self/mem patch helper: bypasses the W^X/RELRO page protections
+// that mprotect-based .text patching cannot cross on modern SELinux app
+// domains. Preflight-reads, writes, and verifies the same bytes back.
+static bool fkr_mem_write(void* dst, const unsigned char* bytes, size_t n,
+                          const char* tag) {
+    int fd = open("/proc/self/mem", O_RDWR);
+    if (fd < 0) {
+        __android_log_print(ANDROID_LOG_INFO, "krita_bridge", "%s: open /proc/self/mem failed", tag);
+        return false;
+    }
+    unsigned char verify[32];
+    bool ok = false;
+    if (n <= sizeof(verify) &&
+        pread(fd, verify, n, static_cast<off_t>(reinterpret_cast<uintptr_t>(dst))) == static_cast<ssize_t>(n) &&
+        pwrite(fd, bytes, n, static_cast<off_t>(reinterpret_cast<uintptr_t>(dst))) == static_cast<ssize_t>(n) &&
+        pread(fd, verify, n, static_cast<off_t>(reinterpret_cast<uintptr_t>(dst))) == static_cast<ssize_t>(n)) {
+        ok = memcmp(verify, bytes, n) == 0;
+    }
+    close(fd);
+    __android_log_print(ANDROID_LOG_INFO, "krita_bridge", "%s: %s", tag,
+                        ok ? "patch verified" : "patch FAILED (read/write/verify)");
+    return ok;
+}
+
+bool fkr_detour_catalog_locale_dir() {
+    static bool s_done = false;
+    if (s_done) return true;
+    const auto log = [](const char* msg) {
+        __android_log_print(ANDROID_LOG_INFO, "krita_bridge", "detour: %s", msg);
+    };
+    // Our exported interpose (the detour target) from the global scope.
+    void* mine = dlsym(RTLD_DEFAULT, "_ZN8KCatalog16catalogLocaleDirERK10QByteArrayRK7QString");
+    if (mine == nullptr) { log("own interpose not exported — skipped"); return false; }
+    // Resolve the REAL definition through libKF5I18n's OWN handle — NOT
+    // RTLD_DEFAULT, which would return this bridge's export first. The
+    // runtime libs carry the Qt-style ABI suffix in their file names.
+    void* h = nullptr;
+    for (const char* name : {"libKF5I18n_x86_64.so", "libKF5I18n_arm64-v8a.so", "libKF5I18n.so"}) {
+        h = dlopen(name, RTLD_NOW | RTLD_NOLOAD);
+        if (h != nullptr) break;
+    }
+    if (h == nullptr) { log("libKF5I18n not loaded yet — retry later"); return false; }
+    void* real = dlsym(h, "_ZN8KCatalog16catalogLocaleDirERK10QByteArrayRK7QString");
+    if (real == nullptr) { log("real catalogLocaleDir not found"); return false; }
+    if (real == mine) { log("interpose already binds first — nothing to patch"); s_done = true; return true; }
+
+    unsigned char code[16] = {0};
+    unsigned n = 0;
+#if defined(__x86_64__)
+    // jmp [rip+0] — the target is read from the 8 bytes after the insn.
+    code[0] = 0xFF; code[1] = 0x25; code[2] = code[3] = code[4] = code[5] = 0x00;
+    memcpy(code + 6, &mine, 8);
+    n = 14;
+#elif defined(__aarch64__)
+    // ldr x17, [pc, #8]; br x17 — target literal follows the branch pair.
+    uint32_t ldr = 0x58000051u;   // LDR X17, #8
+    uint32_t br  = 0xD61F0220u;   // BR X17
+    memcpy(code, &ldr, 4);
+    memcpy(code + 4, &br, 4);
+    memcpy(code + 8, &mine, 8);
+    n = 16;
+#else
+    return false;
+#endif
+    if (fkr_mem_write(real, code, n, "detour")) {
+        s_done = true;
+        log("catalogLocaleDir entry detoured to the bridge interpose");
+        return true;
+    }
+    return false;
+}
+
 // init_array[0] of the merged engine: runs before every Krita/KF5/Qt
 // load-time static (the wrapper TU is the first object on the merge link
 // line). Best-effort at every step; a skipped step only reproduces the
@@ -251,6 +347,10 @@ struct FkrQtHostInit {
         const auto log = [](const char* msg) {
             __android_log_print(ANDROID_LOG_INFO, "krita_bridge", "host-init: %s", msg);
         };
+        // VM-independent probe neutralizer — MUST run before the VM-gated
+        // early return below: in this host the VM only arrives later via
+        // JNI_OnLoad, and the KCatalog probe fires at the first i18n call.
+        fkr_detour_catalog_locale_dir();
         JavaVM* vm = fkr_runtime_vm();
         if (vm == nullptr) { log("no runtime VM found — vminject skipped"); return; }
         void* slot = fkr_qt_g_java_vm_slot();
@@ -302,6 +402,9 @@ jint JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     __android_log_print(ANDROID_LOG_INFO, "krita_bridge",
                         "JNI_OnLoad: step 1 - JavaVM captured %p", vm);
     g_fkr_jni_vm = vm;
+    // Retry the KCatalog probe detour in case the host-init ctor ran
+    // before libKF5I18n was loadable (idempotent; no-op when installed).
+    fkr_detour_catalog_locale_dir();
 
     void* slot = fkr_qt_g_java_vm_slot();
     __android_log_print(ANDROID_LOG_INFO, "krita_bridge",
