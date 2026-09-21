@@ -133,18 +133,40 @@ void* _ZNK17QAndroidJniObject10javaObjectEv(const void* /*this*/) {
     return g_fkr_asset_mgr;
 }
 
+// QString QStandardPaths::writableLocation(QStandardPaths::StandardLocation)
+// — loop-61 boot-wall kill switch. The merged engine's Krita/KF5 statics
+// cache writable locations at load time; the Qt 5.15 android backend
+// routes EVERY location through JNI (testDir() is only a suffix), so a
+// single load-time query needs a registered VM. The bridge is the dlopen
+// TARGET (solist-first), so this definition wins the PLT binding for the
+// whole closure and returns the null QString (null d-pointer) — the same
+// graceful outcome the loop-43 harness produced for a context-less
+// process, without ever reaching the JNI backend. Desktop builds are
+// untouched (guarded by __ANDROID__).
+__attribute__((visibility("default")))
+void _ZN14QStandardPaths16writableLocationENS_16StandardLocationE(
+    void* sret, int /*type*/) {
+    *static_cast<void**>(sret) = nullptr;
+}
+
 } // extern "C"
 
 namespace {
 
 typedef jint (*FkrGetCreatedJavaVMs_t)(JavaVM**, jsize, jsize*);
 
-// Recover the ART VM of this (already Java-hosted) process. libart.so is
-// not a public library but is always mapped in an app process; the dlsym
-// fallback covers runners where it is already in the global solist.
+// Recover the ART VM of this (already Java-hosted) process. Loop-61
+// iteration-2 lesson: dlopen("libart.so") from the app's classloader
+// namespace is BLOCKED (libart is not in public.libraries.txt), so first
+// go through the MAIN EXECUTABLE handle (dlopen(nullptr) = app_process64,
+// whose DT_NEEDED closure contains libart — namespace-safe), then fall
+// back to the direct libart dlopen and a global-scope dlsym.
 JavaVM* fkr_runtime_vm() {
     FkrGetCreatedJavaVMs_t fn = nullptr;
-    if (void* h = dlopen("libart.so", RTLD_NOW | RTLD_GLOBAL)) {
+    if (void* main_exe = dlopen(nullptr, RTLD_NOW | RTLD_GLOBAL)) {
+        fn = reinterpret_cast<FkrGetCreatedJavaVMs_t>(dlsym(main_exe, "JNI_GetCreatedJavaVMs"));
+    }
+    if (!fn && (void* h = dlopen("libart.so", RTLD_NOW | RTLD_GLOBAL))) {
         fn = reinterpret_cast<FkrGetCreatedJavaVMs_t>(dlsym(h, "JNI_GetCreatedJavaVMs"));
     }
     if (!fn) fn = reinterpret_cast<FkrGetCreatedJavaVMs_t>(dlsym(RTLD_DEFAULT, "JNI_GetCreatedJavaVMs"));

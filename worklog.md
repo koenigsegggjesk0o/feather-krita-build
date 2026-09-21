@@ -2199,3 +2199,17 @@ Work Log:
 Stage Summary:
 - The Android boot wall is root-caused to a JNI-dependent static initializer colliding with the Flutter-hosted (no Qt Java side) process, and the loop-43-proven immunity (vminject + interposes) is now baked into the merged engine itself for both ABIs. CI chain in flight: krita-build 35593998599 → build-app → android-smoke (strict).
 - Handoff if interrupted: resume watching run 35593998599; if a leg fails, pull logs via the job API and fix workflow/wrapper ONLY (never Krita source); the local /tmp analysis artifacts (fatapk.zip, bridge_x64/, boot_logs.txt) may be wiped between ticks — the technique is fully described above and re-derivable from the artifact.
+---
+Task ID: 5-loop-61 (beacon 3 — iteration 2: VM discovery was namespace-blocked; writableLocation interpose added as solist-first kill switch)
+Agent: Z.ai Code (main, autonomous loop)
+Task: CI iteration on the emulator boot. Engine rebuild 35593998599 (4/4 green) + build-app 35596994928 (5/5 green) produced the dual-engine APK with the host bootstrap, and apk-audit passed again — but emulator-boot crashed IDENTICALLY (fault 0x0 in QJNIEnvironmentPrivate ctor during the same writableLocation static, culprit moved 0x8c4a90→0x8c50f0 = exactly the insertion delta).
+
+Work Log:
+- ORDERING VERIFIED LOCALLY (artifact bridge, unstripped): init_array entry[0] IS _GLOBAL__sub_I_krita_bridge_real.cpp (the wrapper TU, containing the host-init); the crash ctor sits at index 59/284. My ctor ran and did NOT crash — by elimination the vminject was SKIPPED, and the slot-finder pattern was already loop-43-proven on this exact Qt build → the failing step was VM DISCOVERY: dlopen("libart.so") is BLOCKED from the app's classloader-namespace (libart is not in public.libraries.txt; the loop-43 harness was immune because app_process runs in the default namespace).
+- FIX 1 (namespace-safe VM): fkr_runtime_vm() now tries dlopen(nullptr) FIRST — the main-executable handle (app_process64) whose DT_NEEDED closure contains libart — then libart.so, then RTLD_DEFAULT.
+- FIX 2 (kill switch, VM-independent): the bridge now EXPORTS _ZN14QStandardPaths16writableLocationENS_16StandardLocationE returning the null QString. The bridge is the dlopen TARGET (solist-first), so the PLT binding of the whole closure (including the crashing static's own call site) resolves to the interpose — load-time path caches become empty strings without ever reaching the JNI backend. Desktop untouched.
+- FIX 3 (diagnostics): android_smoke.sh failure dumps now include host-init/krita_bridge logcat lines (builder 0a0f82e).
+- Sequence: wrapper fix3 pushed (app cbf1d0f) → krita-build dispatched (run above, clones app @ cbf1d0f) → build-app → android-smoke. If the boot STILL fails, the evidence dump now shows which host-init step skipped.
+
+Stage Summary:
+- Boot wall narrowed to a namespace-scoped VM discovery failure with a VM-independent kill switch added; CI chain re-running. Same handoff contract as beacon 2 (workflow/wrapper fixes only, Krita source untouched).
