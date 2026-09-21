@@ -28,7 +28,9 @@ adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 \
 
 PID=""
 for i in $(seq 1 40); do
-  PID=$(adb shell pidof "$PKG" | tr -d '\r')
+  # pidof exits 1 when no process matches yet — MUST be non-fatal inside
+  # the poll (set -e would kill the script on the first pre-fork pass).
+  PID=$(adb shell pidof "$PKG" | tr -d '\r' || true)
   if [ -n "$PID" ]; then echo "process alive: $PID (after $((i*10))s)"; break; fi
   sleep 10
 done
@@ -40,7 +42,7 @@ fi
 
 echo 'soak 90s (engine init under ARM translation)...'
 sleep 90
-PID2=$(adb shell pidof "$PKG" | tr -d '\r')
+PID2=$(adb shell pidof "$PKG" | tr -d '\r' || true)
 if [ -z "$PID2" ]; then
   echo 'FATAL: app process died during soak'
   adb logcat -d | grep -E 'FATAL EXCEPTION|AndroidRuntime' | tail -60
