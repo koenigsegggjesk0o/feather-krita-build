@@ -119,11 +119,13 @@ extern "C" {
 // --- proven interposes (verbatim semantics from loop-43 smoke_jni.cpp) ----
 
 // QString KCatalog::catalogLocaleDir(const QByteArray&, const QString&) —
-// sret pointer first; a null d-pointer is the null QString.
+// sret pointer first; loop-61 iteration-3: construct a REAL empty QString
+// (a null d-pointer breaks callers that read d->size directly — Qt5's
+// shared_null is a real static, not a null pointer).
 __attribute__((visibility("default")))
 void _ZN8KCatalog16catalogLocaleDirERK10QByteArrayRK7QString(
     void* sret, const void* /*component*/, const void* /*language*/) {
-    *static_cast<void**>(sret) = nullptr;
+    new (sret) QString();
 }
 
 // jobject QAndroidJniObject::javaObject() const — serves the bootstrapped
@@ -139,14 +141,16 @@ void* _ZNK17QAndroidJniObject10javaObjectEv(const void* /*this*/) {
 // routes EVERY location through JNI (testDir() is only a suffix), so a
 // single load-time query needs a registered VM. The bridge is the dlopen
 // TARGET (solist-first), so this definition wins the PLT binding for the
-// whole closure and returns the null QString (null d-pointer) — the same
-// graceful outcome the loop-43 harness produced for a context-less
-// process, without ever reaching the JNI backend. Desktop builds are
+// whole closure and returns a real EMPTY QString — the same graceful
+// outcome the loop-43 harness produced for a context-less process,
+// without ever reaching the JNI backend. Desktop builds are
 // untouched (guarded by __ANDROID__).
 __attribute__((visibility("default")))
 void _ZN14QStandardPaths16writableLocationENS_16StandardLocationE(
     void* sret, int /*type*/) {
-    *static_cast<void**>(sret) = nullptr;
+    // Real empty QString (shared_null d-pointer) — iteration-3 lesson: a
+    // raw nullptr sret crashed the caller's d->size read at fault 0x4.
+    new (sret) QString();
 }
 
 } // extern "C"
@@ -162,12 +166,22 @@ typedef jint (*FkrGetCreatedJavaVMs_t)(JavaVM**, jsize, jsize*);
 // whose DT_NEEDED closure contains libart — namespace-safe), then fall
 // back to the direct libart dlopen and a global-scope dlsym.
 JavaVM* fkr_runtime_vm() {
+    const auto log = [](const char* msg) {
+        __android_log_print(ANDROID_LOG_INFO, "krita_bridge", "host-init: %s", msg);
+    };
     FkrGetCreatedJavaVMs_t fn = nullptr;
-    if (void* main_exe = dlopen(nullptr, RTLD_NOW | RTLD_GLOBAL)) {
+    void* main_exe = dlopen(nullptr, RTLD_NOW | RTLD_GLOBAL);
+    if (main_exe != nullptr) {
         fn = reinterpret_cast<FkrGetCreatedJavaVMs_t>(dlsym(main_exe, "JNI_GetCreatedJavaVMs"));
+        log(fn ? "JNI_GetCreatedJavaVMs via main-exe handle"
+               : "main-exe handle ok but JNI_GetCreatedJavaVMs not found");
+    } else {
+        log("dlopen(nullptr) failed — cannot walk the main-exe closure");
     }
-    if (!fn && (void* h = dlopen("libart.so", RTLD_NOW | RTLD_GLOBAL))) {
-        fn = reinterpret_cast<FkrGetCreatedJavaVMs_t>(dlsym(h, "JNI_GetCreatedJavaVMs"));
+    if (!fn) {
+        if (void* h = dlopen("libart.so", RTLD_NOW | RTLD_GLOBAL)) {
+            fn = reinterpret_cast<FkrGetCreatedJavaVMs_t>(dlsym(h, "JNI_GetCreatedJavaVMs"));
+        }
     }
     if (!fn) fn = reinterpret_cast<FkrGetCreatedJavaVMs_t>(dlsym(RTLD_DEFAULT, "JNI_GetCreatedJavaVMs"));
     if (!fn) return nullptr;

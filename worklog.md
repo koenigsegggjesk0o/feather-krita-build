@@ -2213,3 +2213,16 @@ Work Log:
 
 Stage Summary:
 - Boot wall narrowed to a namespace-scoped VM discovery failure with a VM-independent kill switch added; CI chain re-running. Same handoff contract as beacon 2 (workflow/wrapper fixes only, Krita source untouched).
+---
+Task ID: 5-loop-61 (beacon 4 — iteration 3: interpose worked but returned a null-d QString; real empty QString fix shipped)
+Agent: Z.ai Code (main, autonomous loop)
+Task: CI iteration. Engine 35601808049 (4/4, after a trivial C++ declaration-in-&&-condition compile fix caught by CI and reproduced/stub-verified locally) + build-app 35605888417 (5/5) + smoke: the boot PROGRESSED past the JNI wall — the writableLocation interpose eliminated every QJNIEnvironmentPrivate frame from the tombstone — but crashed at fault 0x4 one millisecond later.
+
+Work Log:
+- ROOT CAUSE of fault 0x4: my interpose wrote a raw nullptr into the sret slot, i.e. a null d-pointer QString — but Qt5's empty QString is the shared_null STATIC (a real pointer), and the caller (the same load-time path-cache ctor: writableLocation → `+ testDir()` → toUtf8 → d->size read) derefs d->size unguarded → base+4. Backtrace confirmed: crash INSIDE the culprit ctor's continuation, ZERO JNI frames, one ms after 'host-init: no runtime VM found — vminject skipped'.
+- TWO facts banked: (1) the host-init ctor runs FIRST and survives (init_array[0] proven; logcat line visible thanks to the widened smoke dump filter); (2) VM discovery STILL fails even via dlopen(nullptr)+main-exe-closure dlsym — the app_process64 handle either lacks libart in its local group or the namespace hides it; added detailed discovery logging for the next round. VM injection is now a BONUS (the boot is VM-independent by construction); the app-side Kotlin JNI shim remains the fallback (future loop if ever needed).
+- FIX5 (app 39c0115, wrapper-only): both sret interposes now placement-new a REAL empty QString (QString() constructs the shared_null d — the exact object callers expect); fkr_runtime_vm logs each discovery step. Syntax-verified locally for BOTH arch branches (stub jni.h + -fsyntax-only, x86_64 and forced-aarch64).
+- Sequence: fix5 push → krita-build 35608219782 dispatched → build-app → android-smoke.
+
+Stage Summary:
+- The boot wall is now fully mapped: static ctor → writableLocation interpose (VM-independent, solist-first) → real-empty-QString return. Remaining risk: other load-time statics (index 0-283) — all JNI-free per the harness precedent once the path caches resolve; runtime FFI ops are harness-proven. CI chain re-running; same handoff contract (never touch Krita source).
