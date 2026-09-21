@@ -1948,3 +1948,18 @@ Work Log:
 Stage Summary:
 - The Light tool is now a complete controller: drag the canvas to orbit the sun, drag the dial to set the diffuse power — with a live HUD readout for both. The dial reuses the app's glass design language (same component family as the brush flow/hardness sliders), gates on tool activation, and is gesture-isolated from the canvas.
 - NEXT for beacon 2: poll build-app on this push (green → release v0.37-light-power-dial via the release-script pattern @ APP_RUN_ID <green run> APP_SHA <beacon sha>); atomic mirror sync; FINAL beacon.
+
+---
+Task ID: 5-loop-54 (beacon 2 — FINAL: light power dial shipped, v0.37 released)
+Agent: Z.ai Code (main, autonomous loop)
+Task: CI, release, loop closure
+
+Work Log:
+- App-repo runs on the beacon push again failed with the KNOWN no-runner environment classification — IGNORED per the standing note. The AUTHORITATIVE run is on the builder repo: build-app 35564459292 @ 377af6d (mirror of beacon 1 + worklog) GREEN (~9 min).
+- RELEASED v0.37-light-power-dial (release id 392716583, scripts/release_v37.py @ APP_RUN_ID 35564459292, APP_SHA 0faea98): 3 assets uploaded (state=uploaded) — linux real-engine zip 47.4MB, windows real-engine zip 40.2MB, android real-engine APK 119.0MB. Clean first-try release again.
+- Session totals: 2 app commits (0faea98 feature, 2b8ec60 worklog; release script rides this FINAL commit) + 2 builder mirror commits (377af6d beacon 1, this FINAL) + 1 green CI run + 1 release. Analyze 0 err/0 warn (67 infos, AT baseline); suite 163/163 GREEN first try; Krita source byte-identical upstream; analysis_options.yaml and pubspec.lock untouched.
+- No box wipe this loop (recovery was at loop-53 tick start).
+
+Stage Summary:
+- LOOP-54 CLOSED END-TO-END — THE LIGHT POWER DIAL: the HUD's "power %" readout finally has a control behind it. A glassmorphism slider (visible only while the Light tool is active, positioned above the HUD) drives lightRig.intensity through the rig's own [0,1] clamp; the scene re-lights the same frame; 1% divisions give arrow-key stepping; and the dial is gesture-isolated from the canvas (a dial drag can never orbit the sun or the camera — locked by exact-equality test assertions across a full sweep).
+- Handoff notes for 5-loop-55: (1) Feather-3D follow-ups in rough value order: stroke ribbon caps/normals refinement for very short segments, MSAA-ish edge softening for the drawVertices path on close-ups, a light PRESET row (e.g. noon / golden hour / rim) feeding the rig for one-tap setups, guide-surface parity check in open/save dialogs; (2) remaining loop-48/49 candidates stand: emulator smoke wired as a workflow_run auto-trigger after krita-build greens, family-aware FLOW (needs an engine-authoritative no-flow-family list first — do NOT guess); (3) keyboard_shortcuts Ctrl+N/Ctrl+S flake remains live (~1 hang in ~4 runs) — rerun solo, never bisect; (4) app-repo no-runner CI failures classified (environment) — ignore; (5) widget tests keep ALL disk I/O synchronous; TextureImageCache.enabled=false stays in both widget test mains; (6) verify /home/z/fkr-step1 FIRST at every tick (wipes have been frequent), checkpoint commits early and often; atomic mirror_sync.py (GITHUB_TOKEN env only) is the ONLY sync path.
