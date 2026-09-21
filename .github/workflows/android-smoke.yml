@@ -90,9 +90,14 @@ jobs:
           run-id: ${{ steps.src.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: apk
-      - name: KVM check
+      - name: Enable KVM group perms (first boot attempt ran -accel off)
         run: |
-          ls -la /dev/kvm || { echo 'FATAL: /dev/kvm unavailable on this runner'; exit 1; }
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+          [ -w /dev/kvm ] && echo 'KVM writable OK' || echo 'KVM still not writable'
       - name: Boot emulator, install APK, launch, soak
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -101,7 +106,7 @@ jobs:
           arch: x86_64
           profile: pixel_5
           emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -no-snapshot
-          boot-timeout: 900
+          emulator-boot-timeout: 900
           script: |
             APK=$(find apk -name '*.apk' | head -1)
             echo "installing: $APK"
