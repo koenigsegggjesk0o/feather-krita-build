@@ -37,6 +37,18 @@
 // remains the default so every pre-loop-52 call site renders
 // byte-identically.
 //
+// loop-56: silhouette contour feathering. drawVertices rasterizes WITHOUT
+// antialiasing, so the surface's view silhouette is hard-jagged against
+// the background — most visible on close-ups where triangle edges are
+// long. buildSurfaceItems now detects CONTOUR edges of the parent mesh
+// (shared with a back-facing neighbour, or a mesh boundary) and emits a
+// SceneFeather quad per visible segment: the edge extruded
+// kContourFeatherWidthPx along its outward screen normal with a
+// per-vertex alpha ramp from kContourFeatherAlpha × texel alpha at the
+// base to 0 at the rim — a software stand-in for multisampled edges.
+// Interior edges (front-facing neighbour on both sides) emit nothing, so
+// the translucent surface fill is never double-blended.
+//
 // The output primitives are plain data (screen-space), so the caller can
 // draw them with any backend — CustomPainter today, the pluggable
 // hardware renderer later. Pure Dart: no widget bindings, fully unit
@@ -96,6 +108,18 @@ const double kTexSubdivideAreaPx = 2200.0;
 /// barycentric lattice, so each split vertex is projected exactly rather
 /// than lerped in screen space.
 const int kTexSubdivideFactor = 2;
+
+/// Screen-space width of the silhouette contour feather (loop-56). The
+/// feather quad extends this far beyond a contour edge, fading linearly
+/// to transparent — approximating the 1–2 px coverage ramp a multisampled
+/// rasterizer would produce at the same edge.
+const double kContourFeatherWidthPx = 1.5;
+
+/// Alpha ramp start of the contour feather at the base edge (loop-56),
+/// scaled by the local texel alpha: fully-painted surface regions get a
+/// pronounced soft edge, the bare-glass fill (α≈0.35) only a faint halo,
+/// so the feather always continues the surface's own appearance.
+const double kContourFeatherAlpha = 0.6;
 
 /// One drawable primitive in the unified, back-to-front scene list.
 abstract class SceneDrawItem {
@@ -164,6 +188,31 @@ class SceneDot extends SceneDrawItem {
 
   final Offset center;
   final double radius;
+  final Color color;
+}
+
+/// A screen-space silhouette feather quad (loop-56).
+///
+/// (a, b) are the base edge endpoints — ON the surface triangle's
+/// projected contour edge — and (aOuter, bOuter) the same endpoints
+/// extruded kContourFeatherWidthPx along the edge's outward screen
+/// normal. [color] carries the surface's sampled color with the ramp's
+/// BASE alpha; the painter draws the quad as a two-triangle strip whose
+/// outer vertices repeat the color at alpha 0, so per-vertex
+/// interpolation produces the linear fade. Emitted only for CONTOUR
+/// edges (back-facing neighbour or mesh boundary) — interior edges never
+/// feather, so the translucent fill is never double-blended.
+class SceneFeather extends SceneDrawItem {
+  const SceneFeather(this.a, this.b, this.aOuter, this.bOuter, this.color,
+      double depth, int seq)
+      : super(depth, seq);
+
+  final Offset a;
+  final Offset b;
+  final Offset aOuter;
+  final Offset bOuter;
+
+  /// Surface color at the edge midpoint with the ramp's base alpha.
   final Color color;
 }
 
@@ -372,12 +421,29 @@ void _emitSurfaceTri({
   ));
 }
 
+/// Unit outward screen-space normal of the triangle edge a→b whose third
+/// corner is [c]: the perpendicular of (b − a) pointing AWAY from [c].
+/// Direction-independent — traversing the same edge b→a yields the same
+/// unit vector. Returns Offset.zero for a degenerate (zero-length) edge.
+Offset outwardEdgeNormal(Offset a, Offset b, Offset c) {
+  final e = b - a;
+  final len = e.distance;
+  if (len < 1e-9) return Offset.zero;
+  var n = Offset(-e.dy, e.dx) * (1.0 / len);
+  if (n.dx * (c.dx - a.dx) + n.dy * (c.dy - a.dy) > 0) {
+    n = Offset(-n.dx, -n.dy);
+  }
+  return n;
+}
+
 /// Builds the surface pass items (culled + projected triangles), each
 /// carrying perspective-correct UV corners for per-fragment texture
 /// mapping. Screen-large triangles (area > [kTexSubdivideAreaPx]) are
 /// split over a [kTexSubdivideFactor]² world-space barycentric grid so
 /// split vertices are projected exactly and their UVs interpolated
-/// u/w-style ([perspectiveCorrectUv]).
+/// u/w-style ([perspectiveCorrectUv]). Contour edges of the parent mesh
+/// additionally emit silhouette feather quads (loop-56, see
+/// [SceneFeather]).
 List<SceneDrawItem> buildSurfaceItems({
   required SceneSurfaceInput surface,
   required SceneCameraInput camera,
@@ -389,6 +455,124 @@ List<SceneDrawItem> buildSurfaceItems({
   final positions = surface.positions;
   final uvs = surface.uvs;
   var seq = seqStart;
+
+  // ----- loop-56: parent-mesh adjacency for contour detection.
+  // facing[t]: null = degenerate (never rendered), true = front-facing,
+  // false = back-facing. edgeTris maps each undirected parent edge
+  // (packed key) to the ordinals of the triangles sharing it. A
+  // front-facing triangle's edge is a CONTOUR edge when every other
+  // triangle across it is back-facing — or when there is none (mesh
+  // boundary): the view silhouette runs through it. The facing test
+  // duplicates the per-triangle cull below on purpose — the map must be
+  // complete before the first query, and the cull math is two crosses.
+  final parentCount = indices.length ~/ 3;
+  final facing = List<bool?>.filled(parentCount, null);
+  final edgeTris = <int, List<int>>{};
+  int edgeKey(int a, int b) => (math.min(a, b) << 32) | math.max(a, b);
+  for (var t = 0; t < parentCount; t++) {
+    final a = indices[t * 3];
+    final b = indices[t * 3 + 1];
+    final c = indices[t * 3 + 2];
+    final e1 = positions[b] - positions[a];
+    final e2 = positions[c] - positions[a];
+    final n = e1.cross(e2);
+    if (n.length2 < 1e-12) continue; // degenerate → stays null
+    final centroid =
+        (positions[a] + positions[b] + positions[c]).scaled(1.0 / 3.0);
+    facing[t] = n.dot(camera.position - centroid) >= 0;
+    edgeTris.putIfAbsent(edgeKey(a, b), () => <int>[]).add(t);
+    edgeTris.putIfAbsent(edgeKey(b, c), () => <int>[]).add(t);
+    edgeTris.putIfAbsent(edgeKey(c, a), () => <int>[]).add(t);
+  }
+
+  bool isContourEdge(int ia, int ib, int tri) {
+    for (final other in edgeTris[edgeKey(ia, ib)] ?? const <int>[]) {
+      if (other == tri) continue;
+      if (facing[other] ?? false) return false; // front neighbour → interior
+    }
+    return true;
+  }
+
+  // Emits the feather quad for one visible segment of a contour edge.
+  // [outward] is the PARENT edge's unit outward screen normal — segments
+  // of a subdivided edge are collinear with it, so they share the exact
+  // same unit vector (no per-segment fp noise).
+  void emitFeather({
+    required Offset segA,
+    required Offset segB,
+    required Offset outward,
+    required Vector3 worldMid,
+    required Vector2 uvMid,
+  }) {
+    if (outward == Offset.zero) return;
+    if ((segB - segA).distance < 1e-9) return; // degenerate segment
+    final sample = surface.sampleColor(Vector2(uvMid.x, uvMid.y));
+    final baseAlpha = (sample.a * kContourFeatherAlpha).clamp(0.0, 1.0);
+    final color = Color.fromARGB(
+      (baseAlpha * 255.0).round() & 0xff,
+      (sample.r * 255.0).round() & 0xff,
+      (sample.g * 255.0).round() & 0xff,
+      (sample.b * 255.0).round() & 0xff,
+    );
+    items.add(SceneFeather(
+      segA,
+      segB,
+      segA + outward * kContourFeatherWidthPx,
+      segB + outward * kContourFeatherWidthPx,
+      color,
+      camera.view.transform3(worldMid.clone()).z,
+      seq,
+    ));
+    seq++;
+  }
+
+  // Emits silhouette feathers for the contour edges of one front-facing
+  // parent triangle. Unsubdivided: one quad per contour edge. Subdivided:
+  // one quad per lattice boundary segment so the feather tracks the
+  // projected (exact) silhouette. segScreenByEdge/segWorldByEdge/
+  // segUvByEdge are the subdivided per-edge lattice tables (k+1 points
+  // per parent edge, ordered along vi[e]→vi[(e+1)%3]) or null when the
+  // triangle was emitted whole.
+  void emitContourFeathers({
+    required int tri,
+    required List<int> vi,
+    required List<Offset> sc,
+    required List<Vector3> wc,
+    List<List<Offset>>? segScreenByEdge,
+    List<List<Vector3>>? segWorldByEdge,
+    List<List<Vector2>>? segUvByEdge,
+  }) {
+    for (var e = 0; e < 3; e++) {
+      final ia = vi[e];
+      final ib = vi[(e + 1) % 3];
+      if (!isContourEdge(ia, ib, tri)) continue;
+      final outward =
+          outwardEdgeNormal(sc[e], sc[(e + 1) % 3], sc[(e + 2) % 3]);
+      if (outward == Offset.zero) continue;
+      if (segScreenByEdge == null) {
+        emitFeather(
+          segA: sc[e],
+          segB: sc[(e + 1) % 3],
+          outward: outward,
+          worldMid: (wc[e] + wc[(e + 1) % 3]).scaled(0.5),
+          uvMid: (uvs[ia] + uvs[ib]).scaled(0.5),
+        );
+        continue;
+      }
+      final segScreen = segScreenByEdge[e];
+      final segWorld = segWorldByEdge![e];
+      final segUv = segUvByEdge![e];
+      for (var s = 0; s < kTexSubdivideFactor; s++) {
+        emitFeather(
+          segA: segScreen[s],
+          segB: segScreen[s + 1],
+          outward: outward,
+          worldMid: (segWorld[s] + segWorld[s + 1]).scaled(0.5),
+          uvMid: (segUv[s] + segUv[s + 1]).scaled(0.5),
+        );
+      }
+    }
+  }
 
   for (var i = 0; i < indices.length; i += 3) {
     final i0 = indices[i];
@@ -434,6 +618,12 @@ List<SceneDrawItem> buildSurfaceItems({
         screen: [s0.screen, s1.screen, s2.screen],
         uv: baseUv,
         seq: seq++,
+      );
+      emitContourFeathers(
+        tri: i ~/ 3,
+        vi: [i0, i1, i2],
+        sc: [s0.screen, s1.screen, s2.screen],
+        wc: [w0, w1, w2],
       );
       continue;
     }
@@ -491,6 +681,41 @@ List<SceneDrawItem> buildSurfaceItems({
         }
       }
     }
+
+    // loop-56: lattice boundary tables per parent edge, ordered along
+    // the parent edge direction vi[e]→vi[(e+1)%3]:
+    //   e=0 (v0→v1): Q(a, 0)   for a = 0..k
+    //   e=1 (v1→v2): Q(k−b, b) for b = 0..k
+    //   e=2 (v2→v0): Q(0, b)   for b = 0..k  (geometrically v0→v2 — the
+    //     outward normal is traversal-direction independent, so the
+    //     parent edge's unit vector applies unchanged)
+    List<Offset> latScreenEdge(int e) {
+      if (e == 0) return [for (var a = 0; a <= k; a++) ls(a, 0)];
+      if (e == 1) return [for (var b = 0; b <= k; b++) ls(k - b, b)];
+      return [for (var b = 0; b <= k; b++) ls(0, b)];
+    }
+
+    List<Vector3> latWorldEdge(int e) {
+      if (e == 0) return [for (var a = 0; a <= k; a++) lw(a, 0)];
+      if (e == 1) return [for (var b = 0; b <= k; b++) lw(k - b, b)];
+      return [for (var b = 0; b <= k; b++) lw(0, b)];
+    }
+
+    List<Vector2> latUvEdge(int e) {
+      if (e == 0) return [for (var a = 0; a <= k; a++) lu(a, 0)];
+      if (e == 1) return [for (var b = 0; b <= k; b++) lu(k - b, b)];
+      return [for (var b = 0; b <= k; b++) lu(0, b)];
+    }
+
+    emitContourFeathers(
+      tri: i ~/ 3,
+      vi: [i0, i1, i2],
+      sc: [s0.screen, s1.screen, s2.screen],
+      wc: [w0, w1, w2],
+      segScreenByEdge: [latScreenEdge(0), latScreenEdge(1), latScreenEdge(2)],
+      segWorldByEdge: [latWorldEdge(0), latWorldEdge(1), latWorldEdge(2)],
+      segUvByEdge: [latUvEdge(0), latUvEdge(1), latUvEdge(2)],
+    );
   }
   return items;
 }

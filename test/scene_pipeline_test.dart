@@ -5,7 +5,7 @@
 // unified depth-sorted scene pipeline (pure Dart, no widget harness).
 
 import 'dart:math' as math;
-import 'dart:ui' show Color, Size;
+import 'dart:ui' show Color, Offset, Size;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math_64.dart';
@@ -396,6 +396,249 @@ void main() {
       expect(_g(segs[1].color), _g(expected));
       expect(_b(segs[2].color), _b(expected));
       expect(_r(segs[1].color), greaterThan((0x80 * kSceneAmbient).round()));
+    });
+  });
+
+  group('silhouette contour feathering (loop-56)', () {
+    // Small front-facing triangle: world area 0.125 → ≈937 px² on the
+    // test viewport (focal ≈ 519.6 px at distance 6), safely below
+    // kTexSubdivideAreaPx so the emission path is the unsubdivided one.
+    final smallTri = [
+      Vector3(-0.25, -0.25, 0),
+      Vector3(0.25, -0.25, 0),
+      Vector3(0, 0.25, 0),
+    ]; // CCW from +z → faces the camera at (0, 0, 6)
+
+    Offset proj(Vector3 w, SceneCameraInput cam) =>
+        projectScenePoint(w, cam.viewProjection, _viewport)!.screen;
+
+    test('a back-facing neighbour turns all shared edges into contours', () {
+      final cam = _camera();
+      // T1 is T0 with reversed winding: front + back copies sharing ALL
+      // three edges — every T0 edge has a back-facing neighbour across
+      // it, so all three are contour edges. T1 itself is culled and
+      // emits nothing.
+      final surface = SceneSurfaceInput(
+        positions: smallTri,
+        indices: [0, 1, 2, 0, 2, 1],
+        uvs: [
+          Vector2(0, 0),
+          Vector2(1, 0),
+          Vector2(0.5, 1),
+        ],
+        sampleColor: (uv) => const Color(0xFF808080),
+      );
+      final items = buildSurfaceItems(
+          surface: surface, camera: cam, viewport: _viewport, seqStart: 0);
+
+      expect(items.whereType<SceneTri>().length, 1); // T1 is culled
+      final feathers = items.whereType<SceneFeather>().toList();
+      expect(feathers.length, 3); // one per parent edge, none from T1
+
+      // Exact geometry per edge: base ON the projected edge, outer at
+      // +kContourFeatherWidthPx along the outward normal, ramp alpha =
+      // kContourFeatherAlpha × texel alpha, depth = edge midpoint.
+      for (var e = 0; e < 3; e++) {
+        final wa = smallTri[e];
+        final wb = smallTri[(e + 1) % 3];
+        final wc = smallTri[(e + 2) % 3];
+        final sa = proj(wa, cam);
+        final sb = proj(wb, cam);
+        final outward = outwardEdgeNormal(sa, sb, proj(wc, cam));
+        final f = feathers.singleWhere(
+            (f) => (f.a == sa && f.b == sb) || (f.a == sb && f.b == sa));
+        expect(f.aOuter, sa + outward * kContourFeatherWidthPx);
+        expect(f.bOuter, sb + outward * kContourFeatherWidthPx);
+        expect((f.color.a * 255.0).round() & 0xff,
+            (kContourFeatherAlpha * 255.0).round()); // 153
+        expect(_r(f.color), 0x80);
+        expect(_g(f.color), 0x80);
+        expect(_b(f.color), 0x80);
+        final midWorld = (wa + wb).scaled(0.5);
+        expect(f.depth, cam.view.transform3(midWorld.clone()).z);
+        expect(f.depth, -6.0); // z=0 plane sits exactly 6 from the camera
+      }
+      // Deterministic emission: edges in parent order (0,1) → (1,2) →
+      // (2,0), after both triangles.
+      final s0 = proj(smallTri[0], cam);
+      final s1 = proj(smallTri[1], cam);
+      final s2 = proj(smallTri[2], cam);
+      int seqOf(Offset a, Offset b) => feathers
+          .singleWhere((f) => (f.a == a && f.b == b) || (f.a == b && f.b == a))
+          .seq;
+      expect(seqOf(s0, s1), lessThan(seqOf(s1, s2)));
+      expect(seqOf(s1, s2), lessThan(seqOf(s2, s0)));
+    });
+
+    test('an interior edge (front neighbour on both sides) never feathers',
+        () {
+      final cam = _camera();
+      // Two coplanar front-facing triangles sharing edge (0,1): T1 winds
+      // (1,0,3) so its normal also points at the camera. The shared edge
+      // is interior — feathers may only appear on the four BOUNDARY
+      // edges.
+      final surface = SceneSurfaceInput(
+        positions: [
+          ...smallTri,
+          Vector3(0, -0.75, 0), // v3 below the shared edge
+        ],
+        indices: [0, 1, 2, 1, 0, 3],
+        uvs: List.generate(4, (i) => Vector2(i.toDouble(), 0)),
+        sampleColor: (uv) => const Color(0xFF808080),
+      );
+      final items = buildSurfaceItems(
+          surface: surface, camera: cam, viewport: _viewport, seqStart: 0);
+
+      final feathers = items.whereType<SceneFeather>().toList();
+      expect(feathers.length, 4); // (1,2) (2,0) (0,3) (3,1) — NOT (0,1)
+      final sharedA = proj(smallTri[0], cam);
+      final sharedB = proj(smallTri[1], cam);
+      for (final f in feathers) {
+        final onShared = (f.a == sharedA && f.b == sharedB) ||
+            (f.a == sharedB && f.b == sharedA);
+        expect(onShared, isFalse,
+            reason: 'the interior shared edge must never feather');
+      }
+    });
+
+    test('boundary edges (no neighbour) feather like contours', () {
+      final cam = _camera();
+      final items = buildSurfaceItems(
+        surface: SceneSurfaceInput(
+          positions: smallTri,
+          indices: [0, 1, 2],
+          uvs: [Vector2(0, 0), Vector2(1, 0), Vector2(0.5, 1)],
+          sampleColor: (uv) => const Color(0xFF808080),
+        ),
+        camera: cam,
+        viewport: _viewport,
+        seqStart: 0,
+      );
+      expect(items.whereType<SceneTri>().length, 1);
+      expect(items.whereType<SceneFeather>().length, 3);
+      // Degenerate triangle (coincident vertices) is culled wholesale —
+      // no triangles, no feathers.
+      final degenerate = buildSurfaceItems(
+        surface: SceneSurfaceInput(
+          positions: [smallTri[0], smallTri[0], smallTri[2]],
+          indices: [0, 1, 2],
+          uvs: [Vector2(0, 0), Vector2(0, 0), Vector2(0.5, 1)],
+          sampleColor: (uv) => const Color(0xFF808080),
+        ),
+        camera: cam,
+        viewport: _viewport,
+        seqStart: 0,
+      );
+      expect(degenerate, isEmpty);
+    });
+
+    test('close-up subdivision feathers per lattice boundary segment', () {
+      final cam = _camera();
+      // 2×2 world triangle → ≈15000 px² on screen → subdivided with
+      // kTexSubdivideFactor = 2: each boundary parent edge contributes
+      // k = 2 lattice segments → 6 feather quads total.
+      const k = kTexSubdivideFactor;
+      final big = [
+        Vector3(-1, -1, 0),
+        Vector3(1, -1, 0),
+        Vector3(0, 1, 0),
+      ];
+      final items = buildSurfaceItems(
+        surface: SceneSurfaceInput(
+          positions: big,
+          indices: [0, 1, 2],
+          uvs: [Vector2(0, 0), Vector2(1, 0), Vector2(0.5, 1)],
+          sampleColor: (uv) => const Color(0xFF808080),
+        ),
+        camera: cam,
+        viewport: _viewport,
+        seqStart: 0,
+      );
+      expect(items.whereType<SceneTri>().length, k * (k + 1) ~/ 2 +
+          (k - 1) * k ~/ 2); // lattice: upper + lower sub-triangles
+      final feathers = items.whereType<SceneFeather>().toList();
+      expect(feathers.length, 3 * k);
+
+      // Parent-edge outward normals (traversal-direction independent, so
+      // they also cover the e=2 lattice table whose segments run
+      // v0→v2 while the parent edge is v2→v0).
+      final parentOutward = [
+        outwardEdgeNormal(proj(big[0], cam), proj(big[1], cam),
+            proj(big[2], cam)),
+        outwardEdgeNormal(proj(big[1], cam), proj(big[2], cam),
+            proj(big[0], cam)),
+        outwardEdgeNormal(proj(big[2], cam), proj(big[0], cam),
+            proj(big[1], cam)),
+      ];
+
+      // Lattice boundary world points per parent edge, same table the
+      // pipeline builds (edge 0: Q(a,0); edge 1: Q(k−b,b); edge 2:
+      // Q(0,b)).
+      Vector3 q(int a, int b) =>
+          big[0] * (1.0 - (a + b) / k) +
+          big[1] * (a / k) +
+          big[2] * (b / k);
+      final edgePoints = [
+        [for (var a = 0; a <= k; a++) q(a, 0)],
+        [for (var b = 0; b <= k; b++) q(k - b, b)],
+        [for (var b = 0; b <= k; b++) q(0, b)],
+      ];
+
+      for (var e = 0; e < 3; e++) {
+        final pts = edgePoints[e];
+        for (var s = 0; s < k; s++) {
+          final expectA = proj(pts[s], cam);
+          final expectB = proj(pts[s + 1], cam);
+          final f = feathers.singleWhere(
+              (f) => (f.a == expectA && f.b == expectB) ||
+                  (f.a == expectB && f.b == expectA));
+          // Same unit outward normal as the parent edge — collinear
+          // segments must not drift per-segment.
+          expect(f.aOuter, expectA + parentOutward[e] * kContourFeatherWidthPx);
+          expect(f.bOuter, expectB + parentOutward[e] * kContourFeatherWidthPx);
+        }
+      }
+    });
+
+    test('feather alpha scales with the local texel alpha', () {
+      final cam = _camera();
+      final items = buildSurfaceItems(
+        surface: SceneSurfaceInput(
+          positions: smallTri,
+          indices: [0, 1, 2],
+          uvs: [Vector2(0, 0), Vector2(1, 0), Vector2(0.5, 1)],
+          sampleColor: (uv) => const Color.fromARGB(128, 64, 96, 160),
+        ),
+        camera: cam,
+        viewport: _viewport,
+        seqStart: 0,
+      );
+      final f = items.whereType<SceneFeather>().first; // all 3 share the color
+      final expectAlpha =
+          (((128 / 255) * kContourFeatherAlpha) * 255.0).round() & 0xff;
+      expect((f.color.a * 255.0).round() & 0xff, expectAlpha);
+      expect(_r(f.color), 64);
+      expect(_g(f.color), 96);
+      expect(_b(f.color), 160);
+    });
+
+    test('outwardEdgeNormal points away from the interior, both directions',
+        () {
+      // Edge along +x with the triangle above it: outward is −y.
+      final n = outwardEdgeNormal(Offset(0, 0), Offset(10, 0), Offset(0, 5));
+      expect(n.dx, 0.0);
+      expect(n.dy, -1.0);
+      // Traversing the same edge backwards yields the SAME unit vector.
+      final nRev = outwardEdgeNormal(Offset(10, 0), Offset(0, 0), Offset(0, 5));
+      expect(nRev.dx, n.dx);
+      expect(nRev.dy, n.dy);
+      // Edge along +y with the triangle at +x: outward is −x.
+      final n2 = outwardEdgeNormal(Offset(0, 0), Offset(0, 10), Offset(5, 5));
+      expect(n2.dx, -1.0);
+      expect(n2.dy, 0.0);
+      // Degenerate edge carries no direction.
+      expect(outwardEdgeNormal(Offset(1, 1), Offset(1, 1), Offset(0, 0)),
+          Offset.zero);
     });
   });
 }

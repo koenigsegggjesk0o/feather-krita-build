@@ -7,7 +7,9 @@
 //   - Renders the active [GuideSurface] as a backface-culled, depth-sorted
 //     triangle mesh mapped PER FRAGMENT from the rasterized guide texture
 //     (drawVertices + ImageShader; loop-51), falling back to the legacy
-//     per-triangle flat sample while the texture image decodes.
+//     per-triangle flat sample while the texture image decodes. Contour
+//     edges carry a soft silhouette feather quad (loop-56) so the
+//     non-AA drawVertices rasterization reads antialiased.
 //   - Renders all 3D strokes as projected polylines with per-point
 //     thickness, plus the in-progress "live" stroke.
 //   - Draws a ground grid and translucent mirror planes.
@@ -858,6 +860,20 @@ class _ScenePainter extends CustomPainter {
             ..style = PaintingStyle.stroke
             ..strokeWidth = 0.4,
         );
+      } else if (item is SceneFeather) {
+        // loop-56: silhouette contour feather — a two-triangle strip
+        // whose base edge repeats the surface color and whose outer edge
+        // repeats it at alpha 0; per-vertex interpolation produces the
+        // linear coverage ramp that softens the non-AA silhouette into
+        // the background (MSAA-ish edge softening).
+        final faded = item.color.withAlpha(0);
+        final verts = Vertices(
+          VertexMode.triangleStrip,
+          [item.a, item.b, item.aOuter, item.bOuter],
+          colors: [item.color, item.color, faded, faded],
+        );
+        canvas.drawVertices(verts, BlendMode.srcOver, Paint());
+        verts.dispose();
       } else if (item is SceneSegment) {
         canvas.drawLine(
           item.a,
