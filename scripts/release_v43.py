@@ -95,17 +95,22 @@ def main():
     uploads = []
     for name, (asset, ctype) in ARTIFACTS.items():
         zpath = f'/tmp/v43rel/{name}.zip'
-        out = f'/tmp/v43rel/{asset}'
+        # NOTE: out MUST differ from zpath — asset names share the artifact
+        # name, and extracting onto the open archive truncates it mid-read
+        # (the exact EOFError loop this script shipped with).
+        out = f'/tmp/v43rel/payload-{asset}'
         member = None
         want_sz = sizes[name]
-        for attempt in range(3):  # CDN truncation retries
-            subprocess.run(['curl', '-sfL', '--retry', '3', '--retry-all-errors',
-                            '-H', f'Authorization: token {TOKEN}',
-                            f'{HEAD}/repos/{BUILD_REPO}/actions/artifacts/'
-                            f'{wanted[name]}/zip', '-o', zpath], check=True)
-            if os.path.getsize(zpath) != want_sz:
-                print(f'{name}: attempt {attempt+1}: size {os.path.getsize(zpath)} != {want_sz}; retrying...')
+        for attempt in range(4):  # CDN truncation retries
+            tmp = f'{zpath}.t{attempt}'
+            r = subprocess.run(['curl', '-sL', '-H', f'Authorization: token {TOKEN}',
+                                f'{HEAD}/repos/{BUILD_REPO}/actions/artifacts/'
+                                f'{wanted[name]}/zip', '-o', tmp])
+            if r.returncode != 0 or os.path.getsize(tmp) != want_sz:
+                print(f'{name}: attempt {attempt+1}: rc={r.returncode} size '
+                      f'{os.path.getsize(tmp) if os.path.exists(tmp) else 0} != {want_sz}; retrying...')
                 continue
+            os.replace(tmp, zpath)
             try:
                 with zipfile.ZipFile(zpath) as z:
                     cands = [n for n in z.namelist()
