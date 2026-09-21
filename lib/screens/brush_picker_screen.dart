@@ -17,11 +17,16 @@
 //     Each card also carries the paintop family badge (5-loop-42).
 //   - Import .kpp button (delegates to [onImport]).
 //   - Selecting a preset calls [onPick] and closes the sheet.
+//   - Preset inspector (5-loop-65): LONG-PRESS a preset card to open the
+//     engine-authoritative inspector ([showPresetInspector]) — curated
+//     identity fields plus the full raw paintop-settings map from the
+//     5-loop-63 param-map ABI. Picking still works with a plain tap.
 
 import 'package:flutter/material.dart';
 
 import 'package:feather_krita/theme/app_theme.dart';
 import 'package:feather_krita/models/brush_preset.dart';
+import 'package:feather_krita/widgets/preset_inspector_sheet.dart';
 
 /// The brush preset picker.
 class BrushPickerScreen extends StatefulWidget {
@@ -154,6 +159,7 @@ class _BrushPickerScreenState extends State<BrushPickerScreen> {
                           groups: _grouped,
                           activePresetId: widget.activePresetId,
                           onPick: widget.onPick,
+                          onInspect: (p) => showPresetInspector(context, p),
                         )
                       : GridView.builder(
                           gridDelegate: _kPresetGridDelegate,
@@ -167,6 +173,7 @@ class _BrushPickerScreenState extends State<BrushPickerScreen> {
                               onTap: () {
                                 widget.onPick(p);
                               },
+                              onInspect: () => showPresetInspector(context, p),
                             );
                           },
                         ),
@@ -232,11 +239,16 @@ class _FamilySectionedGrid extends StatelessWidget {
     required this.groups,
     required this.activePresetId,
     required this.onPick,
+    required this.onInspect,
   });
 
   final List<MapEntry<String, List<BrushPreset>>> groups;
   final String? activePresetId;
   final ValueChanged<BrushPreset> onPick;
+
+  /// Long-press on any card in this family section opens the inspector
+  /// for that preset (5-loop-65).
+  final void Function(BrushPreset) onInspect;
 
   @override
   Widget build(BuildContext context) {
@@ -259,6 +271,7 @@ class _FamilySectionedGrid extends StatelessWidget {
                   category: _classifyPreset(p),
                   isActive: p.id == activePresetId,
                   onTap: () => onPick(p),
+                  onInspect: () => onInspect(p),
                 );
               },
               childCount: group.value.length,
@@ -517,6 +530,7 @@ class _PresetCard extends StatelessWidget {
     required this.category,
     required this.isActive,
     required this.onTap,
+    required this.onInspect,
   });
 
   final BrushPreset preset;
@@ -524,10 +538,15 @@ class _PresetCard extends StatelessWidget {
   final bool isActive;
   final VoidCallback onTap;
 
+  /// Long-press: opens the engine-authoritative preset inspector
+  /// ([showPresetInspector]) without picking the preset (5-loop-65).
+  final VoidCallback onInspect;
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
+      onLongPress: onInspect,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
         decoration: BoxDecoration(
