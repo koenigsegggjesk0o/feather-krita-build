@@ -27,9 +27,6 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Flutter doctor
-        run: flutter doctor -v
-
       - name: Flutter pub get
         run: flutter pub get
 
@@ -344,6 +341,18 @@ jobs:
             if [ "$ABI" = arm64-v8a ]; then OTHER=x86_64; else OTHER=arm64; fi
             find "krita-engine-$ABI/android/$ABI" -name '*.so' ! -name "*$OTHER*" \
               -exec cp {} "$JLIB/" \;
+            # Android robustness (5-loop-66, corrected-approach-A): the staged
+            # Qt/KF5 runtime .so files export JNI_OnLoad hooks that FindClass
+            # Qt Android bootstrap classes which do NOT exist in a Flutter
+            # APK — if ART's JNI_OnLoad search ever misses our bridge's own
+            # hook it lands on one of those and dies with JNI_ERR (5-loop-61
+            # iter-2 evidence). Rename JNI_OnLoad inside .dynstr of every
+            # staged runtime copy (same byte length => structure-preserving;
+            # GNU objcopy --localize-symbol proven NOT to touch .dynsym) so
+            # libkrita_bridge.so's hook (JavaVM capture + g_javaVm injection)
+            # remains the ONLY dlsym-visible candidate. STAGED COPIES ONLY —
+            # engine artifacts and Krita source stay byte-identical.
+            python3 .github/scripts/localize_jni_onload.py "$JLIB"
             ls -la "$JLIB" | head -40
             NB=$(ls "$JLIB" | wc -l)
             echo "jniLibs/$ABI: $NB files"
@@ -359,6 +368,23 @@ jobs:
           test -n "$RE" || RE=readelf
           bash .github/scripts/android_dt_audit.sh android/app/src/main/jniLibs/arm64-v8a "$RE"
           bash .github/scripts/android_dt_audit.sh android/app/src/main/jniLibs/x86_64 "$RE"
+          # 5-loop-66 gate (corrected-approach-A): JNI_OnLoad must be an
+          # exported dynamic symbol of libkrita_bridge.so ONLY — the staged
+          # Qt runtime hooks were localized at staging (see bundle step);
+          # a GLOBAL/WEAK JNI_OnLoad anywhere else means the hardening was
+          # skipped and ART's BFS can find a crashing Qt hook.
+          for ABI in arm64-v8a x86_64; do
+            for so in android/app/src/main/jniLibs/$ABI/*.so; do
+              EXPORTS=$("$RE" --dyn-syms "$so" 2>/dev/null | awk '$7!="UND" && $8=="JNI_OnLoad" && ($5=="GLOBAL" || $5=="WEAK")')
+              if [ -n "$EXPORTS" ] && [ "$(basename "$so")" != libkrita_bridge.so ]; then
+                echo "FATAL: $(basename "$so") still exports JNI_OnLoad ($ABI)"; exit 1
+              fi
+            done
+            "$RE" --dyn-syms "android/app/src/main/jniLibs/$ABI/libkrita_bridge.so" 2>/dev/null \
+              | awk '$7!="UND" && $8=="JNI_OnLoad" && ($5=="GLOBAL" || $5=="WEAK") {found=1} END {exit found?0:1}' \
+              || { echo "FATAL: libkrita_bridge.so lost its own JNI_OnLoad ($ABI)"; exit 1; }
+          done
+          echo 'OK: JNI_OnLoad exported by libkrita_bridge.so only, both ABIs (Qt hooks localized)'
 
       - name: Build Android APK (release, real engine)
         run: flutter build apk --release
