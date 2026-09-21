@@ -323,7 +323,7 @@ jobs:
           name: krita-brush-engine-android-arm64-v8a
           run-id: ${{ steps.engine_run.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: krita-engine-arm64
+          path: krita-engine-arm64-v8a
 
       - name: Download real-engine artifact (x86_64)
         uses: actions/download-artifact@v4
