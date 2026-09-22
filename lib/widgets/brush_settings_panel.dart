@@ -21,6 +21,14 @@
 //     inspector the picker exposes via long-press, now reachable for
 //     the preset you are ACTUALLY painting with, without leaving the
 //     settings panel.
+//   - Engine params (5-loop-69, roadmap (f) live editing): an
+//     expandable section listing the ACTIVE preset's raw
+//     paintop-settings parameters straight from the LIVE engine, with
+//     tap-to-edit and immediate engine apply. Consumed keys (opacity,
+//     flow, hardness, spacing, smudge, eraser flags) take effect on the
+//     very next dab and re-seed the curated sliders; unknown keys are
+//     recorded engine-side and visible in the inspector. The section
+//     hides entirely on fallback/stripped builds (no engine param map)
 //
 // Every control is wired directly to [EditorState] setters which, in turn,
 // sync to the native Krita brush engine.
@@ -206,6 +214,13 @@ class BrushSettingsPanel extends StatelessWidget {
 
                       // Mirror.
                       _MirrorRow(state: state),
+                      const SizedBox(height: 16),
+
+                      // Live engine params (roadmap (f), 5-loop-69): the
+                      // ACTIVE preset's raw paintop-settings surface from
+                      // the LIVE engine, editable in place. Hides itself
+                      // on fallback/stripped builds.
+                      _EngineParamsSection(state: state),
                     ],
                   ),
                 ),
@@ -676,6 +691,279 @@ class _MirrorToggle extends StatelessWidget {
               fontSize: 13,
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The live paintop-settings param editor (roadmap (f), 5-loop-69).
+///
+/// Lists the ACTIVE preset's raw `<param>` surface exactly as the LIVE
+/// engine holds it ([EditorState.activeEngineParams] — the engine's own
+/// parse, document order), with search-as-you-type and tap-to-edit: the
+/// edit dialog writes through [EditorState.setEngineParam], so consumed
+/// keys take effect on the very next dab and re-seed the curated
+/// sliders, while unknown keys are recorded in the engine's param map
+/// of record (visible in the preset inspector).
+///
+/// Renders NOTHING on fallback/stripped builds: without a native engine
+/// there is no param map to edit — the preset inspector's DART PARSE
+/// view stays the read-only fallback surface. On engine artifacts that
+/// predate the set_param export the map still renders (the getters are
+/// older), but applying an edit shows a "not supported" note instead of
+/// a silently dead edit.
+class _EngineParamsSection extends StatefulWidget {
+  const _EngineParamsSection({required this.state});
+
+  final EditorState state;
+
+  @override
+  State<_EngineParamsSection> createState() => _EngineParamsSectionState();
+}
+
+class _EngineParamsSectionState extends State<_EngineParamsSection> {
+  bool _expanded = false;
+  String _filter = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final params = widget.state.activeEngineParams;
+    // No live engine param map (no native engine / no loaded preset /
+    // fallback bridge): the whole section collapses to nothing.
+    if (params.isEmpty) return const SizedBox.shrink();
+
+    final entries = params.entries.toList();
+    final q = _filter.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? entries
+        : entries
+            .where((e) =>
+                e.key.toLowerCase().contains(q) ||
+                e.value.toLowerCase().contains(q))
+            .toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GestureDetector(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Row(
+            children: [
+              const Icon(Icons.tune_rounded,
+                  size: 14, color: AppTheme.textTertiary),
+              const SizedBox(width: 6),
+              const Text(
+                'Engine params',
+                style: TextStyle(
+                  color: AppTheme.textTertiary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: AppTheme.accentSoft,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                ),
+                child: Text(
+                  '${filtered.length}/${entries.length}',
+                  style: const TextStyle(
+                    color: AppTheme.accent,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              AnimatedRotation(
+                turns: _expanded ? 0.5 : 0.0,
+                duration: const Duration(milliseconds: 120),
+                child: const Icon(Icons.keyboard_arrow_down_rounded,
+                    size: 18, color: AppTheme.textTertiary),
+              ),
+            ],
+          ),
+        ),
+        if (_expanded) ...[
+          const SizedBox(height: 8),
+          TextField(
+            onChanged: (v) => setState(() => _filter = v),
+            style: const TextStyle(
+                color: AppTheme.textPrimary, fontSize: 12),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText:
+                  'Filter ${entries.length} params (name or value)',
+              hintStyle: const TextStyle(
+                  color: AppTheme.textTertiary, fontSize: 11),
+              prefixIcon: const Icon(Icons.search_rounded,
+                  size: 16, color: AppTheme.textTertiary),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              filled: true,
+              fillColor: AppTheme.darkGlassLight,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                borderSide: const BorderSide(color: AppTheme.glassBorder),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                borderSide: const BorderSide(color: AppTheme.glassBorder),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 220),
+            child: filtered.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      'no params match "$_filter"',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          color: AppTheme.textTertiary, fontSize: 11),
+                    ),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: filtered.length,
+                    itemBuilder: (context, i) {
+                      final e = filtered[i];
+                      return _EngineParamRow(
+                        name: e.key,
+                        value: e.value,
+                        onEdit: () => _editParam(context, e.key, e.value),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _editParam(
+      BuildContext context, String name, String value) async {
+    final controller = TextEditingController(text: value);
+    var saved = false;
+    var edited = value;
+    try {
+      saved = await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              backgroundColor: AppTheme.darkGlassLight,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+                side: const BorderSide(color: AppTheme.glassBorder),
+              ),
+              title: Text(
+                name,
+                style: const TextStyle(
+                    color: AppTheme.textPrimary, fontSize: 14),
+              ),
+              content: TextField(
+                controller: controller,
+                autofocus: true,
+                maxLines: null,
+                style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 12,
+                    fontFamily: 'monospace'),
+                decoration: const InputDecoration(
+                  hintText: 'raw settings value',
+                  hintStyle:
+                      TextStyle(color: AppTheme.textTertiary, fontSize: 11),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Apply'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      edited = controller.text;
+    } finally {
+      controller.dispose();
+    }
+    if (!saved) return;
+    final ok = widget.state.setEngineParam(name, edited);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Live param editing is not supported by this engine build'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+}
+
+/// One row of the engine-params list: monospace name, ellipsised raw
+/// value (sensor-curve blobs can be kilobytes — the edit dialog shows
+/// the full text), tap to edit.
+class _EngineParamRow extends StatelessWidget {
+  const _EngineParamRow({
+    required this.name,
+    required this.value,
+    required this.onEdit,
+  });
+
+  final String name;
+  final String value;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onEdit,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 2,
+              child: Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontSize: 10.5,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              flex: 3,
+              child: Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 10.5,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.edit_outlined,
+                size: 12, color: AppTheme.textTertiary),
+          ],
         ),
       ),
     );

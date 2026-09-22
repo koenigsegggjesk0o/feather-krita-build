@@ -553,6 +553,19 @@ PORTABLE_API const char* krita_brush_preset_param_value(KritaBrushContext* handl
     return nullptr;
 }
 
+// Live paintop-settings param editing (roadmap (f)) is a real-engine
+// capability: the portable bridge has no param map to edit, so the
+// setter always reports "not supported" (bindings treat false as the
+// capability probe, same degrade contract as the param getters above).
+PORTABLE_API int32_t krita_brush_set_param(KritaBrushContext* handle,
+                                           const char* name,
+                                           const char* value) {
+    (void)handle;
+    (void)name;
+    (void)value;
+    return 0;
+}
+
 PORTABLE_API bool krita_brush_generate_dab(KritaBrushContext* handle,
                                            const BrushInput* input,
                                            BrushDab* out_dab) {

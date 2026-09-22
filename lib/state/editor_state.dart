@@ -528,6 +528,57 @@ class EditorState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ----- Live paintop-settings param editing (roadmap (f), 5-loop-69) --
+
+  /// The ACTIVE preset's paintop-settings parameters straight from the
+  /// LIVE native engine (roadmap (f)). Empty when no native engine
+  /// exists (stripped/fallback builds) or no preset is loaded — the
+  /// settings panel hides its param-editing section in that case; the
+  /// preset inspector's DART PARSE view remains the read-only fallback
+  /// surface.
+  Map<String, String> get activeEngineParams {
+    final e = _brushEngine;
+    if (e == null) return const <String, String>{};
+    try {
+      if (e.presetParamCount <= 0) return const <String, String>{};
+      return e.presetParams();
+    } catch (_) {
+      return const <String, String>{};
+    }
+  }
+
+  /// Sets a paintop-settings parameter on the LIVE engine by name
+  /// (roadmap (f) live editing). Returns false when no engine exists,
+  /// the loaded engine artifact predates the set_param ABI, or the
+  /// engine rejects the edit — callers surface that as "not supported"
+  /// rather than a dead edit. On success the curated UI fields the edit
+  /// may have moved are re-read from the engine (same clamp policy as
+  /// the [loadBrushPreset] re-seed) so the sliders track the change,
+  /// and listeners are notified.
+  bool setEngineParam(String name, String value) {
+    final e = _brushEngine;
+    if (e == null) return false;
+    final ok = e.setParam(name, value);
+    if (!ok) return false;
+    try {
+      if (e.currentSize > 0) _brushSize = e.currentSize.clamp(1.0, 500.0);
+      if (e.currentOpacity > 0) {
+        _brushOpacity = e.currentOpacity.clamp(0.0, 1.0);
+      }
+      if (e.currentSpacing > 0) {
+        _brushSpacing = e.currentSpacing.clamp(0.0, 1.0);
+      }
+      _brushSmudge = e.currentSmudge.clamp(0.0, 1.0);
+      _brushFlow = e.currentFlow.clamp(0.0, 1.0);
+      _brushHardness = e.currentHardness.clamp(0.0, 1.0);
+    } catch (_) {
+      // Getters from an older bridge may be missing — the edit itself
+      // already succeeded; the sliders keep their previous values.
+    }
+    notifyListeners();
+    return true;
+  }
+
   /// Sets the brush-smoothing (stabilizer) strength in [0, 1]. Loop-25.
   /// 0 disables smoothing (raw stroke path); 1 applies the maximum
   /// symmetric moving-average window. The value is read by

@@ -316,6 +316,17 @@ typedef _KritaPresetParamEntryNative = Pointer<Utf8> Function(
 typedef _KritaPresetParamEntryDart = Pointer<Utf8> Function(
     Pointer<Void> handle, int index);
 
+// Live param editing (roadmap (f), 5-loop-69): sets a paintop-settings
+// param by NAME on the loaded preset. The real bridge returns 1 on
+// success (the edit is recorded in the param map of record AND applied
+// to the live brush state for consumed keys). The portable/fallback
+// bridges always return 0 — the Dart side treats false as the
+// capability probe.
+typedef _KritaBrushSetParamNative = Int32 Function(
+    Pointer<Void> handle, Pointer<Utf8> name, Pointer<Utf8> value);
+typedef _KritaBrushSetParamDart = int Function(
+    Pointer<Void> handle, Pointer<Utf8> name, Pointer<Utf8> value);
+
 typedef _KritaBrushGetSizeNative = Double Function(Pointer<Void> handle);
 typedef _KritaBrushGetSizeDart = double Function(Pointer<Void> handle);
 
@@ -330,6 +341,9 @@ typedef _KritaBrushGetHardnessDart = double Function(Pointer<Void> handle);
 
 typedef _KritaBrushGetFlowNative = Double Function(Pointer<Void> handle);
 typedef _KritaBrushGetFlowDart = double Function(Pointer<Void> handle);
+
+typedef _KritaBrushGetSmudgeNative = Double Function(Pointer<Void> handle);
+typedef _KritaBrushGetSmudgeDart = double Function(Pointer<Void> handle);
 
 typedef _KritaBrushGetEraserNative = Bool Function(Pointer<Void> handle);
 typedef _KritaBrushGetEraserDart = bool Function(Pointer<Void> handle);
@@ -551,6 +565,12 @@ class KritaBrushEngine {
   late final _KritaPresetParamEntryDart _presetParamValueAt = _lib
       .lookupFunction<_KritaPresetParamEntryNative, _KritaPresetParamEntryDart>(
           'krita_brush_preset_param_value');
+  late final _KritaBrushSetParamDart _setParam = _lib.lookupFunction<
+      _KritaBrushSetParamNative,
+      _KritaBrushSetParamDart>('krita_brush_set_param');
+  late final _KritaBrushGetSmudgeDart _getSmudge = _lib
+      .lookupFunction<_KritaBrushGetSmudgeNative, _KritaBrushGetSmudgeDart>(
+          'krita_brush_get_smudge');
 
   /// The brush diameter currently set on the native engine.
   double get currentSize {
@@ -583,6 +603,16 @@ class KritaBrushEngine {
   double get currentFlow {
     _checkAlive();
     return _getFlow(_handle);
+  }
+
+  /// The smudge rate currently set on the native engine, in [0, 1]
+  /// (default 0.0). Mirrors [krita_brush_get_smudge], which the C ABI
+  /// has always exported — the Dart getter just was not needed until the
+  /// live param editor (5-loop-69) started re-syncing sliders from
+  /// engine-side edits.
+  double get currentSmudge {
+    _checkAlive();
+    return _getSmudge(_handle);
   }
 
   /// Whether the loaded preset is an eraser preset (settings-level
@@ -661,6 +691,44 @@ class KritaBrushEngine {
         valuePtr == nullptr ? '' : valuePtr.toDartString(),
       );
     }));
+  }
+
+  /// Sets a paintop-settings-level parameter of the loaded preset by
+  /// NAME (roadmap (f) live param editing, 5-loop-69). The real bridge
+  /// records the (name, value) pair in its param map of record (visible
+  /// through [presetParams]) and applies the live effect for consumed
+  /// keys — Krita/opacity (0-100), OpacityValue/opacity/brush_opacity
+  /// (0-1), FlowValue/flow (0-1), hardness (0-1, rebuilds the tip),
+  /// SoftnessValue/softness (0-1 complement, rebuilds the tip),
+  /// brush_spacing (0-5], SmudgeRateValue/smudge_rate/smudge (0-1),
+  /// Krita/erase / EraserMode / eraser ("true"/"1") and CompositeOp
+  /// ("erase"). Unknown names are recorded and return true — the
+  /// wrapper's dab model simply has no dimension for them.
+  ///
+  /// Returns false when the bridge rejects the edit (no preset loaded,
+  /// empty name) OR when the loaded engine artifact predates the
+  /// export: the symbol lookup throws [ArgumentError] on such builds
+  /// (staged engines from before this ABI addition, e.g. the v0.45
+  /// release), which this method catches and reports as "not
+  /// supported". Throws [ArgumentError] for an empty [name] argument
+  /// before touching the engine.
+  bool setParam(String name, String value) {
+    if (name.trim().isEmpty) {
+      throw ArgumentError.value(name, 'name', 'must not be empty');
+    }
+    _checkAlive();
+    final namePtr = name.toNativeUtf8();
+    final valuePtr = value.toNativeUtf8();
+    try {
+      return _setParam(_handle, namePtr, valuePtr) != 0;
+    } on ArgumentError {
+      // Engine artifact predates krita_brush_set_param — live param
+      // editing is not available on this build.
+      return false;
+    } finally {
+      calloc.free(namePtr);
+      calloc.free(valuePtr);
+    }
   }
 
   /// Sets the brush diameter in pixels.

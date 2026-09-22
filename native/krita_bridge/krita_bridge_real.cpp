@@ -1228,6 +1228,85 @@ const char* krita_brush_preset_param_value(KritaBrushContext* handle,
     return handle->paramValueBuffer.c_str();
 }
 
+int32_t krita_brush_set_param(KritaBrushContext* handle, const char* name,
+                              const char* value) {
+    if (!handle || !name || !value) return 0;
+    if (handle->presetName.isEmpty()) return 0;  // no preset loaded yet
+
+    const QString key = QString::fromUtf8(name);
+    if (key.trimmed().isEmpty()) return 0;
+    const QString raw = QString::fromUtf8(value);
+
+    // 1) Record the edit in the param map of record — replace the
+    //    existing entry or append at the end (same policy as the
+    //    loadPreset capture), so the getters immediately reflect it.
+    const std::string k = key.toStdString();
+    const std::string v = value;
+    bool replaced = false;
+    for (auto& kv : handle->presetParams) {
+        if (kv.first == k) {
+            kv.second = v;
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced) handle->presetParams.emplace_back(k, v);
+
+    // 2) Apply the live effect for keys the engine consumes. The bounds
+    //    and alias semantics mirror the loadPreset consumption exactly;
+    //    out-of-range values are recorded in the map (step 1) but leave
+    //    the live state untouched, like loadPreset skipping bad values.
+    //    Hardness edits rebuild the auto brush ALWAYS (an explicit
+    //    override supersedes a preset-loaded brush — mirrors
+    //    krita_brush_set_hardness / the loop-37 self-heal path).
+    const bool truthy = raw.compare("true", Qt::CaseInsensitive) == 0 ||
+                        raw == "1" || raw == "1.0";
+    bool ok = false;
+    double v = 0.0;
+    if (key == QLatin1String("Krita/opacity")) {
+        v = raw.toDouble(&ok);
+        if (ok && v >= 0.0 && v <= 100.0) handle->opacity = v / 100.0;
+    } else if (key == QLatin1String("OpacityValue") ||
+               key == QLatin1String("opacity") ||
+               key == QLatin1String("brush_opacity")) {
+        v = raw.toDouble(&ok);
+        if (ok && v > 0.0 && v <= 1.0) handle->opacity = v;
+    } else if (key == QLatin1String("FlowValue") ||
+               key == QLatin1String("flow")) {
+        v = raw.toDouble(&ok);
+        if (ok && v >= 0.0 && v <= 1.0) handle->flow = v;
+    } else if (key == QLatin1String("hardness")) {
+        v = raw.toDouble(&ok);
+        if (ok && v >= 0.0 && v <= 1.0) {
+            handle->hardness = v;
+            if (ensureEngine(handle)) rebuildAutoBrush(handle);
+        }
+    } else if (key == QLatin1String("SoftnessValue") ||
+               key == QLatin1String("softness")) {
+        v = raw.toDouble(&ok);
+        if (ok && v >= 0.0 && v <= 1.0) {
+            handle->hardness = 1.0 - v;
+            if (ensureEngine(handle)) rebuildAutoBrush(handle);
+        }
+    } else if (key == QLatin1String("brush_spacing")) {
+        v = raw.toDouble(&ok);
+        if (ok && v > 0.0 && v <= 5.0) handle->spacing = v;
+    } else if (key == QLatin1String("SmudgeRateValue") ||
+               key == QLatin1String("smudge_rate") ||
+               key == QLatin1String("smudge")) {
+        v = raw.toDouble(&ok);
+        if (ok && v >= 0.0 && v <= 1.0) handle->smudge = v;
+    } else if (key == QLatin1String("Krita/erase") ||
+               key == QLatin1String("EraserMode") ||
+               key == QLatin1String("eraser")) {
+        handle->eraser = truthy;
+    } else if (key == QLatin1String("CompositeOp")) {
+        handle->eraser = raw.compare("erase", Qt::CaseInsensitive) == 0;
+    }
+    // Unknown keys: recorded in the map only (no dab-model dimension).
+    return 1;
+}
+
 bool krita_brush_generate_dab(KritaBrushContext* handle,
                               const BrushInput* input,
                               BrushDab* out_dab) {

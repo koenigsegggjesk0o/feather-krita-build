@@ -294,6 +294,33 @@ KRITA_BRIDGE_API const char* krita_brush_preset_param_name(KritaBrushContext* ha
 /// back-compat: new function.
 KRITA_BRIDGE_API const char* krita_brush_preset_param_value(KritaBrushContext* handle, int32_t index);
 
+/// Sets a paintop-settings-level parameter of the last successfully
+/// loaded preset by NAME (roadmap (f) live param editing). The
+/// (name, value) pair first updates the engine's param map of record
+/// (immediately visible through krita_brush_preset_param_count / _name /
+/// _value), then — for keys the engine actually consumes — is applied to
+/// the live brush state, mirroring the load_preset consumption exactly:
+///   Krita/opacity (0-100) | OpacityValue | opacity | brush_opacity
+///       (0-1)                                      -> master opacity
+///   FlowValue | flow (0-1)                         -> per-dab flow
+///   hardness (0-1) | SoftnessValue | softness (0-1, complement)
+///       -> tip fade (rebuilds the auto brush, superseding a
+///       preset-loaded brush exactly like krita_brush_set_hardness)
+///   brush_spacing (0-5]                            -> dab spacing
+///   SmudgeRateValue | smudge_rate | smudge (0-1)   -> smudge rate
+///   Krita/erase | EraserMode | eraser ("true"/"1") or
+///       CompositeOp ("erase")                      -> eraser flag
+/// Unknown names still update the map and return 1: the settings-level
+/// value is recorded, the wrapper's dab model simply has no dimension
+/// for it (the inspector shows the recorded value). Returns 0 on null
+/// arguments, an empty name, or when no preset was loaded. The portable
+/// and fallback bridges return 0 unconditionally (capability probe:
+/// bindings treat false as "live param editing not supported on this
+/// bridge"). Back-compat: new function, no struct layout change.
+KRITA_BRIDGE_API int32_t krita_brush_set_param(KritaBrushContext* handle,
+                                               const char* name,
+                                               const char* value);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

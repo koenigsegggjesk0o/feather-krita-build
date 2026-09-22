@@ -222,6 +222,66 @@ extern "C" int smoke_main(int argc, char** argv) {
         } else {
             CHECK(false, "preset dab generated");
         }
+
+        // ----------------------------------------------------------------
+        // Live paintop-settings param editing (roadmap (f), set_param
+        // ABI). The setter must (1) update the param map of record and
+        // (2) apply the live effect for keys the engine consumes, with
+        // the same alias/bounds semantics as the loadPreset consumption.
+        // Runs for EVERY fixture (before destroy, after the dab gates so
+        // it cannot disturb the fixture-specific expectations above).
+        // ----------------------------------------------------------------
+        {
+            const int32_t before = krita_brush_preset_param_count(p);
+            CHECK(before > 0, "param map populated before set_param");
+
+            // Master opacity: Krita/opacity is the 0-100 slider value.
+            CHECK(krita_brush_set_param(p, "Krita/opacity", "55") == 1,
+                  "set_param(Krita/opacity,55) accepted");
+            CHECK(std::fabs(krita_brush_get_opacity(p) - 0.55) < 1e-9,
+                  "set_param(Krita/opacity) drives live opacity 0.55");
+            {
+                int32_t found = -1;
+                const int32_t n = krita_brush_preset_param_count(p);
+                for (int32_t i = 0; i < n; ++i) {
+                    const char* pn = krita_brush_preset_param_name(p, i);
+                    if (pn && std::strcmp(pn, "Krita/opacity") == 0) {
+                        found = i;
+                        break;
+                    }
+                }
+                CHECK(found >= 0, "Krita/opacity present in map after edit");
+                CHECK(found < 0 ||
+                          std::strcmp(krita_brush_preset_param_value(p, found),
+                                      "55") == 0,
+                      "param map of record reads the edited value");
+            }
+
+            // Flow: FlowValue is the per-dab application rate base.
+            CHECK(krita_brush_set_param(p, "FlowValue", "0.25") == 1,
+                  "set_param(FlowValue,0.25) accepted");
+            CHECK(std::fabs(krita_brush_get_flow(p) - 0.25) < 1e-9,
+                  "set_param(FlowValue) drives live flow 0.25");
+
+            // Hardness: rebuilds the auto brush (override supersedes the
+            // preset-loaded brush — mirrors krita_brush_set_hardness).
+            CHECK(krita_brush_set_param(p, "hardness", "0.9") == 1,
+                  "set_param(hardness,0.9) accepted");
+            CHECK(std::fabs(krita_brush_get_hardness(p) - 0.9) < 1e-9,
+                  "set_param(hardness) drives live hardness 0.9");
+
+            // Unknown key: accepted and recorded, map grows by exactly one.
+            CHECK(krita_brush_set_param(p, "ColorSource/Type", "random") == 1,
+                  "set_param(unknown key) accepted (recorded in map)");
+            CHECK(krita_brush_preset_param_count(p) == before + 1,
+                  "unknown key appended to param map exactly once");
+
+            // Capability/argument rejection arms.
+            CHECK(krita_brush_set_param(p, "", "1") == 0,
+                  "set_param rejects an empty name");
+            CHECK(krita_brush_set_param(p, "Krita/opacity", nullptr) == 0,
+                  "set_param rejects a null value");
+        }
         krita_brush_destroy(p);
     }
 
