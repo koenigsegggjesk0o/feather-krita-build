@@ -52,6 +52,76 @@
 #include <KoColorSpaceRegistry.h>    // libs/pigment
 #include <KritaVersionWrapper.h>     // libs/version
 
+// ---------------------------------------------------------------------------
+// Stroke-session ABI (phase F1) — the REAL paintop pipeline.
+// KisPaintOpRegistry is the exact dispatcher desktop Krita uses; the
+// paintop factories below are the same ones the paintop plugins'
+// constructors register through KSycoca on desktop (verified against
+// plugins/paintops/*/[plugin ctor].cpp in the unmodified v6.0.4 tree).
+// Headless there is no KSycoca, so the bridge registers them itself —
+// Krita source is never modified.
+// ---------------------------------------------------------------------------
+#include <brushengine/kis_paintop_registry.h>   // libs/image/brushengine
+#include <brushengine/kis_paintop_preset.h>     // libs/image/brushengine
+#include <kis_painter.h>                        // libs/image
+#include <kis_paint_device.h>                   // libs/image
+#include <kis_paint_layer.h>                    // libs/image
+#include <kis_image.h>                          // libs/image
+#include <kis_distance_information.h>           // libs/image
+#include <KoCompositeOpRegistry.h>              // COMPOSITE_COPY / COMPOSITE_OVER
+
+#include "kis_simple_paintop_factory.h"         // plugins/paintops/libpaintop
+
+// Paintop families (private plugin headers; the linked plugin libraries
+// carry the implementations — registration mirrors their own ctors).
+#include "kis_brushop.h"                        // defaultpaintops/brush
+#include "KisBrushOpSettings.h"
+#include "kis_brushop_settings_widget.h"
+#include "kis_duplicateop.h"                    // defaultpaintops/duplicate
+#include "kis_duplicateop_settings.h"
+#include "kis_duplicateop_settings_widget.h"
+#include "kis_hairy_paintop.h"                  // hairy
+#include "kis_hairy_paintop_settings.h"
+#include "kis_hairy_paintop_settings_widget.h"
+#include "kis_deform_paintop.h"                 // deform
+#include "kis_deform_paintop_settings.h"
+#include "kis_deform_paintop_settings_widget.h"
+#include "kis_curve_paintop.h"                  // curvebrush
+#include "kis_curve_paintop_settings.h"
+#include "kis_curve_paintop_settings_widget.h"
+#include "kis_spray_paintop.h"                  // spray
+#include "kis_spray_paintop_settings.h"
+#include "kis_spray_paintop_settings_widget.h"
+#include "kis_filterop.h"                       // filterop
+#include "kis_filterop_settings.h"
+#include "kis_filterop_settings_widget.h"
+#include "kis_experiment_paintop.h"             // experiment
+#include "kis_experiment_paintop_settings.h"
+#include "kis_experiment_paintop_settings_widget.h"
+#include "kis_particle_paintop.h"               // particle
+#include "kis_particle_paintop_settings.h"
+#include "kis_particle_paintop_settings_widget.h"
+#include "kis_grid_paintop.h"                   // gridbrush
+#include "kis_grid_paintop_settings.h"
+#include "kis_grid_paintop_settings_widget.h"
+#include "kis_hatching_paintop.h"               // hatching
+#include "kis_hatching_paintop_settings.h"
+#include "kis_hatching_paintop_settings_widget.h"
+#include "kis_sketch_paintop.h"                 // sketch
+#include "kis_sketch_paintop_settings.h"
+#include "kis_sketch_paintop_settings_widget.h"
+#include "kis_colorsmudgeop.h"                  // colorsmudge
+#include "kis_colorsmudgeop_settings.h"
+#include "kis_colorsmudgeop_settings_widget.h"
+#include "kis_roundmarkerop.h"                  // roundmarker
+#include "kis_roundmarkerop_settings.h"
+#include "kis_roundmarkerop_settings_widget.h"
+#include "kis_tangent_normal_paintop.h"         // tangentnormal
+#include "kis_brush_based_paintop_settings.h"   // libpaintop (tangentnormal settings)
+#include "kis_tangent_normal_paintop_settings_widget.h"
+
+#include <klocalizedstring.h>
+
 #include <QByteArray>
 #include <QColor>
 #include <QDir>
@@ -64,11 +134,13 @@
 #include <QList>
 #include <QString>
 #include <QStringList>
+#include <QVector>
 
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <new>
 #include <string>
 #include <vector>
@@ -681,6 +753,13 @@ struct KritaBrushContext {
     // document order, exposed via krita_brush_preset_param_count/name/value.
     std::vector<std::pair<std::string, std::string>> presetParams;
 
+    // ---- Stroke session (ABI v2, phase F1) ----
+    // Opaque here (defined below); destroyed with the handle.
+    struct StrokeSession* session = nullptr;
+    // The family id the current/last session actually dispatched
+    // (survives krita_stroke_end; the honesty badge for the host).
+    std::string strokeEngineId;
+
     void setError(const std::string& m) { lastError = m; }
     void clearError() { lastError.clear(); }
 };
@@ -760,6 +839,165 @@ KoColor abiColorToKoColor(KritaBrushContext* h, bool forceBlack = false) {
     return KoColor(QColor(r, g, b), h->cs);
 }
 
+// ---------------------------------------------------------------------------
+// Headless paintop-registry registration (stroke-session ABI, phase F1).
+//
+// Desktop Krita populates KisPaintOpRegistry via KoPluginLoader /
+// KSycoca service discovery ("Krita/Paintop" service type). Headless
+// there is no service database, so the bridge registers the SAME
+// factories the plugins' own constructors add — verbatim template
+// arguments, ids, names, categories, pixmaps, composite-op whitelists
+// and priorities from the unmodified v6.0.4 plugin sources
+// (plugins/paintops/*/[plugin ctor].cpp). The factory template lives in the
+// header (kis_simple_paintop_factory.h); the op/settings/widget
+// implementations are linked from the plugin libraries the builder
+// compiles (kritadefaultpaintops, kritaspraypaintop, ...).
+//
+// mypaint is deliberately NOT registered: that family is gated behind
+// LibMyPaint_FOUND in upstream CMake (absent on all three builder
+// toolchains) and its static lib additionally links kritaui's widget
+// stack; it stays a documented follow-up, not a silent stub.
+//
+// Idempotent: KoPluginLoader may (in theory, on a desktop host with
+// KSycoca) have populated some families already — each add is guarded
+// by its id so the registration never duplicates.
+// ---------------------------------------------------------------------------
+int ensurePaintOpRegistry() {
+    static bool s_done = false;
+    if (s_done) return 0;
+    KisPaintOpRegistry* r = KisPaintOpRegistry::instance();
+    // defaultpaintops (brush + duplicate) — defaultpaintops_plugin.cc
+    if (!r->get("paintbrush")) {
+        r->add(new KisSimplePaintOpFactory<KisBrushOp, KisBrushOpSettings,
+                                           KisBrushOpSettingsWidget>(
+                   "paintbrush", i18nc("Pixel paintbrush", "Pixel"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-paintbrush.png", QString(), QStringList(), 1));
+    }
+    if (!r->get("duplicate")) {
+        r->add(new KisSimplePaintOpFactory<KisDuplicateOp, KisDuplicateOpSettings,
+                                           KisDuplicateOpSettingsWidget>(
+                   "duplicate",
+                   i18nc("clone paintbrush (previously \"Duplicate\")", "Clone"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-duplicate.png", QString(),
+                   QStringList(COMPOSITE_COPY), 15));
+    }
+    // colorsmudge — colorsmudge_paintop_plugin.cpp
+    if (!r->get("colorsmudge")) {
+        r->add(new KisSimplePaintOpFactory<KisColorSmudgeOp, KisColorSmudgeOpSettings,
+                                           KisColorSmudgeOpSettingsWidget>(
+                   "colorsmudge", i18n("Color Smudge"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-colorsmudge.png", QString(), QStringList(), 2));
+    }
+    // sketch — sketch_paintop_plugin.cpp
+    if (!r->get("sketchbrush")) {
+        r->add(new KisSimplePaintOpFactory<KisSketchPaintOp, KisSketchPaintOpSettings,
+                                           KisSketchPaintOpSettingsWidget>(
+                   "sketchbrush", i18n("Sketch"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-sketch.png", QString(), QStringList(), 3));
+    }
+    // hairy — hairy_paintop_plugin.cpp
+    if (!r->get("hairybrush")) {
+        r->add(new KisSimplePaintOpFactory<KisHairyPaintOp, KisHairyPaintOpSettings,
+                                           KisHairyPaintOpSettingsWidget>(
+                   "hairybrush", i18n("Bristle"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-sumi.png", QString(), QStringList(), 4));
+    }
+    // experiment — experiment_paintop_plugin.cpp
+    if (!r->get("experimentbrush")) {
+        r->add(new KisSimplePaintOpFactory<KisExperimentPaintOp, KisExperimentPaintOpSettings,
+                                           KisExperimentPaintOpSettingsWidget>(
+                   "experimentbrush", i18n("Shape"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-experiment.png", QString(), QStringList(), 5, false));
+    }
+    // gridbrush — grid_paintop_plugin.cpp
+    if (!r->get("gridbrush")) {
+        r->add(new KisSimplePaintOpFactory<KisGridPaintOp, KisGridPaintOpSettings,
+                                           KisGridPaintOpSettingsWidget>(
+                   "gridbrush",
+                   i18nc("type of a brush engine, shown in the list of brush engines",
+                         "Grid"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-grid.png", QString(), QStringList(), 8));
+    }
+    // curvebrush — curve_paintop_plugin.cpp
+    if (!r->get("curvebrush")) {
+        r->add(new KisSimplePaintOpFactory<KisCurvePaintOp, KisCurvePaintOpSettings,
+                                           KisCurvePaintOpSettingsWidget>(
+                   "curvebrush", i18n("Curve"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-curve.png", QString(), QStringList(), 9));
+    }
+    // hatching — hatching_paintop_plugin.cpp
+    if (!r->get("hatchingbrush")) {
+        r->add(new KisSimplePaintOpFactory<KisHatchingPaintOp, KisHatchingPaintOpSettings,
+                                           KisHatchingPaintOpSettingsWidget>(
+                   "hatchingbrush", i18n("Hatching"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-hatching.png", QString(), QStringList(), 7));
+    }
+    // particle — particle_paintop_plugin.cpp
+    if (!r->get("particlebrush")) {
+        r->add(new KisSimplePaintOpFactory<KisParticlePaintOp, KisParticlePaintOpSettings,
+                                           KisParticlePaintOpSettingsWidget>(
+                   "particlebrush", i18n("Particle"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-particle.png", QString(), QStringList(), 11, false));
+    }
+    // roundmarker — roundmarker_paintop_plugin.cpp
+    if (!r->get("roundmarker")) {
+        r->add(new KisSimplePaintOpFactory<KisRoundMarkerOp, KisRoundMarkerOpSettings,
+                                           KisRoundMarkerOpSettingsWidget>(
+                   "roundmarker", i18n("Quick Brush"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita_roundmarkerop.svg", QString(), QStringList(), 3));
+    }
+    // filterop — filterop.cpp (id "filter")
+    if (!r->get("filter")) {
+        r->add(new KisSimplePaintOpFactory<KisFilterOp, KisFilterOpSettings,
+                                           KisFilterOpSettingsWidget>(
+                   "filter",
+                   i18nc("type of a brush engine, shown in the list of brush engines",
+                         "Filter"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-filterop.png", QString(), QStringList(COMPOSITE_COPY), 17));
+    }
+    // deform — deform_paintop_plugin.cpp
+    if (!r->get("deformbrush")) {
+        r->add(new KisSimplePaintOpFactory<KisDeformPaintOp, KisDeformPaintOpSettings,
+                                           KisDeformPaintOpSettingsWidget>(
+                   "deformbrush", i18n("Deform"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-deform.png", QString(),
+                   QStringList(COMPOSITE_COPY), 16));
+    }
+    // tangentnormal — kis_tangent_normal_paintop_plugin.cpp
+    // (settings class is libpaintop's KisBrushBasedPaintOpSettings)
+    if (!r->get("tangentnormal")) {
+        r->add(new KisSimplePaintOpFactory<KisTangentNormalPaintOp,
+                                           KisBrushBasedPaintOpSettings,
+                                           KisTangentNormalPaintOpSettingsWidget>(
+                   "tangentnormal", i18n("Tangent Normal"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-tangentnormal.png", QString(), QStringList(), 16));
+    }
+    // spray — spray_paintop_plugin.cpp
+    if (!r->get("spraybrush")) {
+        r->add(new KisSimplePaintOpFactory<KisSprayPaintOp, KisSprayPaintOpSettings,
+                                           KisSprayPaintOpSettingsWidget>(
+                   "spraybrush", i18n("Spray"),
+                   KisPaintOpFactory::categoryStable(),
+                   "krita-spray.png", QString(), QStringList(), 6));
+    }
+    s_done = true;
+    return 0;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -823,6 +1061,120 @@ bool probePresetFile(const QString& path, QString* nameOut, QString* familyOut) 
 }
 
 // ---------------------------------------------------------------------------
+// Stroke session (ABI v2, phase F1) — one stroke on one texture.
+//
+// The device IS the surface texture: uploads sync host pixels in
+// (KisPaintDevice::writeBytes), the registry-dispatched paintop paints
+// through a real KisPainter, readbacks sync the engine's result out
+// (KisPaintDevice::readBytes). This is the same "device = texture"
+// model as desktop Krita's layer painting and Blender/Substance-style
+// texture paint.
+// ---------------------------------------------------------------------------
+
+struct StrokeSession {
+    KisImageSP image;              // real image (null scheduler — the
+                                   // same pattern Krita's own unit tests
+                                   // use; clone/filter ops get a node)
+    KisPaintLayerSP layer;         // the texture's paint layer
+    KisPaintDeviceSP device;       // the RGBA8 texture canvas
+    KisPainter* painter = nullptr; // owns the engine-created paintop
+    KisPaintOpPresetSP preset;     // engine-loaded preset of the stroke
+    KisDistanceInformation distance;   // engine spacing state
+    bool haveLast = false;         // first move uses paintAt, then
+    KisPaintInformation lastInfo;  // paintLine interpolation
+    QRect dirty;                   // union of engine dirty rects
+    int texW = 0;
+    int texH = 0;
+};
+
+// Destroy a session (painter first: it owns the paintop, and the op must
+// not outlive the painter it renders through).
+static void destroyStrokeSession(KritaBrushContext* h) {
+    if (!h || !h->session) return;
+    StrokeSession* s = h->session;
+    delete s->painter;   // deletes the engine-created KisPaintOp
+    s->painter = nullptr;
+    // KisPaintLayer holds a weak image ref; device refs drop here.
+    delete s;
+    h->session = nullptr;
+}
+
+// Load the context's current preset through the ENGINE'S OWN loader
+// (the same code path desktop Krita uses):
+//   1. KisPaintOpPreset::loadFromDevice — the real PNG-container preset
+//      format (text chunks "version"/"preset", formats 2.2 and 5.0).
+//   2. Manual fallback for other containers the v1 loader accepts
+//      (KoStore zip / bare XML): KisPaintOpPreset::fromXML with the
+//      registry-created settings — still 100% engine code.
+// The registry MUST be populated first (fromXML checks it).
+static KisPaintOpPresetSP loadSessionPreset(KritaBrushContext* h,
+                                            std::string* err) {
+    ensurePaintOpRegistry();
+    QFile f(h->presetPath);
+    if (!f.open(QIODevice::ReadOnly)) {
+        *err = "session: cannot reopen preset file: " +
+               h->presetPath.toStdString();
+        return KisPaintOpPresetSP();
+    }
+
+    // Path 1: the engine's own PNG preset loader.
+    {
+        KisPaintOpPresetSP preset = new KisPaintOpPreset(h->presetPath);
+        f.seek(0);
+        if (preset->loadFromDevice(&f, KisGlobalResourcesInterface::instance()) &&
+            preset->valid() && preset->settings()) {
+            return preset;
+        }
+    }
+
+    // Path 2: non-PNG containers — hand the extracted XML to the
+    // engine's own fromXML (registry-dispatched settings creation).
+    f.seek(0);
+    const QByteArray container = f.readAll();
+    const QByteArray xml = extractPresetXml(container);
+    QDomDocument doc;
+    if (xml.isEmpty() || !doc.setContent(xml)) {
+        *err = "session: no parsable preset XML in container";
+        return KisPaintOpPresetSP();
+    }
+    KisPaintOpPresetSP preset = new KisPaintOpPreset();
+    preset->fromXML(doc.documentElement(),
+                    KisGlobalResourcesInterface::instance());
+    if (!preset->valid() || !preset->settings()) {
+        *err = "session: engine rejected the preset (unknown paintop family "
+               "or invalid settings)";
+        return KisPaintOpPresetSP();
+    }
+    return preset;
+}
+
+// ABI RGBA (straight alpha, R,G,B,A) <-> the device's native byte
+// layout, via the channel indices probed at engine init.
+static void rgbaToNative(const KritaBrushContext* h, const uint8_t* rgba,
+                         int n, uint8_t* native, int pixelSize) {
+    const int r = h->rIdx, g = h->gIdx, b = h->bIdx, a = h->aIdx;
+    for (int i = 0; i < n; ++i) {
+        uint8_t* px = native + size_t(i) * pixelSize;
+        px[r] = rgba[i * 4 + 0];
+        px[g] = rgba[i * 4 + 1];
+        px[b] = rgba[i * 4 + 2];
+        if (a >= 0) px[a] = rgba[i * 4 + 3];
+    }
+}
+
+static void nativeToRgba(const KritaBrushContext* h, const uint8_t* native,
+                         int n, uint8_t* rgba, int pixelSize) {
+    const int r = h->rIdx, g = h->gIdx, b = h->bIdx, a = h->aIdx;
+    for (int i = 0; i < n; ++i) {
+        const uint8_t* px = native + size_t(i) * pixelSize;
+        rgba[i * 4 + 0] = px[r];
+        rgba[i * 4 + 1] = px[g];
+        rgba[i * 4 + 2] = px[b];
+        rgba[i * 4 + 3] = (a >= 0) ? px[a] : 255;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // C API implementation.
 // ---------------------------------------------------------------------------
 
@@ -835,12 +1187,16 @@ KritaBrushContext* krita_brush_init(void) {
 
 void krita_brush_destroy(KritaBrushContext* handle) {
     if (!handle) return;
+    destroyStrokeSession(handle);  // painter + paintop + texture device
     delete handle;
 }
 
 int32_t krita_brush_load_preset(KritaBrushContext* handle, const char* path) {
     if (!handle || !path) return 1;
     handle->clearError();
+    // A new preset invalidates any active stroke session (its engine
+    // objects belong to the previous preset).
+    destroyStrokeSession(handle);
     if (!ensureEngine(handle)) return 10;
 
     QFileInfo info(QString::fromUtf8(path));
@@ -1586,6 +1942,187 @@ const char* krita_brush_preset_path(KritaBrushContext* handle, int32_t index) {
     if (index < 0 || size_t(index) >= handle->presetScan.size()) return nullptr;
     handle->scanBuffer = handle->presetScan[size_t(index)].path;
     return handle->scanBuffer.c_str();
+}
+
+// --- stroke-session ABI (Feather-3D phase F1) ----------------------------
+
+int32_t krita_stroke_begin(KritaBrushContext* handle, int32_t tex_w,
+                           int32_t tex_h) {
+    if (!handle || tex_w <= 0 || tex_h <= 0) return -1;
+    handle->clearError();
+    if (handle->presetName.isEmpty() || handle->presetPath.isEmpty()) {
+        handle->setError("stroke_begin: no preset loaded (krita_brush_load_preset first)");
+        return -2;
+    }
+    if (!ensureEngine(handle)) return -4;
+    // An active session is replaced (documented contract).
+    destroyStrokeSession(handle);
+
+    // The engine's own preset loader (registry must be populated first —
+    // KisPaintOpPreset::fromXML validates the family against it).
+    std::string err;
+    KisPaintOpPresetSP preset = loadSessionPreset(handle, &err);
+    if (!preset) {
+        handle->setError(err);
+        return -3;
+    }
+
+    StrokeSession* s = new (std::nothrow) StrokeSession();
+    if (!s) {
+        handle->setError("stroke_begin: out of memory");
+        return -4;
+    }
+    s->texW = tex_w;
+    s->texH = tex_h;
+
+    // Real engine objects: image (null scheduler — Krita's own unit-test
+    // pattern), paint layer holding the texture device, painter, and the
+    // registry-dispatched paintop. KisPainter::setPaintOpPreset calls
+    // KisPaintOpRegistry::paintOp — the exact desktop dispatcher.
+    s->device = new KisPaintDevice(handle->cs);
+    s->image = new KisImage(nullptr, tex_w, tex_h, handle->cs,
+                            "FeatherStrokeSession");
+    // KisImageSP converts to the ctor's KisImageWSP (same pattern as
+    // Krita's own unit tests).
+    s->layer = new KisPaintLayer(s->image, "FeatherStrokeTexture",
+                                 quint8(255), s->device);
+    s->painter = new KisPainter(s->device);
+    s->preset = preset;
+
+    // Brush color: the context color (same source as the dab ABI).
+    s->painter->setPaintColor(abiColorToKoColor(handle, false));
+    s->painter->setBackgroundColor(KoColor(QColor(0, 0, 0), handle->cs));
+    // Composite op: the preset's own settings decide (CompositeOp=erase
+    // for eraser presets — the engine composites, mirroring desktop).
+    {
+        const QString compositeId =
+            preset->settings()->getString("CompositeOp", QLatin1String("normal"));
+        const KoCompositeOp* cop = handle->cs->compositeOp(compositeId);
+        s->painter->setCompositeOpId(cop ? cop
+                                         : handle->cs->compositeOp(COMPOSITE_OVER));
+    }
+
+    s->painter->setPaintOpPreset(preset, s->layer, s->image);
+    if (!s->painter->paintOp()) {
+        handle->setError("stroke_begin: registry could not create the paintop for "
+                         "preset family " + preset->paintOp().id().toStdString());
+        destroyStrokeSession(handle);
+        return -4;
+    }
+
+    handle->strokeEngineId = preset->paintOp().id().toStdString();
+    handle->session = s;
+    return 0;
+}
+
+int32_t krita_stroke_upload(KritaBrushContext* handle, const uint8_t* rgba,
+                            int32_t x, int32_t y, int32_t w, int32_t h) {
+    if (!handle || !handle->session || !rgba || w <= 0 || h <= 0) return 0;
+    StrokeSession* s = handle->session;
+    // Clip the upload rectangle to the texture bounds.
+    int32_t x0 = x < 0 ? 0 : x;
+    int32_t y0 = y < 0 ? 0 : y;
+    int32_t x1 = x + w > s->texW ? s->texW : x + w;
+    int32_t y1 = y + h > s->texH ? s->texH : y + h;
+    if (x1 <= x0 || y1 <= y0) return 0;
+    const int cw = x1 - x0;
+    const int ch = y1 - y0;
+    const int pixelSize = handle->cs->pixelSize();
+    std::vector<uint8_t> native(size_t(cw) * size_t(ch) * pixelSize);
+    // Row-by-row: the ABI block is a full (w x h) image starting at (x,y);
+    // clipped rows read from the corresponding source rows.
+    for (int row = 0; row < ch; ++row) {
+        const uint8_t* src = rgba + size_t((y0 - y) + row) * size_t(w) * 4
+                             + size_t(x0 - x) * 4;
+        rgbaToNative(handle, src, cw,
+                    native.data() + size_t(row) * size_t(cw) * pixelSize,
+                    pixelSize);
+    }
+    s->device->writeBytes(native.data(), x0, y0, cw, ch);
+    return 1;
+}
+
+int32_t krita_stroke_move(KritaBrushContext* handle, double u, double v,
+                          double pressure, double tilt_x, double tilt_y,
+                          double time_s) {
+    if (!handle || !handle->session) return 0;
+    StrokeSession* s = handle->session;
+    // UV [0,1] -> texel space; pressure fallback mirrors the dab ABI.
+    const qreal px = qBound<qreal>(0.0, u, 1.0) * qreal(s->texW);
+    const qreal py = qBound<qreal>(0.0, v, 1.0) * qreal(s->texH);
+    const qreal pr = (pressure > 0.0 && pressure <= 1.0) ? pressure : 1.0;
+    // Tool-level tilt in degrees (same units KoPointerEvent carries into
+    // KisPaintInformation on desktop); rotation/tangential/perspective are
+    // not part of the ABI yet and stay neutral.
+    KisPaintInformation info(QPointF(px, py), pr, qreal(tilt_x),
+                              qreal(tilt_y), 0.0, 0.0, 0.0, qreal(time_s),
+                              0.0);
+    if (!s->haveLast) {
+        s->painter->paintAt(info, &s->distance);
+        s->haveLast = true;
+    } else {
+        s->painter->paintLine(s->lastInfo, info, &s->distance);
+    }
+    s->lastInfo = info;
+    // Accumulate the engine-reported dirty rects (takeDirtyRegion resets
+    // the painter's own tracking — the union lives on the session).
+    const QVector<QRect> dirty = s->painter->takeDirtyRegion();
+    for (const QRect& r : dirty) {
+        s->dirty |= r;
+    }
+    return 1;
+}
+
+int32_t krita_stroke_dirty_rect(KritaBrushContext* handle, int32_t* x,
+                                int32_t* y, int32_t* w, int32_t* h) {
+    if (!handle || !handle->session || !x || !y || !w || !h) return -1;
+    const StrokeSession* s = handle->session;
+    if (!s->dirty.isValid() || s->dirty.isEmpty()) return 0;
+    *x = s->dirty.x();
+    *y = s->dirty.y();
+    *w = s->dirty.width();
+    *h = s->dirty.height();
+    return 1;
+}
+
+int32_t krita_stroke_readback(KritaBrushContext* handle, uint8_t* out_rgba,
+                              int32_t x, int32_t y, int32_t w, int32_t h) {
+    if (!handle || !handle->session || !out_rgba || w <= 0 || h <= 0) return 0;
+    StrokeSession* s = handle->session;
+    int32_t x0 = x < 0 ? 0 : x;
+    int32_t y0 = y < 0 ? 0 : y;
+    int32_t x1 = x + w > s->texW ? s->texW : x + w;
+    int32_t y1 = y + h > s->texH ? s->texH : y + h;
+    if (x1 <= x0 || y1 <= y0) return 0;
+    const int cw = x1 - x0;
+    const int ch = y1 - y0;
+    const int pixelSize = handle->cs->pixelSize();
+    std::vector<uint8_t> native(size_t(cw) * size_t(ch) * pixelSize);
+    s->device->readBytes(native.data(), x0, y0, cw, ch);
+    for (int row = 0; row < ch; ++row) {
+        uint8_t* dst = out_rgba + size_t((y0 - y) + row) * size_t(w) * 4
+                       + size_t(x0 - x) * 4;
+        nativeToRgba(handle,
+                     native.data() + size_t(row) * size_t(cw) * pixelSize,
+                     cw, dst, pixelSize);
+    }
+    return 1;
+}
+
+void krita_stroke_end(KritaBrushContext* handle) {
+    if (!handle) return;
+    destroyStrokeSession(handle);
+}
+
+const char* krita_stroke_engine_id(KritaBrushContext* handle) {
+    if (!handle) return "";
+    return handle->strokeEngineId.c_str();
+}
+
+int32_t krita_stroke_registry_count(KritaBrushContext* handle) {
+    if (!handle) return 0;
+    ensurePaintOpRegistry();
+    return int32_t(KisPaintOpRegistry::instance()->keys().size());
 }
 
 } // extern "C"
