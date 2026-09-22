@@ -46,6 +46,10 @@ static int g_failures = 0;
 // run 35520311991 ("cannot locate symbol smoke_main") was the latent
 // mismatch that surfaced once the JNI_ERR load-order bug was fixed.
 extern "C" int smoke_main(int argc, char** argv) {
+    // Unbuffered stdout: the smoke's gate output must survive a crash
+    // (CI pipes are block-buffered otherwise — the run-35782502710
+    // segfault hid every gate line after the last 4KB flush).
+    std::setbuf(stdout, nullptr);
     std::printf("version: %s\n", krita_brush_version());
     KritaBrushContext* b = krita_brush_init();
     CHECK(b != nullptr, "init returns handle");
