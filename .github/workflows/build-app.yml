@@ -301,17 +301,19 @@ jobs:
         # exiv2/quazip/gsl/lcms2/openexr/icu. The gate script
         # (.github/scripts/fkr_closure_gate.py, mounted) dlopens the bridge,
         # reports the version, inits a context and loads a REAL preset
-        # fixture purely from bundle/lib ($ORIGIN). The fixture comes from
-        # the app repo at run time (the builder mirror has no test/).
+        # fixture purely from bundle/lib ($ORIGIN). The fixture is the
+        # builder checkout's own test/fixtures copy.
         run: |
           BUNDLE=$(pwd)/build/linux/x64/release/bundle
-          curl -sfL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -o /tmp/fkr_gate_fixture.kpp \
-            "https://raw.githubusercontent.com/koenigsegggjesk0o/krita/feather-krita-flutter/test/fixtures/stock_basic_5_size.kpp"
-          test -s /tmp/fkr_gate_fixture.kpp || { echo "FATAL: fixture download failed"; exit 1; }
-          head -c 4 /tmp/fkr_gate_fixture.kpp | od -An -c | head -1
+          # The builder checkout carries the stock fixtures (the Dart FFI
+          # smoke above scans test/fixtures -> 2) — no cross-repo download
+          # needed (secrets.GITHUB_TOKEN cannot read the app repo anyway,
+          # run 35721910734 evidence).
+          FIXTURE=$(pwd)/test/fixtures/stock_basic_5_size.kpp
+          test -s "$FIXTURE" || { echo "FATAL: fixture missing from checkout"; exit 1; }
+          head -c 4 "$FIXTURE" | od -An -c | head -1
           docker run --rm \
-            -v "$BUNDLE:/bundle" -v "/tmp/fkr_gate_fixture.kpp:/fixture.kpp:ro" \
+            -v "$BUNDLE:/bundle" -v "$FIXTURE:/fixture.kpp:ro" \
             -v "$(pwd)/.github/scripts/fkr_closure_gate.py:/gate.py:ro" \
             ubuntu:24.04 bash -e -c '
               export HOME=/tmp
