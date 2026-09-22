@@ -1,3 +1,17 @@
+<!--
+  =====================================================================
+  STOP NOTICE (2026-09-22 ~11:30 Asia/Jakarta)
+  The autonomous cron loop (job id 395817, every 30 min) has been DELETED
+  by the user so they can switch agents. This worklog is preserved as-is
+  for the handover. The full handover context for the next agent lives in
+  HANDOVER.md at the root of the APP repo (koenigsegggjesk0o/krita,
+  branch feather-krita-flutter). Do NOT resume the loop until the user
+  re-enables it. Last completed state: v0.46-live-param-editing RELEASED,
+  full chain green (krita-build 35678879422, build-app 35680866715,
+  emulator smoke PASSED). Read HANDOVER.md before doing anything.
+  =====================================================================
+-->
+
 # Feather-Krita Work Log
 
 ---
