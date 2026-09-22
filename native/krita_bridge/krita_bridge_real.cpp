@@ -63,6 +63,7 @@
 // ---------------------------------------------------------------------------
 #include <brushengine/kis_paintop_registry.h>   // libs/image/brushengine
 #include <brushengine/kis_paintop_preset.h>     // libs/image/brushengine
+#include <brushengine/kis_stroke_random_source.h> // per-stroke random seeding
 #include <kis_painter.h>                        // libs/image
 #include <kis_paint_device.h>                   // libs/image
 #include <kis_paint_layer.h>                    // libs/image
@@ -1091,6 +1092,11 @@ struct StrokeSession {
     KisPainter* painter = nullptr; // owns the engine-created paintop
     KisPaintOpPresetSP preset;     // engine-loaded preset of the stroke
     KisDistanceInformation distance;   // engine spacing state
+    KisStrokeRandomSource random;  // per-stroke random seeding (the same
+                                   // helper the engine's own stroke
+                                   // strategies use; spray/particle/sketch
+                                   // engines read it from every
+                                   // KisPaintInformation)
     bool haveLast = false;         // first move uses paintAt, then
     KisPaintInformation lastInfo;  // paintLine interpolation
     QRect dirty;                   // union of engine dirty rects
@@ -2068,6 +2074,11 @@ int32_t krita_stroke_move(KritaBrushContext* handle, double u, double v,
     KisPaintInformation info(QPointF(px, py), pr, qreal(tilt_x),
                               qreal(tilt_y), 0.0, 0.0, 0.0, qreal(time_s),
                               0.0);
+    // Per-stroke random seeding — mirrors what the engine's own stroke
+    // drivers do (KisPainter::paintPolyline): every info in the session
+    // shares the stroke's random sources.
+    info.setRandomSource(s->random.source());
+    info.setPerStrokeRandomSource(s->random.perStrokeSource());
     if (!s->haveLast) {
         s->painter->paintAt(info, &s->distance);
         s->haveLast = true;
