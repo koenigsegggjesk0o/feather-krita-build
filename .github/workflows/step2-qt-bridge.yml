@@ -2,11 +2,6 @@ name: Step 2 Qt Bridge
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main, feather-krita-flutter]
-    paths:
-      - 'native/krita_bridge/**'
-      - '.github/workflows/step2-qt-bridge.yml'
 
 jobs:
   compile:
