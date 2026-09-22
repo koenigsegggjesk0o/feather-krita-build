@@ -2554,3 +2554,13 @@ Work Log:
 Stage Summary:
 - Wrapper set_param is now CI-PROVEN on real engines for its live effects and record semantics (x86_64 build + all live gates); the remaining blocker was a smoke assertion premise, now hardened. Fresh engine rebuild in flight; this tick polls to chain completion: krita-build GREEN -> build-app dispatch (stage new engine) -> emulator smoke -> release v0.46.
 - NEXT (5-loop-72 addendum / 5-loop-73): (1) poll new krita-build — expect FULL GREEN (both smokes now assert provable invariants); (2) on green: workflow_dispatch build-app to stage the new engine + full chain + emulator smoke; (3) release v0.46 (live param editing + active-preset inspector) via release_v45.py convention; (4) optional: thumbnail caching if picker scroll perf regresses.
+
+---
+Task ID: 5-loop-72 (interim 2 — replace-arm pin disproven by CI; self-configuring fix shipped; rebuild #3 in flight)
+Agent: Z.ai Code (main, autonomous cron loop)
+
+Work Log:
+- Rebuild #2 (35677483594) verdict: probe-local baseline FIX CONFIRMED (unknown-key check passed both fixtures); the NEW replace-arm pin FAILED — empirical discovery: Krita/opacity is NOT a pre-existing entry of the projected <param> map (loadPreset reads it from XML settings, not the projection), so the opacity edit APPENDS. x86_64 leg SUCCESS again (compile fix holding); Linux+Windows failed ONLY on that pin (1 failure each, everything else green incl. probe + live effects).
+- FIX (a4d3be3): hardcoded pin removed; replace-arm test now SELF-CONFIGURING — picks map entry 0 at runtime (demonstrably exists on any fixture), edits it with "<v0>-edited", asserts count flat + read-back. Buffer-copy semantics documented (accessors share staging strings). Live-state safety argued: malformed values are bounds-guarded; block runs after all fixture expectations, before destroy.
+- Re-dispatched krita-build (clones app HEAD = a4d3be3); cancelled rebuild #2 (arm64 was mid-compile on an already-failed run). Smoke mirrored to builder; worklog synced.
+- Chain-polling continues in-tick: krita-build GREEN -> build-app dispatch (stage new engine) -> smoke -> release v0.46.
