@@ -674,6 +674,7 @@ struct KritaBrushContext {
     std::string versionBuffer;
     std::string paramNameBuffer;
     std::string paramValueBuffer;
+    std::string curveValueBuffer;
     std::string paintopId;   // declared preset family (paintopid root attr)
     // Paintop-settings-level params of the last successfully loaded
     // preset (roadmap (f)): insertion-ordered (name, value) pairs in
@@ -1304,6 +1305,96 @@ int32_t krita_brush_set_param(KritaBrushContext* handle, const char* name,
         handle->eraser = raw.compare("erase", Qt::CaseInsensitive) == 0;
     }
     // Unknown keys: recorded in the map only (no dab-model dimension).
+    return 1;
+}
+
+// --- sensor-curve ABI (milestone (i)) --------------------------------
+// Validates the dynamic-sensor params XML that v6.0.4 presets store in
+// "<CurveOption>Sensor" entries: [optional prolog/DOCTYPE] <params
+// id="..."> <curve>x,y;...</curve> </params>. Structural check only —
+// the serialization shape is the engine's own (KisDynamicSensorData),
+// mirrored byte-for-byte from the stock fixtures (e.g. FlowSensor in
+// stock_basic_5_size.kpp: "<!DOCTYPE params> <params id=\"pressure\">
+// <curve>0,0;0.0361991,0.266332;0.0678731,0.994975;1,1;</curve>
+// </params>").
+static bool validateSensorCurveXml(const char* xmlText) {
+    if (!xmlText) return false;
+    const QString raw = QString::fromUtf8(xmlText);
+    if (raw.trimmed().isEmpty()) return false;
+
+    QDomDocument doc;
+    QString err;
+    int errLine = 0;
+    if (!doc.setContent(raw, &err, &errLine)) return false;
+    const QDomElement root = doc.documentElement();
+    if (root.isNull() || root.tagName() != QLatin1String("params")) {
+        return false;
+    }
+    if (root.attribute("id").trimmed().isEmpty()) return false;
+
+    // Exactly one <curve> child carrying "x,y;" float pairs.
+    const QDomElement curve = root.firstChildElement(QLatin1String("curve"));
+    if (curve.isNull()) return false;
+    if (!curve.nextSiblingElement(QLatin1String("curve")).isNull()) {
+        return false;
+    }
+    const QString pts = curve.text().trimmed();
+    if (pts.isEmpty()) return false;
+    const QStringList pairs = pts.split(';', Qt::SkipEmptyParts);
+    if (pairs.size() < 2) return false;  // a usable curve needs >= 2 points
+    for (const QString& pair : pairs) {
+        const QStringList xy = pair.split(',', Qt::KeepEmptyParts);
+        if (xy.size() != 2) return false;
+        bool okX = false;
+        bool okY = false;
+        const double x = xy[0].trimmed().toDouble(&okX);
+        const double y = xy[1].trimmed().toDouble(&okY);
+        if (!okX || !okY) return false;
+        if (!std::isfinite(x) || !std::isfinite(y)) return false;
+        if (x < 0.0 || x > 1.0 || y < 0.0 || y > 1.0) return false;
+    }
+    return true;
+}
+
+const char* krita_brush_get_curve(KritaBrushContext* handle,
+                                  const char* key) {
+    if (!handle || !key) return nullptr;
+    if (handle->presetName.isEmpty()) return nullptr;  // no preset loaded
+    const std::string k = QString::fromUtf8(key).toStdString();
+    for (const auto& kv : handle->presetParams) {
+        if (kv.first == k) {
+            handle->curveValueBuffer = kv.second;
+            return handle->curveValueBuffer.c_str();
+        }
+    }
+    return nullptr;
+}
+
+int32_t krita_brush_set_curve(KritaBrushContext* handle, const char* key,
+                              const char* curve_xml) {
+    if (!handle || !key || !curve_xml) return 0;
+    if (handle->presetName.isEmpty()) return 0;  // no preset loaded yet
+
+    const QString keyQ = QString::fromUtf8(key);
+    if (keyQ.trimmed().isEmpty()) return 0;
+    if (!validateSensorCurveXml(curve_xml)) return -1;  // map untouched
+
+    // Same replace-or-append policy as set_param (document order kept),
+    // so the getters immediately reflect the curve edit. No live effect:
+    // curves modulate dab output at the paintop-strategy level and are
+    // applied host-side (documented design), the map of record is the
+    // deliverable here.
+    const std::string k = keyQ.toStdString();
+    const std::string recorded = curve_xml;
+    bool replaced = false;
+    for (auto& kv : handle->presetParams) {
+        if (kv.first == k) {
+            kv.second = recorded;
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced) handle->presetParams.emplace_back(k, recorded);
     return 1;
 }
 

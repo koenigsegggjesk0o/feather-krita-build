@@ -321,6 +321,50 @@ KRITA_BRIDGE_API int32_t krita_brush_set_param(KritaBrushContext* handle,
                                                const char* name,
                                                const char* value);
 
+/// Returns the raw sensor-curve XML value of the param-map entry [key]
+/// from the LAST successfully loaded preset (krita_brush_load_preset),
+/// or NULL when the key is absent / arguments are bad / no preset was
+/// loaded. Sensor curves are the v6.0.4 paintop-settings entries named
+/// "<CurveOption>Sensor" (e.g. "OpacitySensor", "FlowSensor",
+/// "SizeSensor"): their values are dynamic-sensor params XML —
+/// `<!DOCTYPE params> <params id="pressure"> <curve>0,0;1,1;</curve>
+/// </params>` — a semicolon-separated x,y point list in [0,1]^2 (the
+/// engine's own KisDynamicSensorData serialization). Stock presets carry
+/// them exactly when the option declares a curve (basic-5 ships
+/// OpacitySensor/FlowSensor/SizeSensor/... with a real FlowSensor curve;
+/// stock_eraser_circle ships none). The curve use flags
+/// (<Id>UseCurve / <Id>UseSameCurve / <Id>curveMode) stay plain map
+/// entries editable through krita_brush_set_param. The pointer is owned
+/// by the handle and invalidated by the next load_preset or curve/param
+/// call on [handle]; copy it if it must outlive those. Added by the
+/// sensor-curve campaign (milestone (i)); back-compat: new function, no
+/// struct layout change. The portable/fallback bridges return NULL
+/// unconditionally (capability probe).
+KRITA_BRIDGE_API const char* krita_brush_get_curve(KritaBrushContext* handle,
+                                                   const char* key);
+
+/// Validates + records a sensor-curve entry (milestone (i) curve
+/// editing). [curve_xml] must be the dynamic-sensor params XML: after an
+/// optional XML prolog/DOCTYPE, the root element must be <params> with a
+/// non-empty id attribute and exactly one <curve> child whose text
+/// parses as semicolon-separated "x,y;" float pairs (>= 2 points, both
+/// axes in [0,1]) — the engine's own KisDynamicSensorData shape. On
+/// success the (key, value) pair replaces the existing entry or appends
+/// at the end of the map of record (same policy as
+/// krita_brush_set_param) and is immediately visible through
+/// krita_brush_get_curve / preset_param_count/_name/_value. Curves
+/// modulate dab output at the paintop-strategy level: the wrapper
+/// records them (the settings-level of record, like unknown set_param
+/// keys) and the host applies the curve evaluation — no live dab-model
+/// effect is claimed. Returns 1 when recorded (replace OR append), 0 on
+/// null/empty arguments or no loaded preset, -1 when validation rejects
+/// the XML (the map is untouched). The portable and fallback bridges
+/// return 0 unconditionally (capability probe). Back-compat: new
+/// function, no struct layout change.
+KRITA_BRIDGE_API int32_t krita_brush_set_curve(KritaBrushContext* handle,
+                                               const char* key,
+                                               const char* curve_xml);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

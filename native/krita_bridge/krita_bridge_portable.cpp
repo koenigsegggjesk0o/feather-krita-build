@@ -629,6 +629,26 @@ PORTABLE_API const char* krita_brush_version(void) {
     return "FeatherBridge-Portable/1.0 (Krita-compatible, soft-round engine)";
 }
 
+// Sensor-curve access (milestone (i)) is a real-engine capability: the
+// portable bridge has no param map to read or record curves into, so
+// the getters/setter always report "not supported" (same capability
+// probe / degrade contract as the param getters and set_param above).
+PORTABLE_API const char* krita_brush_get_curve(KritaBrushContext* handle,
+                                               const char* key) {
+    (void)handle;
+    (void)key;
+    return nullptr;
+}
+
+PORTABLE_API int32_t krita_brush_set_curve(KritaBrushContext* handle,
+                                           const char* key,
+                                           const char* curve_xml) {
+    (void)handle;
+    (void)key;
+    (void)curve_xml;
+    return 0;
+}
+
 PORTABLE_API int32_t krita_brush_preset_count(KritaBrushContext* handle) {
     // Full Krita installation discovery is not available without Qt.
     (void)handle;

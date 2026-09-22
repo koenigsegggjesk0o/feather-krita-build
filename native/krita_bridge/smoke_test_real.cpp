@@ -334,6 +334,114 @@ extern "C" int smoke_main(int argc, char** argv) {
                   "set_param rejects an empty name");
             CHECK(krita_brush_set_param(p, "Krita/opacity", nullptr) == 0,
                   "set_param rejects a null value");
+
+            // ----------------------------------------------------------------
+            // Sensor-curve ABI (milestone (i)): get_curve / set_curve on
+            // the "<CurveOption>Sensor" entries. Fixture-dependent BY
+            // NATURE (basic-5 carries 6+ curve entries incl. FlowSensor
+            // with a real pressure curve; stock_eraser_circle carries
+            // none) — so both arms are asserted generically with
+            // fixture-specific pre-existence pins:
+            //   * get_curve(FlowSensor): non-null on basic-5 (replace
+            //     arm follows), null on the eraser (append arm follows).
+            //   * set_curve writes a canonical curve; read-back must
+            //     equal the written bytes EXACTLY (map stores verbatim).
+            //   * the count delta is asserted probe-LOCALLY (the 6.1
+            //     lesson: global count baselines break on fixture
+            //     differences).
+            //   * malformed XML is REJECTED with -1 and leaves the map
+            //     count AND the recorded value untouched.
+            // ----------------------------------------------------------------
+            {
+                const char* kCurveKey = "FlowSensor";
+                const bool isBasic5 =
+                    fixtureName.find("stock_basic_5_size") != std::string::npos;
+                const bool isEraser =
+                    fixtureName.find("stock_eraser_circle") != std::string::npos;
+
+                const char* raw0 = krita_brush_get_curve(p, kCurveKey);
+                const bool hadCurve = (raw0 != nullptr);
+                const std::string baselineCurve = hadCurve ? std::string(raw0)
+                                                           : std::string();
+                if (hadCurve) {
+                    std::printf("  curve %s baseline: %s\n", kCurveKey,
+                                baselineCurve.c_str());
+                }
+                CHECK(!hadCurve || baselineCurve.find("<curve>") !=
+                                       std::string::npos,
+                      "existing curve entry carries the params/curve shape");
+                if (isBasic5) {
+                    CHECK(hadCurve,
+                          "basic-5 FlowSensor pre-exists (curve replace arm)");
+                }
+                if (isEraser) {
+                    CHECK(!hadCurve,
+                          "eraser ships no FlowSensor (curve append arm)");
+                }
+
+                const char* kEdited =
+                    "<!DOCTYPE params> <params id=\"pressure\"> "
+                    "<curve>0,0;0.25,0.75;1,0.5;</curve> </params>";
+                const int32_t beforeCurve = krita_brush_preset_param_count(p);
+                CHECK(krita_brush_set_curve(p, kCurveKey, kEdited) == 1,
+                      "set_curve accepted a canonical curve XML");
+                CHECK(krita_brush_preset_param_count(p) ==
+                          beforeCurve + (hadCurve ? 0 : 1),
+                      "set_curve replaces when present, appends when absent");
+                {
+                    const char* rb = krita_brush_get_curve(p, kCurveKey);
+                    CHECK(rb != nullptr && std::strcmp(rb, kEdited) == 0,
+                          "curve read-back equals the written bytes verbatim");
+                }
+
+                // Malformed rejection arms: non-numeric points, wrong root
+                // element — refused with -1, map count AND value intact.
+                CHECK(krita_brush_set_curve(
+                          p, kCurveKey,
+                          "<params id=\"pressure\"><curve>0,0;zz,1;</curve>"
+                          "</params>") == -1,
+                      "set_curve rejects non-numeric curve points");
+                CHECK(krita_brush_set_curve(
+                          p, kCurveKey,
+                          "<notcurves id=\"x\"><curve>0,0;1,1;</curve>"
+                          "</notcurves>") == -1,
+                      "set_curve rejects a wrong root element");
+                CHECK(krita_brush_set_curve(
+                          p, kCurveKey,
+                          "<params id=\"pressure\"><curve>0,0;1.5,1;</curve>"
+                          "</params>") == -1,
+                      "set_curve rejects out-of-range curve axes");
+                CHECK(krita_brush_preset_param_count(p) ==
+                          beforeCurve + (hadCurve ? 0 : 1),
+                      "rejected curves leave the map count untouched");
+                {
+                    const char* rb2 = krita_brush_get_curve(p, kCurveKey);
+                    CHECK(rb2 != nullptr && std::strcmp(rb2, kEdited) == 0,
+                          "rejected curves leave the recorded value untouched");
+                }
+
+                // Argument rejection arms.
+                CHECK(krita_brush_set_curve(p, "", kEdited) == 0,
+                      "set_curve rejects an empty key");
+                CHECK(krita_brush_set_curve(p, kCurveKey, nullptr) == 0,
+                      "set_curve rejects a null value");
+                CHECK(krita_brush_get_curve(p, nullptr) == nullptr,
+                      "get_curve rejects a null key");
+
+                // Restore: when a curve pre-existed, put the baseline back
+                // byte-exact (proves the replace arm twice); the eraser's
+                // appended entry intentionally stays — its context is
+                // destroyed right after this block and load_preset rebuilds
+                // the map from scratch on every load anyway.
+                if (hadCurve) {
+                    CHECK(krita_brush_set_curve(p, kCurveKey,
+                                                baselineCurve.c_str()) == 1,
+                          "baseline curve restored via set_curve");
+                    CHECK(std::strcmp(krita_brush_get_curve(p, kCurveKey),
+                                      baselineCurve.c_str()) == 0,
+                          "baseline curve reads back byte-exact");
+                }
+            }
         }
         krita_brush_destroy(p);
     }

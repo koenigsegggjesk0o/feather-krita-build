@@ -505,6 +505,25 @@ int32_t krita_brush_set_param(KritaBrushContext* handle, const char* name,
     return 0;
 }
 
+// Sensor-curve access (milestone (i)) is a real-engine capability: the
+// fallback bridge has no param map to read or record curves into, so
+// the getter/setter always report "not supported" (same capability
+// probe / degrade contract as the param getters and set_param above).
+const char* krita_brush_get_curve(KritaBrushContext* handle,
+                                  const char* key) {
+    (void)handle;
+    (void)key;
+    return nullptr;
+}
+
+int32_t krita_brush_set_curve(KritaBrushContext* handle, const char* key,
+                              const char* curve_xml) {
+    (void)handle;
+    (void)key;
+    (void)curve_xml;
+    return 0;
+}
+
 bool krita_brush_generate_dab(KritaBrushContext* handle,
                               const BrushInput* input,
                               BrushDab* out_dab) {
