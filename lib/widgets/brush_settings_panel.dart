@@ -14,7 +14,13 @@
 //   - Spacing (0 – 100 %)
 //   - Smudge (0 – 100 %)
 //   - Colour swatch (opens [showGlassColorPicker])
-//   - Active preset name + change button (opens brush picker)
+//   - Active preset name + change button (opens brush picker) + inline
+//     inspector entry (5-loop-68): when the active preset is present in
+//     the loaded library, a compact manage-search button opens the
+//     engine-authoritative [showPresetInspector] for it — the same
+//     inspector the picker exposes via long-press, now reachable for
+//     the preset you are ACTUALLY painting with, without leaving the
+//     settings panel.
 //
 // Every control is wired directly to [EditorState] setters which, in turn,
 // sync to the native Krita brush engine.
@@ -22,9 +28,11 @@
 import 'package:flutter/material.dart';
 
 import 'package:feather_krita/theme/app_theme.dart';
+import 'package:feather_krita/models/brush_preset.dart';
 import 'package:feather_krita/state/editor_state.dart';
 import 'package:feather_krita/widgets/glass_slider.dart';
 import 'package:feather_krita/widgets/glass_color_picker.dart';
+import 'package:feather_krita/widgets/preset_inspector_sheet.dart';
 
 /// The right-side brush settings panel.
 class BrushSettingsPanel extends StatelessWidget {
@@ -59,12 +67,22 @@ class BrushSettingsPanel extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Preset name + change button.
+                      // Preset name + change button + inspector entry
+                      // (5-loop-68). The inspector button only renders when
+                      // the active preset resolves in the loaded library —
+                      // before [EditorState.loadPresetLibrary] fills
+                      // [EditorState.presets] (or for an unmatched name)
+                      // there is nothing to inspect and the chip degrades
+                      // to the plain picker entry.
                       _PresetChip(
                         name: state.brushPresetName,
                         family: state.activePaintopId,
                         color: Color(state.brushColor),
                         onTap: onPickPreset,
+                        onInspect: _activePreset(state) == null
+                            ? null
+                            : () => showPresetInspector(
+                                context, _activePreset(state)!),
                       ),
                       const SizedBox(height: 16),
 
@@ -204,6 +222,19 @@ class BrushSettingsPanel extends StatelessWidget {
 // Sub-widgets.
 // ---------------------------------------------------------------------------
 
+/// Resolves the ACTIVE preset object from the loaded library by display
+/// name (5-loop-68). [EditorState.loadBrushPreset] sets the name from the
+/// very same scanned list, so a first-match lookup is exact for every
+/// preset the panel can have loaded. Returns null when the library is
+/// not loaded yet or the name has no entry — the inspector entry hides.
+BrushPreset? _activePreset(EditorState state) {
+  final name = state.brushPresetName;
+  for (final p in state.presets) {
+    if (p.name == name) return p;
+  }
+  return null;
+}
+
 class _Header extends StatelessWidget {
   const _Header({required this.title, this.onClose});
 
@@ -250,11 +281,19 @@ class _PresetChip extends StatelessWidget {
     required this.color,
     required this.onTap,
     this.family,
+    this.onInspect,
   });
 
   final String name;
   final Color color;
   final VoidCallback onTap;
+
+  /// Opens the preset inspector for THIS preset (5-loop-68). Null hides
+  /// the inline inspect button — the chip then offers only the picker
+  /// entry. Distinct from [onTap]: tapping the chip still opens the
+  /// picker; tapping the lens-like button inspects the active preset
+  /// in place.
+  final VoidCallback? onInspect;
 
   /// The loaded preset's declared paintop family (5-loop-41), shown as a
   /// small badge after the "Preset" label. Empty hides the badge.
@@ -348,6 +387,19 @@ class _PresetChip extends StatelessWidget {
                 ],
               ),
             ),
+            if (onInspect != null)
+              GestureDetector(
+                onTap: onInspect,
+                child: Tooltip(
+                  message: 'Inspect preset settings',
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(Icons.manage_search_rounded,
+                        size: 22, color: AppTheme.textTertiary),
+                  ),
+                ),
+              ),
+            const SizedBox(width: 2),
             const Icon(Icons.chevron_right_rounded,
                 color: AppTheme.textTertiary, size: 20),
           ],
