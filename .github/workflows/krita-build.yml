@@ -186,6 +186,8 @@ jobs:
             $FIXDIR/stock_basic_5_size.kpp \
             $FIXDIR/stock_eraser_circle.kpp \
             $FIXDIR/stock_spray_pointillism.kpp \
+            $FIXDIR/stock_smear_blender.kpp \
+            $FIXDIR/stock_spray_pointillism.kpp \
             $FIXDIR/stock_smear_blender.kpp
 
       - name: Upload brush engine libs
@@ -440,7 +442,7 @@ jobs:
           # WINDOWS_EXPORT_ALL_SYMBOLS and pre-define each export macro EMPTY
           # so no TU compiles dllexport/dllimport semantics (which force
           # eager member instantiation on incomplete pimpl/adapter types).
-          EMPTY_EXPORTS="-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT= -DKRITARESOURCEWIDGETS_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= /FI$GITHUB_WORKSPACE/qmin_shim.h"
+          EMPTY_EXPORTS="-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT= -DKRITARESOURCEWIDGETS_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= /FI$GITHUB_WORKSPACE/qmin_shim.h"
           cmake -S "$GITHUB_WORKSPACE/krita" -B "$GITHUB_WORKSPACE/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON \
@@ -566,7 +568,11 @@ jobs:
           echo "extracted include dirs: $(printf '%s' "$INCS" | wc -w)"
           # belt-and-braces: every lib subdir + every dir containing generated headers
           LIBD=$(find "$WS/krita/libs" -maxdepth 2 -type d | sed 's#^#/I#' | tr '\n' ' ')
-          GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -80 | sed 's#^#/I#' | tr '\n' ' ')
+          GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -400 | sed 's#^#/I#' | tr '\n' ' ')
+          # F1: build-side generated export headers (explicit, belt+braces).
+          for d in plugins/paintops/libpaintop plugins/paintops/defaultpaintops libs/ui libs/impex; do
+            [ -d "$BUILD/$d" ] && INCS="$INCS /I$BUILD/$d"
+          done
           # F1: paintop plugin private headers (op/settings/widget classes
           # + libpaintop's factory template).
           PLUGD=$(find "$WS/krita/plugins/paintops" -maxdepth 2 -type d | sed 's#^#/I#' | tr '\n' ' ')
@@ -646,6 +652,8 @@ jobs:
           ./artifact/bin/smoke_test_real.exe \
             "$FIXDIR/stock_basic_5_size.kpp" \
             "$FIXDIR/stock_eraser_circle.kpp" \
+            "$FIXDIR/stock_spray_pointillism.kpp" \
+            "$FIXDIR/stock_smear_blender.kpp" \
             "$FIXDIR/stock_spray_pointillism.kpp" \
             "$FIXDIR/stock_smear_blender.kpp"
 
@@ -1271,7 +1279,11 @@ jobs:
             | sort -u | head -260 | sed 's#^#-I#' | tr '\n' ' ')
           echo "extracted include dirs: $(printf '%s' "$INCS" | wc -w)"
           LIBD=$(find "$WS/krita/libs" -maxdepth 2 -type d | sed 's#^#-I#' | tr '\n' ' ')
-          GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -80 | sed 's#^#-I#' | tr '\n' ' ')
+          GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -400 | sed 's#^#-I#' | tr '\n' ' ')
+          # F1: build-side generated export headers (explicit, belt+braces).
+          for d in plugins/paintops/libpaintop plugins/paintops/defaultpaintops libs/ui libs/impex; do
+            [ -d "$BUILD/$d" ] && INCS="$INCS -I$BUILD/$d"
+          done
           # F1: paintop plugin private headers.
           PLUGD=$(find "$WS/krita/plugins/paintops" -maxdepth 2 -type d | sed 's#^#-I#' | tr '\n' ' ')
           QTINC=''; KFINC=''
