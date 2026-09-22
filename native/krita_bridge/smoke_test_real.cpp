@@ -235,6 +235,31 @@ extern "C" int smoke_main(int argc, char** argv) {
             const int32_t before = krita_brush_preset_param_count(p);
             CHECK(before > 0, "param map populated before set_param");
 
+            // Replace arm, self-configuring: pick an entry that
+            // DEMONSTRABLY exists (map index 0, whatever the fixture
+            // projects there) and edit it. The count must stay flat and
+            // entry 0 must read back the new value. Fixture-independent
+            // by construction — a hardcoded key cannot be: empirically,
+            // Krita/opacity is NOT a pre-existing map entry (the
+            // loadPreset consumer reads it from the XML settings, not
+            // from the <param> projection), so an opacity edit APPENDS.
+            // Buffers are copied out immediately (the accessors share
+            // internal staging strings, invalidated by the next call).
+            {
+                const int32_t n0 = krita_brush_preset_param_count(p);
+                const std::string k0 = krita_brush_preset_param_name(p, 0);
+                const std::string v0 = krita_brush_preset_param_value(p, 0);
+                CHECK(!k0.empty(), "map entry 0 has a name (replace-arm key)");
+                const std::string vNew = v0 + "-edited";
+                CHECK(krita_brush_set_param(p, k0.c_str(), vNew.c_str()) == 1,
+                      "set_param(existing key) accepted (replace arm)");
+                CHECK(krita_brush_preset_param_count(p) == n0,
+                      "existing-key edit hits the replace arm (count flat)");
+                CHECK(std::strcmp(krita_brush_preset_param_value(p, 0),
+                                  vNew.c_str()) == 0,
+                      "replaced entry reads back the new value");
+            }
+
             // Master opacity: Krita/opacity is the 0-100 slider value.
             CHECK(krita_brush_set_param(p, "Krita/opacity", "55") == 1,
                   "set_param(Krita/opacity,55) accepted");
@@ -256,11 +281,6 @@ extern "C" int smoke_main(int argc, char** argv) {
                                       "55") == 0,
                       "param map of record reads the edited value");
             }
-            // Replace arm pinned: Krita/opacity pre-exists in the stock
-            // fixtures' maps (loadPreset derives opacity from it), so the
-            // edit must REPLACE in place — count stays flat.
-            CHECK(krita_brush_preset_param_count(p) == before,
-                  "Krita/opacity edit hits the replace arm (count flat)");
 
             // Flow: FlowValue is the per-dab application rate base.
             CHECK(krita_brush_set_param(p, "FlowValue", "0.25") == 1,
