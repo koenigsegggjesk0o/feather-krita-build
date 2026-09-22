@@ -107,9 +107,20 @@
 #include "kis_hatching_paintop.h"               // hatching
 #include "kis_hatching_paintop_settings.h"
 #include "kis_hatching_paintop_settings_widget.h"
+// sketch — COLLISION ISOLATION: KisSketchStandardOptionData.h (pulled in
+// by the sketch op/settings headers) redefines `KisLineWidthOptionData`,
+// which curvebrush's KisCurveStandardOptionData.h (included above) already
+// defined. Upstream never compiles the two families in one TU, so the tags
+// are never supposed to coexist. The rename below affects ONLY this TU's
+// view of the tag: the struct's layout is untouched, and every symbol we
+// reference (KisSketchPaintOp / KisSketchPaintOpSettings /
+// KisSketchPaintOpSettingsWidget constructors, linked from
+// libkritasketchpaintop) is mangled without the member struct's tag.
+#define KisLineWidthOptionData FkrSketchKisLineWidthOptionData
 #include "kis_sketch_paintop.h"                 // sketch
 #include "kis_sketch_paintop_settings.h"
 #include "kis_sketch_paintop_settings_widget.h"
+#undef KisLineWidthOptionData
 #include "kis_colorsmudgeop.h"                  // colorsmudge
 #include "kis_colorsmudgeop_settings.h"
 #include "kis_colorsmudgeop_settings_widget.h"
@@ -1119,7 +1130,7 @@ static KisPaintOpPresetSP loadSessionPreset(KritaBrushContext* h,
 
     // Path 1: the engine's own PNG preset loader.
     {
-        KisPaintOpPresetSP preset = new KisPaintOpPreset(h->presetPath);
+        KisPaintOpPresetSP preset(new KisPaintOpPreset(h->presetPath));
         f.seek(0);
         if (preset->loadFromDevice(&f, KisGlobalResourcesInterface::instance()) &&
             preset->valid() && preset->settings()) {
@@ -1137,7 +1148,7 @@ static KisPaintOpPresetSP loadSessionPreset(KritaBrushContext* h,
         *err = "session: no parsable preset XML in container";
         return KisPaintOpPresetSP();
     }
-    KisPaintOpPresetSP preset = new KisPaintOpPreset();
+    KisPaintOpPresetSP preset(new KisPaintOpPreset());
     preset->fromXML(doc.documentElement(),
                     KisGlobalResourcesInterface::instance());
     if (!preset->valid() || !preset->settings()) {
