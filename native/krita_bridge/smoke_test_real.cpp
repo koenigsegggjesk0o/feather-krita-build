@@ -640,6 +640,187 @@ extern "C" int smoke_main(int argc, char** argv) {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Stroke-session ABI gates (Feather-3D phase F1): the REAL paintop
+    // pipeline proof. The registry is populated headless by the bridge
+    // (the same factories the plugins' own constructors register via
+    // KSycoca on desktop); stroke sessions dispatch the loaded preset
+    // through KisPaintOpRegistry onto a texture device.
+    //   (a) registry carries the 15 built-in non-mypaint families
+    //   (b) a SPRAY preset produces different pixels than a PAINTBRUSH
+    //       preset through the SAME session ABI (engine dispatch, not
+    //       the v1 auto-brush mask path)
+    //   (c) colorsmudge actually CHANGES a pre-uploaded texture (the
+    //       KisPaintDevice upload/readback round-trip is real)
+    //   (d) the v1 preset param surface is unchanged by sessions
+    //   (e) an eraser preset ERASES from an uploaded texture through
+    //       the engine's own CompositeOp=erase path
+    // Fixtures are located by name in argv; each gate runs only when
+    // its fixture is present (the android harness passes its own set).
+    // ------------------------------------------------------------------
+    if (argc >= 2) {
+        std::string basicFix, eraserFix, sprayFix, smudgeFix;
+        for (int a = 1; a < argc; ++a) {
+            const std::string fn(argv[a]);
+            if (fn.find("stock_basic_5_size") != std::string::npos) basicFix = fn;
+            else if (fn.find("stock_eraser_circle") != std::string::npos) eraserFix = fn;
+            else if (fn.find("stock_spray_pointillism") != std::string::npos) sprayFix = fn;
+            else if (fn.find("stock_smear_blender") != std::string::npos) smudgeFix = fn;
+        }
+        const int TEX = 96;
+        std::vector<uint8_t> texA(size_t(TEX) * TEX * 4, 0);
+        std::vector<uint8_t> texB(size_t(TEX) * TEX * 4, 0);
+
+        // A deterministic horizontal stroke across the texture middle.
+        auto strokeLine = [&](KritaBrushContext* c) {
+            for (int i = 0; i <= 8; ++i) {
+                const double t = double(i) / 8.0;
+                krita_stroke_move(c, 0.25 + 0.5 * t, 0.5, 0.8, 0.0, 0.0,
+                                  0.02 * double(i));
+            }
+        };
+
+        // Gate (a): the headless registry must carry the 15 built-in
+        // families (mypaint excluded: upstream gates it behind
+        // LibMyPaint, absent on all builder toolchains).
+        KritaBrushContext* reg = krita_brush_init();
+        const int32_t regCount = krita_stroke_registry_count(reg);
+        std::printf("stroke-session registry families: %d\n", int(regCount));
+        CHECK(regCount == 15, "registry count == 15 built-in families");
+        krita_brush_destroy(reg);
+
+        // Gates (b) + (d): paintbrush vs spray through the same ABI.
+        if (!basicFix.empty() && !sprayFix.empty()) {
+            KritaBrushContext* c = krita_brush_init();
+            // paintbrush pass
+            CHECK(krita_brush_load_preset(c, basicFix.c_str()) == 0,
+                  "session: basic-5 loads");
+            const int32_t paramCountBefore = krita_brush_preset_param_count(c);
+            CHECK(paramCountBefore > 0, "session: param map present before");
+            CHECK(krita_stroke_begin(c, TEX, TEX) == 0,
+                  "session: begin on paintbrush preset");
+            CHECK(std::string(krita_stroke_engine_id(c)) == "paintbrush",
+                  "session: engine id == paintbrush (registry dispatch)");
+            strokeLine(c);
+            int32_t dx = 0, dy = 0, dw = 0, dh = 0;
+            CHECK(krita_stroke_dirty_rect(c, &dx, &dy, &dw, &dh) == 1,
+                  "session: dirty rect reported (paintbrush)");
+            CHECK(dw > 0 && dh > 0, "session: dirty rect non-empty");
+            CHECK(krita_stroke_readback(c, texA.data(), 0, 0, TEX, TEX) == 1,
+                  "session: full readback (paintbrush)");
+            std::printf("  paintbrush dirty: %d,%d %dx%d\n", int(dx), int(dy), int(dw), int(dh));
+            krita_stroke_end(c);
+            // Gate (d): the v1 param surface is untouched by the session.
+            CHECK(krita_brush_preset_param_count(c) == paramCountBefore,
+                  "session: param map count unchanged (gate d)");
+            int paintedA = 0;
+            for (size_t i = 0; i < texA.size(); i += 4) {
+                if (texA[i + 3] != 0) ++paintedA;
+            }
+            CHECK(paintedA > 100, "session: paintbrush stroke painted pixels");
+
+            // spray pass — SAME ABI, different engine
+            CHECK(krita_brush_load_preset(c, sprayFix.c_str()) == 0,
+                  "session: spray preset loads");
+            CHECK(krita_stroke_begin(c, TEX, TEX) == 0,
+                  "session: begin on spray preset");
+            CHECK(std::string(krita_stroke_engine_id(c)) == "spraybrush",
+                  "session: engine id == spraybrush (real spray engine)");
+            strokeLine(c);
+            CHECK(krita_stroke_readback(c, texB.data(), 0, 0, TEX, TEX) == 1,
+                  "session: full readback (spray)");
+            krita_stroke_end(c);
+            int paintedB = 0;
+            for (size_t i = 0; i < texB.size(); i += 4) {
+                if (texB[i + 3] != 0) ++paintedB;
+            }
+            CHECK(paintedB > 100, "session: spray stroke painted pixels");
+            int diffPx = 0;
+            for (size_t i = 0; i < texA.size(); i += 4) {
+                if (std::memcmp(&texA[i], &texB[i], 4) != 0) ++diffPx;
+            }
+            std::printf("  paintbrush=%d px, spray=%d px, differing=%d px\n",
+                        paintedA, paintedB, diffPx);
+            CHECK(diffPx > 100,
+                  "session gate b: spray pixels differ from paintbrush pixels");
+            krita_brush_destroy(c);
+        }
+
+        // Gate (c): colorsmudge modifies an UPLOADED texture (device
+        // round-trip: writeBytes -> engine samples -> readBytes).
+        if (!smudgeFix.empty()) {
+            KritaBrushContext* c = krita_brush_init();
+            CHECK(krita_brush_load_preset(c, smudgeFix.c_str()) == 0,
+                  "session: colorsmudge preset loads");
+            CHECK(krita_stroke_begin(c, TEX, TEX) == 0,
+                  "session: begin on colorsmudge preset");
+            CHECK(std::string(krita_stroke_engine_id(c)) == "colorsmudge",
+                  "session: engine id == colorsmudge (smudge engine)");
+            // Upload a red/blue split texture.
+            std::vector<uint8_t> up(size_t(TEX) * TEX * 4);
+            for (int y = 0; y < TEX; ++y) {
+                for (int x = 0; x < TEX; ++x) {
+                    uint8_t* px = &up[(size_t(y) * TEX + x) * 4];
+                    if (x < TEX / 2) { px[0] = 255; px[1] = 0; px[2] = 0; }
+                    else             { px[0] = 0; px[1] = 0; px[2] = 255; }
+                    px[3] = 255;
+                }
+            }
+            CHECK(krita_stroke_upload(c, up.data(), 0, 0, TEX, TEX) == 1,
+                  "session: texture upload (writeBytes)");
+            // Smear across the red/blue boundary.
+            for (int i = 0; i <= 8; ++i) {
+                const double t = double(i) / 8.0;
+                krita_stroke_move(c, 0.30 + 0.4 * t, 0.5, 0.8, 0.0, 0.0,
+                                  0.02 * double(i));
+            }
+            std::vector<uint8_t> out(size_t(TEX) * TEX * 4, 0);
+            CHECK(krita_stroke_readback(c, out.data(), 0, 0, TEX, TEX) == 1,
+                  "session: readback after smudge");
+            krita_stroke_end(c);
+            int changed = 0;
+            for (size_t i = 0; i < up.size(); i += 4) {
+                if (std::memcmp(&up[i], &out[i], 4) != 0) ++changed;
+            }
+            std::printf("  colorsmudge changed %d of %d uploaded pixels\n",
+                        changed, TEX * TEX);
+            CHECK(changed > 50,
+                  "session gate c: colorsmudge modified the uploaded texture");
+            krita_brush_destroy(c);
+        }
+
+        // Gate (e): an eraser preset erases through the engine's own
+        // CompositeOp=erase compositing on an uploaded texture.
+        if (!eraserFix.empty()) {
+            KritaBrushContext* c = krita_brush_init();
+            CHECK(krita_brush_load_preset(c, eraserFix.c_str()) == 0,
+                  "session: eraser preset loads");
+            CHECK(krita_stroke_begin(c, TEX, TEX) == 0,
+                  "session: begin on eraser preset");
+            CHECK(std::string(krita_stroke_engine_id(c)) == "paintbrush",
+                  "session: eraser dispatches the paintbrush family");
+            std::vector<uint8_t> up(size_t(TEX) * TEX * 4, 255);
+            for (size_t i = 0; i < up.size(); i += 4) {
+                up[i + 0] = 200; up[i + 1] = 200; up[i + 2] = 200;
+            }
+            CHECK(krita_stroke_upload(c, up.data(), 0, 0, TEX, TEX) == 1,
+                  "session: opaque texture upload (eraser gate)");
+            strokeLine(c);
+            std::vector<uint8_t> out(size_t(TEX) * TEX * 4, 0);
+            CHECK(krita_stroke_readback(c, out.data(), 0, 0, TEX, TEX) == 1,
+                  "session: readback after erase stroke");
+            krita_stroke_end(c);
+            int erased = 0;
+            for (size_t i = 0; i < out.size(); i += 4) {
+                if (out[i + 3] < 255) ++erased;
+            }
+            std::printf("  eraser reduced alpha on %d pixels\n", erased);
+            CHECK(erased > 50,
+                  "session gate e: engine erased pixels (CompositeOp=erase)");
+            krita_brush_destroy(c);
+        }
+    }
+
     if (g_failures == 0) {
         std::printf("SMOKE OK — real Krita bridge end-to-end\n");
         return 0;
