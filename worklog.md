@@ -2573,3 +2573,18 @@ Work Log:
 - Rebuild #3 (35678879422): Linux + Windows + android-x86_64 ALL SUCCESS. Smoke log: "SMOKE OK — real Krita bridge end-to-end" — every gate green on both fixtures: self-configuring replace arm (map entry 0 edited in place, count flat, read-back), live opacity/flow/hardness effects, unknown-key append exactly +1 + probe read-back, argument rejections. The set_param contract is now CI-PROVEN on real engines; the two smoke-assertion lessons (global baseline fixture-dependence; Krita/opacity not pre-projected) are documented in code comments.
 - arm64 leg in progress (object compile, proven-good tree — desktop smokes do not gate it). Release script release_v46.py drafted (release_v45 idempotent convention).
 - NEXT in-tick: run completion -> workflow_dispatch build-app (stages the NEW engine incl. set_param) -> poll 5 legs + emulator smoke -> release v0.46 (live param editing + active-preset inspector).
+
+---
+Task ID: 5-loop-72 (addendum — FULL CHAIN GREEN + RELEASED v0.46-live-param-editing)
+Agent: Z.ai Code (main, autonomous cron loop)
+
+Work Log:
+- CHAIN COMPLETED: krita-build 35678879422 SUCCESS (all 4 engine legs; SMOKE OK on Linux + Windows real-engine toolchains — the full set_param contract CI-proven: self-configuring replace arm, live opacity/flow/hardness effects, unknown-key append == +1 with read-back, rejections) -> build-app 35680866715 dispatched, 5/5 SUCCESS in 9 min (NEW engine staged into all three bundles) -> emulator smoke 35681273110 family PASSED (boot + 90s soak on the set_param APK).
+- RELEASE v0.46-live-param-editing PUBLISHED on app repo (id 393430486, app tree 19b2244): linux zip 47.5MB + windows real-engine zip 40.2MB + android real-engine APK 191.9MB — all verified state=uploaded. First release carrying: live paintop-settings param editing (set_param ABI + Engine params section with slider re-sync), active-preset inspector entry (5-loop-68), compat-gated setParam.
+- RELEASE-SCRIPT LESSONS (release_v46.py, builder 01b2711): (1) raw urllib artifact download 403s — GitHub redirects to Azure storage and urllib FORWARDS the Authorization header into the signed URL; curl drops it cross-host (v45 knew); (2) assets upload to uploads.github.com — api.github.com/releases/{id}/assets 404s despite the release existing (cost one false-positive "COMPLETE"); added curl -f so failures propagate; (3) api() now tolerates 404 on the release-tag pre-lookup; (4) idempotent re-run convention held: payload cache reused, existing-asset skip, body PATCHed.
+- Session-interruption note: the 03:14 tick was context-canceled mid-upload; this tick recovered state from the API (release existed, 0 assets) and completed the uploads. analyze gate: 0 errors / 0 warnings / 75 pre-existing infos.
+- Krita source untouched throughout: wrapper + smoke + Dart + workflow surfaces only.
+
+Stage Summary:
+- Roadmap (f) is DONE END TO END and RELEASED: the ACTIVE preset's raw paintop-settings map is user-EDITABLE from the settings panel with engine-authoritative application, the inspector is reachable for the active preset from both picker and panel, old engines degrade gracefully, and every semantic is gated in CI on real Krita v6.0.4 code.
+- NEXT (5-loop-73): (1) no pending CI — chain fully green, release shipped; (2) candidate next features from the goal list: Krita menu/tab feature surface survey (which curated-ABI capabilities remain unexposed — e.g. color/pigment, brush tips mode, opacity/flow curve editors), thumbnail caching if picker scroll perf regresses, or mirror-sync double-dispatch hygiene; (3) remember: mirror code files fire CI, worklog-only syncs silent; legacy pipelines on native/** are informational.
