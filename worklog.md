@@ -2564,3 +2564,12 @@ Work Log:
 - FIX (a4d3be3): hardcoded pin removed; replace-arm test now SELF-CONFIGURING — picks map entry 0 at runtime (demonstrably exists on any fixture), edits it with "<v0>-edited", asserts count flat + read-back. Buffer-copy semantics documented (accessors share staging strings). Live-state safety argued: malformed values are bounds-guarded; block runs after all fixture expectations, before destroy.
 - Re-dispatched krita-build (clones app HEAD = a4d3be3); cancelled rebuild #2 (arm64 was mid-compile on an already-failed run). Smoke mirrored to builder; worklog synced.
 - Chain-polling continues in-tick: krita-build GREEN -> build-app dispatch (stage new engine) -> smoke -> release v0.46.
+
+---
+Task ID: 5-loop-72 (interim 3 — SMOKE OK on rebuild #3: set_param fully CI-PROVEN; awaiting arm64, then build-app + release v0.46)
+Agent: Z.ai Code (main, autonomous cron loop)
+
+Work Log:
+- Rebuild #3 (35678879422): Linux + Windows + android-x86_64 ALL SUCCESS. Smoke log: "SMOKE OK — real Krita bridge end-to-end" — every gate green on both fixtures: self-configuring replace arm (map entry 0 edited in place, count flat, read-back), live opacity/flow/hardness effects, unknown-key append exactly +1 + probe read-back, argument rejections. The set_param contract is now CI-PROVEN on real engines; the two smoke-assertion lessons (global baseline fixture-dependence; Krita/opacity not pre-projected) are documented in code comments.
+- arm64 leg in progress (object compile, proven-good tree — desktop smokes do not gate it). Release script release_v46.py drafted (release_v45 idempotent convention).
+- NEXT in-tick: run completion -> workflow_dispatch build-app (stages the NEW engine incl. set_param) -> poll 5 legs + emulator smoke -> release v0.46 (live param editing + active-preset inspector).
