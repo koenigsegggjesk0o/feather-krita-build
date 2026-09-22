@@ -271,7 +271,13 @@ extern "C" int smoke_main(int argc, char** argv) {
                   "set_param(hardness) drives live hardness 0.9");
 
             // Unknown key: accepted and recorded, map grows by exactly one.
-            CHECK(krita_brush_set_param(p, "ColorSource/Type", "random") == 1,
+            // The probe key is namespaced outside anything Krita writes —
+            // guaranteed ABSENT from both stock fixtures' maps, so this
+            // exercises the append arm (a key like ColorSource/Type would
+            // hit the replace arm on basic-5, which already carries it,
+            // and the count would stay flat). The replace arm is already
+            // proven above by the Krita/opacity edit.
+            CHECK(krita_brush_set_param(p, "FeatherKrita/Probe", "random") == 1,
                   "set_param(unknown key) accepted (recorded in map)");
             CHECK(krita_brush_preset_param_count(p) == before + 1,
                   "unknown key appended to param map exactly once");
