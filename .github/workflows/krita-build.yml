@@ -266,7 +266,7 @@ jobs:
           FIXDIR=/tmp/fkr-app/test/fixtures
           (sudo apt-get install -y gdb >/dev/null 2>&1 || true)
           if command -v gdb >/dev/null 2>&1; then
-            # -batch + explicit commands: on SIGSEGV gdb stops and
+            # F1: -batch + explicit commands — on SIGSEGV gdb stops and
             # 'bt' prints the faulting stack before exiting.
             set +e
             gdb -batch -q \
@@ -289,20 +289,7 @@ jobs:
               $FIXDIR/stock_eraser_circle.kpp \
               $FIXDIR/stock_spray_pointillism.kpp \
               $FIXDIR/stock_smear_blender.kpp
-          fi \
-            $FIXDIR/stock_spray_pointillism.kpp \
-            $FIXDIR/stock_smear_blender.kpp \
-            $FIXDIR/stock_spray_pointillism.kpp \
-            $FIXDIR/stock_smear_blender.kpp \
-            $FIXDIR/stock_spray_pointillism.kpp \
-            $FIXDIR/stock_smear_blender.kpp \
-            $FIXDIR/stock_spray_pointillism.kpp \
-            $FIXDIR/stock_smear_blender.kpp \
-            $FIXDIR/stock_spray_pointillism.kpp \
-            $FIXDIR/stock_smear_blender.kpp \
-            $FIXDIR/stock_spray_pointillism.kpp \
-            $FIXDIR/stock_smear_blender.kpp
-
+          fi
       - name: Upload brush engine libs
         if: always()
         uses: actions/upload-artifact@v4
