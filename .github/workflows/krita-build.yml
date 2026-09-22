@@ -176,6 +176,18 @@ jobs:
             cp -L "$f" "artifact/lib/lib$b"
             patchelf --set-soname "lib$b" "artifact/lib/lib$b" 2>/dev/null || true
           done
+          # F1: paintop plugin MODULES (kritaspraypaintop.so, ...) live in
+          # build/bin WITHOUT the lib- prefix (Qt plugin naming) — collect
+          # them under lib-prefixed names so the bridge's -l flags resolve.
+          # SONAME stamped: modules carry none, and without one GNU ld
+          # embeds the artifact PATH as DT_NEEDED instead of a bare name.
+          (sudo apt-get install -y patchelf >/dev/null 2>&1 || true)
+          for f in /opt/krita/build/bin/krita*paintop*.so /opt/krita/build/bin/kritafilterop.so; do
+            [ -f "$f" ] || continue
+            b=$(basename "$f")
+            cp -L "$f" "artifact/lib/lib$b"
+            patchelf --set-soname "lib$b" "artifact/lib/lib$b" 2>/dev/null || true
+          done
           strip --strip-unneeded artifact/lib/libkrita*.so* 2>/dev/null || true
           ls artifact/lib/ | wc -l
           du -sh artifact/lib
@@ -543,7 +555,7 @@ jobs:
           # WINDOWS_EXPORT_ALL_SYMBOLS and pre-define each export macro EMPTY
           # so no TU compiles dllexport/dllimport semantics (which force
           # eager member instantiation on incomplete pimpl/adapter types).
-          EMPTY_EXPORTS="-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT= -DKRITARESOURCEWIDGETS_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= /FI$GITHUB_WORKSPACE/qmin_shim.h"
+          EMPTY_EXPORTS="-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT= -DKRITARESOURCEWIDGETS_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= /FI$GITHUB_WORKSPACE/qmin_shim.h"
           cmake -S "$GITHUB_WORKSPACE/krita" -B "$GITHUB_WORKSPACE/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON \
@@ -731,6 +743,7 @@ jobs:
           echo '=== F1: bridge TU compiled; starting lld-link ==='
           echo '=== F1: bridge TU compiled; starting lld-link ==='
           echo '=== F1: bridge TU compiled; starting lld-link ==='
+          echo '=== F1: bridge TU compiled; starting lld-link ==='
           lld-link @"$BUILD/krita_objs.rsp" "$BUILD/bridge_tu.obj" \
             /DLL /FORCE:MULTIPLE \
             /OUT:artifact/bin/krita_bridge_real.dll \
@@ -739,6 +752,7 @@ jobs:
             ole32.lib shell32.lib user32.lib advapi32.lib uuid.lib gdi32.lib \
             $KFLIBS \
             $VPLIBARGS
+          echo '=== F1: lld-link DONE; copying runtime DLLs ==='
           echo '=== F1: lld-link DONE; copying runtime DLLs ==='
           echo '=== F1: lld-link DONE; copying runtime DLLs ==='
           echo '=== F1: lld-link DONE; copying runtime DLLs ==='
@@ -758,9 +772,15 @@ jobs:
             /link /LIBPATH:artifact/lib krita_bridge_real.lib
           echo '=== Running REAL-engine smoke test on Windows (merged MSVC engine) ==='
           export PATH="$GITHUB_WORKSPACE/artifact/bin:$QT/bin:$KF5/bin:$VP/bin:$PATH"
-          echo '=== loader audit: unresolved DLL imports ==='
-          ldd artifact/bin/krita_bridge_real.dll 2>&1 | grep -i 'not found' || echo 'OK: no missing imports for bridge dll'
-          ldd artifact/bin/smoke_test_real.exe 2>&1 | grep -i 'not found' || echo 'OK: no missing imports for smoke exe'
+          echo '=== F1: loader audit — STATIC import-table dump (MSYS ldd LOADS'
+          echo '=== F1: the image and runs its static initializers, which hang'
+          echo '=== F1: headless — run 35782502710 evidence; the smoke is the real gate) ==='
+          (command -v llvm-readobj >/dev/null 2>&1 \
+            && llvm-readobj --coff-imports artifact/bin/krita_bridge_real.dll \
+              | grep -oE 'Name: [^ ]+\.dll' | sed 's/Name: //' | sort -u \
+            || echo 'llvm-readobj unavailable — audit skipped')
+          echo '=== F1: static import audit done ==='
+          echo '=== F1: runtime ready; launching smoke ==='
           echo '=== F1: runtime ready; launching smoke ==='
           echo '=== F1: runtime ready; launching smoke ==='
           echo '=== F1: runtime ready; launching smoke ==='
@@ -771,11 +791,22 @@ jobs:
           FIXDIR=$(cygpath -w /tmp/fkr-app/test/fixtures)
           echo "fixture dir: $FIXDIR"
           ls -la /tmp/fkr-app/test/fixtures/
+          # F1: 10-minute watchdog (see the ldd note above).
           ./artifact/bin/smoke_test_real.exe \
             "$FIXDIR/stock_basic_5_size.kpp" \
             "$FIXDIR/stock_eraser_circle.kpp" \
             "$FIXDIR/stock_spray_pointillism.kpp" \
             "$FIXDIR/stock_smear_blender.kpp" \
+            "$FIXDIR/stock_spray_pointillism.kpp" \
+            "$FIXDIR/stock_smear_blender.kpp" > smoke_out.txt 2>&1 &
+          SMOKE_PID=$!
+          ( sleep 600; kill -9 $SMOKE_PID 2>/dev/null ) &
+          WATCHDOG=$!
+          wait $SMOKE_PID; RC=$?
+          kill $WATCHDOG 2>/dev/null
+          cat smoke_out.txt 2>/dev/null || true
+          echo "smoke rc=$RC"
+          [ "$RC" -eq 0 ] || { echo "FATAL: smoke failed rc=$RC (137=killed watchdog)"; exit $RC; } \
             "$FIXDIR/stock_spray_pointillism.kpp" \
             "$FIXDIR/stock_smear_blender.kpp" \
             "$FIXDIR/stock_spray_pointillism.kpp" \
