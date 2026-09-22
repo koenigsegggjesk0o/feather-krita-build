@@ -1140,12 +1140,15 @@ static KisPaintOpPresetSP loadSessionPreset(KritaBrushContext* h,
 
     // Path 1: the engine's own PNG preset loader.
     {
+        std::fprintf(stderr, "F1: loadSessionPreset — engine PNG path (loadFromDevice)\n");
         KisPaintOpPresetSP preset(new KisPaintOpPreset(h->presetPath));
         f.seek(0);
         if (preset->loadFromDevice(&f, KisGlobalResourcesInterface::instance()) &&
             preset->valid() && preset->settings()) {
+            std::fprintf(stderr, "F1: loadSessionPreset — PNG path ok\n");
             return preset;
         }
+        std::fprintf(stderr, "F1: loadSessionPreset — PNG path rejected, trying fromXML\n");
     }
 
     // Path 2: non-PNG containers — hand the extracted XML to the
@@ -1982,11 +1985,16 @@ int32_t krita_stroke_begin(KritaBrushContext* handle, int32_t tex_w,
     // The engine's own preset loader (registry must be populated first —
     // KisPaintOpPreset::fromXML validates the family against it).
     std::string err;
+    std::fprintf(stderr, "F1: stroke_begin — loading preset through the engine\n");
     KisPaintOpPresetSP preset = loadSessionPreset(handle, &err);
     if (!preset) {
         handle->setError(err);
+        std::fprintf(stderr, "F1: stroke_begin — preset load FAILED: %s\n",
+                     err.c_str());
         return -3;
     }
+    std::fprintf(stderr, "F1: stroke_begin — preset ok (family %s), building session\n",
+                 preset->paintOp().id().toStdString().c_str());
 
     StrokeSession* s = new (std::nothrow) StrokeSession();
     if (!s) {
@@ -2001,12 +2009,15 @@ int32_t krita_stroke_begin(KritaBrushContext* handle, int32_t tex_w,
     // registry-dispatched paintop. KisPainter::setPaintOpPreset calls
     // KisPaintOpRegistry::paintOp — the exact desktop dispatcher.
     s->device = new KisPaintDevice(handle->cs);
+    std::fprintf(stderr, "F1: stroke_begin — device ok\n");
     s->image = new KisImage(nullptr, tex_w, tex_h, handle->cs,
                             "FeatherStrokeSession");
+    std::fprintf(stderr, "F1: stroke_begin — image ok\n");
     // KisImageSP converts to the ctor's KisImageWSP (same pattern as
     // Krita's own unit tests).
     s->layer = new KisPaintLayer(s->image, "FeatherStrokeTexture",
                                  quint8(255), s->device);
+    std::fprintf(stderr, "F1: stroke_begin — layer ok\n");
     s->painter = new KisPainter(s->device);
     s->preset = preset;
 
@@ -2023,13 +2034,16 @@ int32_t krita_stroke_begin(KritaBrushContext* handle, int32_t tex_w,
                                          : handle->cs->compositeOp(COMPOSITE_OVER));
     }
 
+    std::fprintf(stderr, "F1: stroke_begin — dispatching preset through the registry\n");
     s->painter->setPaintOpPreset(preset, s->layer, s->image);
     if (!s->painter->paintOp()) {
         handle->setError("stroke_begin: registry could not create the paintop for "
                          "preset family " + preset->paintOp().id().toStdString());
+        std::fprintf(stderr, "F1: stroke_begin — registry dispatch FAILED\n");
         destroyStrokeSession(handle);
         return -4;
     }
+    std::fprintf(stderr, "F1: stroke_begin — paintop created, session live\n");
 
     handle->strokeEngineId = preset->paintOp().id().toStdString();
     handle->session = s;
@@ -2083,6 +2097,8 @@ int32_t krita_stroke_move(KritaBrushContext* handle, double u, double v,
     // shares the stroke's random sources.
     info.setRandomSource(s->random.source());
     info.setPerStrokeRandomSource(s->random.perStrokeSource());
+    std::fprintf(stderr, "F1: stroke_move %s (%.1f, %.1f)\n",
+                 s->haveLast ? "paintLine" : "paintAt", px, py);
     if (!s->haveLast) {
         s->painter->paintAt(info, &s->distance);
         s->haveLast = true;
