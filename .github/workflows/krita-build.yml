@@ -128,6 +128,18 @@ jobs:
             cp -L "$f" "artifact/lib/lib$b"
             patchelf --set-soname "lib$b" "artifact/lib/lib$b" 2>/dev/null || true
           done
+          # F1: paintop plugin MODULES (kritaspraypaintop.so, ...) live in
+          # build/bin WITHOUT the lib- prefix (Qt plugin naming) — collect
+          # them under lib-prefixed names so the bridge's -l flags resolve.
+          # SONAME stamped: modules carry none, and without one GNU ld
+          # embeds the artifact PATH as DT_NEEDED instead of a bare name.
+          (sudo apt-get install -y patchelf >/dev/null 2>&1 || true)
+          for f in /opt/krita/build/bin/krita*paintop*.so /opt/krita/build/bin/kritafilterop.so; do
+            [ -f "$f" ] || continue
+            b=$(basename "$f")
+            cp -L "$f" "artifact/lib/lib$b"
+            patchelf --set-soname "lib$b" "artifact/lib/lib$b" 2>/dev/null || true
+          done
           strip --strip-unneeded artifact/lib/libkrita*.so* 2>/dev/null || true
           ls artifact/lib/ | wc -l
           du -sh artifact/lib
@@ -197,6 +209,8 @@ jobs:
           ./artifact/bin/smoke_test_real \
             $FIXDIR/stock_basic_5_size.kpp \
             $FIXDIR/stock_eraser_circle.kpp \
+            $FIXDIR/stock_spray_pointillism.kpp \
+            $FIXDIR/stock_smear_blender.kpp \
             $FIXDIR/stock_spray_pointillism.kpp \
             $FIXDIR/stock_smear_blender.kpp \
             $FIXDIR/stock_spray_pointillism.kpp \
@@ -456,7 +470,7 @@ jobs:
           # WINDOWS_EXPORT_ALL_SYMBOLS and pre-define each export macro EMPTY
           # so no TU compiles dllexport/dllimport semantics (which force
           # eager member instantiation on incomplete pimpl/adapter types).
-          EMPTY_EXPORTS="-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT= -DKRITARESOURCEWIDGETS_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= /FI$GITHUB_WORKSPACE/qmin_shim.h"
+          EMPTY_EXPORTS="-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT= -DKRITARESOURCEWIDGETS_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= /FI$GITHUB_WORKSPACE/qmin_shim.h"
           cmake -S "$GITHUB_WORKSPACE/krita" -B "$GITHUB_WORKSPACE/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON \
@@ -678,6 +692,8 @@ jobs:
           ./artifact/bin/smoke_test_real.exe \
             "$FIXDIR/stock_basic_5_size.kpp" \
             "$FIXDIR/stock_eraser_circle.kpp" \
+            "$FIXDIR/stock_spray_pointillism.kpp" \
+            "$FIXDIR/stock_smear_blender.kpp" \
             "$FIXDIR/stock_spray_pointillism.kpp" \
             "$FIXDIR/stock_smear_blender.kpp" \
             "$FIXDIR/stock_spray_pointillism.kpp" \
