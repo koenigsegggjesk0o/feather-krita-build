@@ -788,25 +788,35 @@ jobs:
           FIXDIR=$(cygpath -w /tmp/fkr-app/test/fixtures)
           echo "fixture dir: $FIXDIR"
           ls -la /tmp/fkr-app/test/fixtures/
-          # F1: 10-minute watchdog (see the ldd note above). set +e:
-          # `wait` returning the exe's non-zero rc must NOT fire errexit
-          # before RC is captured (run 35791731483 lesson).
+          # F1: spawn the smoke via NATIVE PowerShell — MSYS bash `wait`
+          # on a backgrounded native exe returns 127 (PID is not a shell
+          # child; runs 35791731483/35797460479). WaitForExit also gives
+          # the 10-minute static-init-hang guard.
+          cat > run_smoke.ps1 <<'PS1'
+          param([string]$FixDir, [int]$TimeoutSec = 600)
+          $fixtureArgs = @(
+            "$FixDir\stock_basic_5_size.kpp",
+            "$FixDir\stock_eraser_circle.kpp",
+            "$FixDir\stock_spray_pointillism.kpp",
+            "$FixDir\stock_smear_blender.kpp"
+          )
+          $p = Start-Process -FilePath ".\artifact\bin\smoke_test_real.exe" `
+              -ArgumentList $fixtureArgs -PassThru -NoNewWindow `
+              -RedirectStandardOutput smoke_out.txt -RedirectStandardError smoke_err.txt
+          if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+              $p.Kill()
+              Write-Host "FATAL: smoke timed out after $TimeoutSec s (static-init hang?)"
+              exit 124
+          }
+          exit $p.ExitCode
+          PS1
           set +e
-          ./artifact/bin/smoke_test_real.exe \
-            "$FIXDIR/stock_basic_5_size.kpp" \
-            "$FIXDIR/stock_eraser_circle.kpp" \
-            "$FIXDIR/stock_spray_pointillism.kpp" \
-            "$FIXDIR/stock_smear_blender.kpp" > smoke_out.txt 2>&1 &
-          SMOKE_PID=$!
-          ( sleep 600; kill -9 $SMOKE_PID 2>/dev/null ) &
-          WATCHDOG=$!
-          wait $SMOKE_PID
+          pwsh -NoProfile -File run_smoke.ps1 -FixDir "$FIXDIR"
           RC=$?
           set -e
-          kill $WATCHDOG 2>/dev/null
-          cat smoke_out.txt 2>/dev/null || true
+          cat smoke_out.txt smoke_err.txt 2>/dev/null || true
           echo "smoke rc=$RC"
-          [ "$RC" -eq 0 ] || { echo "FATAL: smoke failed rc=$RC (137=killed watchdog)"; exit $RC; }
+          [ "$RC" -eq 0 ] || { echo "FATAL: smoke failed rc=$RC (124=timeout)"; exit $RC; }
       - name: Save dependency caches
         if: always()
         uses: actions/cache/save@v4
