@@ -1241,16 +1241,16 @@ int32_t krita_brush_set_param(KritaBrushContext* handle, const char* name,
     //    existing entry or append at the end (same policy as the
     //    loadPreset capture), so the getters immediately reflect it.
     const std::string k = key.toStdString();
-    const std::string v = value;
+    const std::string recorded = value;
     bool replaced = false;
     for (auto& kv : handle->presetParams) {
         if (kv.first == k) {
-            kv.second = v;
+            kv.second = recorded;
             replaced = true;
             break;
         }
     }
-    if (!replaced) handle->presetParams.emplace_back(k, v);
+    if (!replaced) handle->presetParams.emplace_back(k, recorded);
 
     // 2) Apply the live effect for keys the engine consumes. The bounds
     //    and alias semantics mirror the loadPreset consumption exactly;
