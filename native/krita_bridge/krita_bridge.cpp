@@ -524,6 +524,79 @@ int32_t krita_brush_set_curve(KritaBrushContext* handle, const char* key,
     return 0;
 }
 
+// --- stroke-session ABI (phase F1): capability probes only ---------------
+// The pure-Dart fallback bridge has no Krita paintop pipeline — every
+// session export reports "not supported" so the Dart bindings keep the
+// synthetic-dab path (same degrade contract as the curve/param probes;
+// documented in krita_bridge.h).
+
+int32_t krita_stroke_begin(KritaBrushContext* handle,
+                           int32_t tex_w, int32_t tex_h) {
+    (void)handle;
+    (void)tex_w;
+    (void)tex_h;
+    return 0;
+}
+
+int32_t krita_stroke_upload(KritaBrushContext* handle, const uint8_t* rgba,
+                            int32_t x, int32_t y, int32_t w, int32_t h) {
+    (void)handle;
+    (void)rgba;
+    (void)x;
+    (void)y;
+    (void)w;
+    (void)h;
+    return 0;
+}
+
+int32_t krita_stroke_move(KritaBrushContext* handle,
+                          double u, double v, double pressure,
+                          double tilt_x, double tilt_y, double time_s) {
+    (void)handle;
+    (void)u;
+    (void)v;
+    (void)pressure;
+    (void)tilt_x;
+    (void)tilt_y;
+    (void)time_s;
+    return 0;
+}
+
+int32_t krita_stroke_dirty_rect(KritaBrushContext* handle, int32_t* x,
+                                int32_t* y, int32_t* w, int32_t* h) {
+    (void)handle;
+    (void)x;
+    (void)y;
+    (void)w;
+    (void)h;
+    return 0;
+}
+
+int32_t krita_stroke_readback(KritaBrushContext* handle, uint8_t* out_rgba,
+                              int32_t x, int32_t y, int32_t w, int32_t h) {
+    (void)handle;
+    (void)out_rgba;
+    (void)x;
+    (void)y;
+    (void)w;
+    (void)h;
+    return 0;
+}
+
+void krita_stroke_end(KritaBrushContext* handle) {
+    (void)handle;
+}
+
+const char* krita_stroke_engine_id(KritaBrushContext* handle) {
+    (void)handle;
+    return "";
+}
+
+int32_t krita_stroke_registry_count(KritaBrushContext* handle) {
+    (void)handle;
+    return 0;
+}
+
 bool krita_brush_generate_dab(KritaBrushContext* handle,
                               const BrushInput* input,
                               BrushDab* out_dab) {
