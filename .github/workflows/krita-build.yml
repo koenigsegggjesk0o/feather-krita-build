@@ -197,6 +197,16 @@ jobs:
           KRITA=/opt/krita
           BUILD=$KRITA/build
           mkdir -p artifact/lib artifact/bin
+          # F1 ABI-critical: the bridge TU must compile with the SAME
+          # HAVE_* feature macros as the engine. HAVE_X11 (defined by
+          # CMake on Linux) enables HAVE_THREADED_TEXT_RENDERING_
+          # WORKAROUND, which adds a VIRTUAL SLOT to KisPaintOpFactory —
+          # without it the bridge emits a shifted factory vtable and the
+          # engine createSettings call lands on createConfigWidget ->
+          # QWidget headless -> SIGSEGV (run 35791731483 backtrace).
+          KRITAHAVES=$(cd $BUILD && ninja -t commands kritalibbrush 2>/dev/null \
+            | grep -oE '[-]DHAVE_[A-Z_0-9]+' | sort -u | tr '\n' ' ')
+          echo "engine HAVE_* defines: $KRITAHAVES"
           INC=""
           for d in $(find $KRITA/libs -maxdepth 2 -type d) $(find $BUILD/libs -maxdepth 2 -type d) $BUILD; do
             INC="$INC -I$d"
@@ -241,7 +251,7 @@ jobs:
           PLUGIN_OBJS=$(find /opt/krita/build/plugins/paintops -name "*.o" \
             | grep -v 'CMakeFiles/kritalibpaintop' | sort)
           echo "plugin objects merged: $(echo "$PLUGIN_OBJS" | wc -l)"
-          g++ -std=c++17 -shared -fPIC -O2 -fno-operator-names $INC \
+          g++ -std=c++17 -shared -fPIC -O2 -fno-operator-names $KRITAHAVES $INC \
             /opt/bridge/krita_bridge_real.cpp \
             $PLUGIN_OBJS \
             -Lartifact/lib \
@@ -778,35 +788,25 @@ jobs:
           FIXDIR=$(cygpath -w /tmp/fkr-app/test/fixtures)
           echo "fixture dir: $FIXDIR"
           ls -la /tmp/fkr-app/test/fixtures/
-          # F1: 10-minute watchdog (see the ldd note above).
+          # F1: 10-minute watchdog (see the ldd note above). set +e:
+          # `wait` returning the exe's non-zero rc must NOT fire errexit
+          # before RC is captured (run 35791731483 lesson).
+          set +e
           ./artifact/bin/smoke_test_real.exe \
             "$FIXDIR/stock_basic_5_size.kpp" \
             "$FIXDIR/stock_eraser_circle.kpp" \
-            "$FIXDIR/stock_spray_pointillism.kpp" \
-            "$FIXDIR/stock_smear_blender.kpp" \
             "$FIXDIR/stock_spray_pointillism.kpp" \
             "$FIXDIR/stock_smear_blender.kpp" > smoke_out.txt 2>&1 &
           SMOKE_PID=$!
           ( sleep 600; kill -9 $SMOKE_PID 2>/dev/null ) &
           WATCHDOG=$!
-          wait $SMOKE_PID; RC=$?
+          wait $SMOKE_PID
+          RC=$?
+          set -e
           kill $WATCHDOG 2>/dev/null
           cat smoke_out.txt 2>/dev/null || true
           echo "smoke rc=$RC"
-          [ "$RC" -eq 0 ] || { echo "FATAL: smoke failed rc=$RC (137=killed watchdog)"; exit $RC; } \
-            "$FIXDIR/stock_spray_pointillism.kpp" \
-            "$FIXDIR/stock_smear_blender.kpp" \
-            "$FIXDIR/stock_spray_pointillism.kpp" \
-            "$FIXDIR/stock_smear_blender.kpp" \
-            "$FIXDIR/stock_spray_pointillism.kpp" \
-            "$FIXDIR/stock_smear_blender.kpp" \
-            "$FIXDIR/stock_spray_pointillism.kpp" \
-            "$FIXDIR/stock_smear_blender.kpp" \
-            "$FIXDIR/stock_spray_pointillism.kpp" \
-            "$FIXDIR/stock_smear_blender.kpp" \
-            "$FIXDIR/stock_spray_pointillism.kpp" \
-            "$FIXDIR/stock_smear_blender.kpp"
-
+          [ "$RC" -eq 0 ] || { echo "FATAL: smoke failed rc=$RC (137=killed watchdog)"; exit $RC; }
       - name: Save dependency caches
         if: always()
         uses: actions/cache/save@v4
