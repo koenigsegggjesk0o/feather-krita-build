@@ -365,6 +365,120 @@ KRITA_BRIDGE_API int32_t krita_brush_set_curve(KritaBrushContext* handle,
                                                const char* key,
                                                const char* curve_xml);
 
+// ---------------------------------------------------------------------------
+// Stroke session ABI — "Feather-3D" campaign, phase F1.
+//
+// ABI v1 renders dabs through the AUTO-BRUSH mask path only; the session
+// exports below run a REAL STROKE through Krita's own paintop pipeline:
+// the preset (loaded via krita_brush_load_preset) is dispatched through
+// KisPaintOpRegistry — the exact dispatcher desktop Krita uses — onto a
+// texture-sized RGBA8 KisPaintDevice owned by the bridge. The host
+// (Feather-3D) uploads the current surface texture, streams stroke
+// events in UV space, and reads back only the dirty region.
+//
+// Lifecycle: krita_stroke_begin (creates the device + painter + the
+// registry-dispatched paintop) -> krita_stroke_upload* ->
+// krita_stroke_move* -> krita_stroke_dirty_rect / krita_stroke_readback*
+// -> krita_stroke_end. A second krita_stroke_begin ends the active
+// session first. The v1 exports remain valid at any time; the session
+// keeps its own engine objects.
+//
+// Capability probe contract (same as the curve ABI): the portable and
+// fallback bridges return 0 / NULL / empty from every session export
+// (no session state exists there); the Dart bindings treat those values
+// as "stroke session not supported on this bridge" and keep the v1
+// dab-compositing path. Back-compat: new functions only, no struct
+// layout change.
+// ---------------------------------------------------------------------------
+
+/// Starts a stroke session on a [tex_w] x [tex_h] RGBA8 texture canvas,
+/// dispatching the CURRENTLY loaded preset (krita_brush_load_preset)
+/// through the engine's own KisPaintOpRegistry. The registry is
+/// populated headless with the same factories the paintop plugins
+/// register on desktop (mypaint excluded: it needs the external
+/// libmypaint dependency): paintbrush, duplicate, colorsmudge,
+/// curvebrush, deformbrush, experimentbrush, spraybrush, filter,
+/// gridbrush, hairybrush, hatchingbrush, particlebrush, roundmarker,
+/// sketchbrush, tangentnormal. Returns 0 on success; -1 on null handle
+/// or non-positive dimensions; -2 when no preset was loaded yet; -3
+/// when the engine rejects the preset (unknown family / unparsable
+/// container); -4 on internal setup failure (see
+/// krita_brush_last_error). Added by phase F1; back-compat: new
+/// function.
+KRITA_BRIDGE_API int32_t krita_stroke_begin(KritaBrushContext* handle,
+                                            int32_t tex_w, int32_t tex_h);
+
+/// Uploads an RGBA8 (straight alpha, R,G,B,A byte order) block of the
+/// current texture INTO the session's paint device (KisPaintDevice::
+/// writeBytes) so canvas-sampling engines (colorsmudge, deform,
+/// filterop, duplicate) read real pixels. The rectangle is clipped to
+/// the texture; coordinates are texel-space. Returns 1 on success, 0 on
+/// a null/inactive session or bad arguments. Added by phase F1.
+KRITA_BRIDGE_API int32_t krita_stroke_upload(KritaBrushContext* handle,
+                                             const uint8_t* rgba,
+                                             int32_t x, int32_t y,
+                                             int32_t w, int32_t h);
+
+/// Streams one stroke event through the engine's own paint pipeline
+/// (KisPainter::paintAt for the first event, KisPainter::paintLine for
+/// subsequent ones — the spacing/interpolation is the engine's own).
+/// [u]/[v] are normalized texture coordinates in [0,1] (UV space; the
+/// bridge maps them to texels), [pressure] in [0,1] (out-of-range
+/// values fall back to 1.0, same policy as the dab ABI), [tilt_x]/
+/// [tilt_y] in degrees (passed through as tool-level tilt, see
+/// KisPaintInformation), [time_s] seconds since stroke start. The
+/// brush color is the context color (krita_brush_set_color); the
+/// composite op comes from the preset's own settings (CompositeOp,
+/// e.g. erase for eraser presets — the engine composites, not the
+/// host). Returns 1 when a stroke event ran, 0 on a null/inactive
+/// session. Added by phase F1.
+KRITA_BRIDGE_API int32_t krita_stroke_move(KritaBrushContext* handle,
+                                           double u, double v,
+                                           double pressure,
+                                           double tilt_x, double tilt_y,
+                                           double time_s);
+
+/// Reports the union of the engine-reported dirty rects since the
+/// session start / the previous readback query. Returns 1 and fills
+/// [x]/[y]/[w]/[h] when a dirty region exists (the host should
+/// readback + repaint exactly this region), 0 when nothing is dirty,
+/// -1 on a null/inactive session or null out-pointers. Added by
+/// phase F1.
+KRITA_BRIDGE_API int32_t krita_stroke_dirty_rect(KritaBrushContext* handle,
+                                                 int32_t* x, int32_t* y,
+                                                 int32_t* w, int32_t* h);
+
+/// Reads an RGBA8 (straight alpha) block of the session's paint device
+/// back to the host (KisPaintDevice::readBytes; the dirty rect is the
+/// natural query region). [out_rgba] must hold w*h*4 bytes. Returns 1
+/// on success, 0 on a null/inactive session or bad arguments. Added
+/// by phase F1.
+KRITA_BRIDGE_API int32_t krita_stroke_readback(KritaBrushContext* handle,
+                                               uint8_t* out_rgba,
+                                               int32_t x, int32_t y,
+                                               int32_t w, int32_t h);
+
+/// Ends the active session: the painter (and the engine-owned paintop)
+/// is destroyed and the texture device released. The recorded engine
+/// id (krita_stroke_engine_id) survives until the next session. No-op
+/// without an active session. Added by phase F1.
+KRITA_BRIDGE_API void krita_stroke_end(KritaBrushContext* handle);
+
+/// Returns the paintop family id the CURRENT (or most recent) session
+/// actually dispatched through the registry (e.g. "paintbrush",
+/// "spraybrush", "colorsmudge" — the honesty badge for the host UI).
+/// Empty string when no session ever ran on this handle. The pointer
+/// is owned by the handle; copy it if it must outlive the handle.
+/// Added by phase F1.
+KRITA_BRIDGE_API const char* krita_stroke_engine_id(KritaBrushContext* handle);
+
+/// Returns the number of paintop families registered in the engine's
+/// paintop registry available to stroke sessions (15 on the real
+/// bridge: the built-in non-mypaint families; see
+/// krita_stroke_begin). The portable and fallback bridges return 0
+/// (capability probe). Added by phase F1.
+KRITA_BRIDGE_API int32_t krita_stroke_registry_count(KritaBrushContext* handle);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
