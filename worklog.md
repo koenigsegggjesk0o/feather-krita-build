@@ -2662,3 +2662,22 @@ Work Log:
 Stage Summary:
 - AUDIT VERDICT: NO GIMMICK in the load-bearing claims — real Krita engine (byte/symbol/log-proven), real CI chain, real smoke gates, real app integration, real Feather-3D wiring, untouched Krita source (user-uploaded, upstream-identical). Four honesty gaps to fix: version mislabel (5.3.4 vs 6.0.4), Linux bundle runtime closure missing, no portable fallback in the Linux bundle, no active-engine indicator in the UI.
 - NEXT (5-loop-74): (1) cheap doc corrections first — version labeling (HANDOVER/summaries: "Krita v6.0.4 source, built Qt5 flavor, engine self-reports 5.3.4"); (2) then pick per the user's preference: (a) Linux bundle runtime closure (bundle Qt5/KF5 like the Windows zip + clean-host dlopen CI gate), or (b) active-engine badge in settings/about calling krita_brush_version(), or (c) the already-planned sensor-curve milestone from 5-loop-73; (3) the cron loop continues — audit was read-only except this worklog entry.
+
+---
+Task ID: 5-audit-2 (user follow-up: is the Krita source on their GitHub REAL or mangled?)
+Agent: Z.ai Code (main, interactive session; answering the user's authenticity question with fresh primary evidence)
+Task: The user asked (Indonesian): they got permission from Krita and uploaded the real source themselves, they had told the previous agent to "reverse engineer", and they suspect the Krita source on their GitHub may not be the real one ("acak-acakan"?). Mission: re-verify krita-source/ authenticity with FRESH primary evidence (trust policy — never rely on prior audit narrative), then answer honestly.
+
+Work Log:
+- Re-ran the definitive tree diff (audit_mirror_tree_diff.py, fresh token inject): mirror krita-source/ @main vs upstream KDE/krita tag v6.0.4 — 12,325 blobs compared via git blob SHAs (content hashes): MODIFIED=0, ONLY_IN_MIRROR=0, ONLY_IN_UPSTREAM=7 (5 template .directory + 2 packaging .lnk — zero build impact). BYTE-IDENTICAL.
+- Independent second proof path: fetched canonical invent.kde.org v6.0.4 CMakeLists.txt live + the mirror's copy — SHA256 IDENTICAL (d4855d4d43e4a37a904037c09bd13bcc26fc6de2e1c93f6b4d999bb5aa292a4d).
+- v6.0.4 confirmed as an OFFICIAL KDE release tag (chain v6.0.0 → v6.0.1 → v6.0.1.1 → v6.0.2 → v6.0.2.1 → v6.0.3 → v6.0.4 on KDE/krita).
+- Authorship verified via commits API (path=krita-source, sha=main): ALL commits authored by "Z User" (the human user, 2026-09-15, Indonesian messages; final = 9c9a4235 "Ganti binary dengan KODE SUMBER ASLI C++ v6.0.4 (6142 file, 0 binary)"). Upload history was multi-stage (4586 files → top-up → v6.0.3 mix-in 12:02 → clean v6.0.4 13:03) but the FINAL state is upstream-identical. The agent NEVER touched the source.
+- Dual version block re-verified in context (mirror CMakeLists ~L130-143, upstream-identical bytes): if(BUILD_WITH_QT6) → KRITA_VERSION_STRING "6.0.4" else() → "5.3.4". CI builds the Qt5 flavor → shipped engine self-reports 5.3.4. Upstream quirk, not tampering (HANDOVER §6.5 holds).
+- Wrapper spot-check (fresh): krita_bridge_real.cpp (1500 lines) calls real engine APIs — KisBrush::fromXML(brushEl, KisGlobalResourcesInterface::instance()) L1007, KoColorSpaceRegistry::instance()->rgb8() L715, brush->mask(...) L1354, KritaVersionWrapper::versionString L1433.
+- ANSWERED the user in Indonesian: source = GENUINE v6.0.4 (two independent byte-level proofs), uploaded by the user themselves, agent never touched it; 5.3.4 runtime string = upstream dual-version CMake quirk in the Qt5 flavor; the previous agent did source-level integration (build real source in CI + thin C ABI wrapper), not binary reverse engineering — end state proven real by CI logs/symbols/shipped libs. The 7 missing files are trivial; adding them is the USER's call (agent must not touch krita-source).
+- Krita source untouched: read-only audit + this worklog entry only.
+
+Stage Summary:
+- VERDICT: app-repo main:krita-source/ is the genuine upstream Krita v6.0.4 — byte-identical via two independent paths, user-uploaded, never agent-modified. No gimmicks.
+- NEXT (next tick): resume the roadmap — milestone (i) sensor curve editors (wrapper probe first, per 5-loop-73/74 plan) or the 5-audit honesty-gap fixes (active-engine badge / Linux bundle closure), per user preference.
