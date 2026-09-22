@@ -256,6 +256,11 @@ extern "C" int smoke_main(int argc, char** argv) {
                                       "55") == 0,
                       "param map of record reads the edited value");
             }
+            // Replace arm pinned: Krita/opacity pre-exists in the stock
+            // fixtures' maps (loadPreset derives opacity from it), so the
+            // edit must REPLACE in place — count stays flat.
+            CHECK(krita_brush_preset_param_count(p) == before,
+                  "Krita/opacity edit hits the replace arm (count flat)");
 
             // Flow: FlowValue is the per-dab application rate base.
             CHECK(krita_brush_set_param(p, "FlowValue", "0.25") == 1,
@@ -274,13 +279,35 @@ extern "C" int smoke_main(int argc, char** argv) {
             // The probe key is namespaced outside anything Krita writes —
             // guaranteed ABSENT from both stock fixtures' maps, so this
             // exercises the append arm (a key like ColorSource/Type would
-            // hit the replace arm on basic-5, which already carries it,
-            // and the count would stay flat). The replace arm is already
-            // proven above by the Krita/opacity edit.
+            // hit the replace arm on basic-5, which already carries it).
+            // Baseline is captured probe-LOCAL on purpose: the FlowValue /
+            // hardness edits above drive their live effects regardless, but
+            // on fixtures whose maps spell those params differently they
+            // legitimately APPEND to the map of record — a global baseline
+            // would make this assertion fixture-dependent (empirically
+            // proven: it failed on both stock fixtures before this fix).
+            const int32_t beforeProbe = krita_brush_preset_param_count(p);
             CHECK(krita_brush_set_param(p, "FeatherKrita/Probe", "random") == 1,
                   "set_param(unknown key) accepted (recorded in map)");
-            CHECK(krita_brush_preset_param_count(p) == before + 1,
+            CHECK(krita_brush_preset_param_count(p) == beforeProbe + 1,
                   "unknown key appended to param map exactly once");
+            {
+                // Read-back: the +1 delta must be THE probe entry itself.
+                int32_t probeIdx = -1;
+                const int32_t n = krita_brush_preset_param_count(p);
+                for (int32_t i = 0; i < n; ++i) {
+                    const char* pn = krita_brush_preset_param_name(p, i);
+                    if (pn && std::strcmp(pn, "FeatherKrita/Probe") == 0) {
+                        probeIdx = i;
+                        break;
+                    }
+                }
+                CHECK(probeIdx >= 0 &&
+                          std::strcmp(krita_brush_preset_param_value(
+                                          p, probeIdx),
+                                      "random") == 0,
+                      "probe entry reads back the recorded value");
+            }
 
             // Capability/argument rejection arms.
             CHECK(krita_brush_set_param(p, "", "1") == 0,
