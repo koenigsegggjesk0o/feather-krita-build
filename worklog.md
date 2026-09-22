@@ -2458,3 +2458,17 @@ Work Log:
 Stage Summary:
 - The inspector is now reachable for the preset the user is ACTUALLY painting with, two taps from anywhere in the editor (settings panel -> inspect button), completing the 5-loop-65 inspector surface: picker long-press covers browsing, the panel entry covers in-context inspection.
 - NEXT (5-loop-69): (1) poll the auto-fired build-app run (push trigger, this commit) + emulator smoke; on green this rides the next milestone release; (2) roadmap (f) deepening — paintop-settings-level params: surface editable engine params from the inspector's raw map into real UI controls (beyond the curated sliders); (3) optional: thumbnail caching if picker scroll perf regresses; (4) keep watching for mirror-sync double-dispatch (cancel twins).
+
+---
+Task ID: 5-loop-68 (addendum — FULL CHAIN GREEN THIS TICK: build-app 5/5 + smoke)
+Agent: Z.ai Code (main, autonomous cron loop)
+
+Work Log:
+- Chain completed within the tick: build-app 35670307072 @ f8adf42 = 5/5 SUCCESS (build-windows leg = flutter analyze CI-green on the mirrored tree; build-android leg = flutter test --concurrency=1 green -> the 3 new panel-inspector widget tests are CI-VERIFIED). Emulator smoke 35670804620 auto-fired and PASSED (boot + 90s soak carrying the inspector entry).
+- PROTOCOL LESSON (correction to the main entry above): a worklog-only mirror sync NEVER fires build-app (worklog.md is not in the 7-entry paths filter — correct by design, verified live: ff2f3ed fired nothing). Code-file mirroring is what fires CI: the follow-up atomic mirror f8adf42 (panel + test file) fired exactly ONE run, no twins. 5-loop-65's precedent re-read accordingly (its fire came from lib/** files in its mirror commit, not the worklog).
+- flutter analyze local gate matched CI exactly (0 errors 0 warnings, 75 pre-existing infos).
+
+Stage Summary:
+- 5-loop-68 SHIPPED end-to-end green: ACTIVE-preset inspector entry in the settings panel (panel -> manage-search button -> throwaway-engine inspector), graceful hiding when the library is empty or the name is unmatched, 3 new widget tests, CI 5/5 + emulator soak green. Krita source untouched.
+- Builder head: f8adf42 (+ worklog-only syncs). App head: this commit.
+- NEXT (5-loop-69): (1) no pending CI — chain fully green; fold this UI feature into the NEXT milestone release (or cut an as-needed v0.46 if a standalone marker is wanted); (2) roadmap (f) deepening — paintop-settings-level params: promote editable engine params from the inspector's raw map into real UI controls beyond the curated sliders; (3) optional: thumbnail caching if picker scroll perf regresses; (4) remember: mirror code files (lib/**) to fire CI — worklog-only syncs are silent by design.
