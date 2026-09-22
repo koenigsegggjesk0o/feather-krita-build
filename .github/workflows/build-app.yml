@@ -230,7 +230,7 @@ jobs:
       - name: Build Linux app (release)
         run: flutter build linux --release
 
-      - name: Bundle real engine into app bundle
+      - name: Bundle real engine + runtime closure into app bundle
         run: |
           BUNDLE=build/linux/x64/release/bundle
           mkdir -p $BUNDLE/lib
@@ -238,19 +238,51 @@ jobs:
           cp krita-engine/lib/libkrita_bridge_real.so $BUNDLE/lib/libkrita_bridge.so
           # Self-contained bundle (loop-34): every libkrita*.so resolves its
           # libkrita* siblings from $ORIGIN (bundle/lib). DT_RUNPATH set here
-          # makes the shipped zip work WITHOUT LD_LIBRARY_PATH. System
-          # Qt5/KF5 deps still come from the OS (documented runtime deps).
-          patchelf --set-rpath '$ORIGIN' $BUNDLE/lib/libkrita*.so*
-          # Runtime dependency audit (warn-only; the FFI smoke is the gate).
-          for f in $BUNDLE/lib/libkrita*.so*; do
+          # makes the shipped zip work WITHOUT LD_LIBRARY_PATH.
+          # 5-loop-80 RUNTIME CLOSURE: the loop-34 zip still needed the OS to
+          # provide Qt5/KF5/exiv2/quazip/... (documented runtime deps) — a
+          # hidden system requirement the Windows zip does not carry (it
+          # bundles every DLL). Close it: enumerate the resolved dependency
+          # closure of the engine libs with ldd and copy every shared lib
+          # that is NOT part of the base desktop stack (glibc family,
+          # toolchain runtime, X11/GL, GTK/GLib/font stack, ubiquitous base
+          # libs — everything a normal Linux desktop already has) into
+          # bundle/lib. The Krita-specific runtime (Qt5*, KF5*, icu,
+          # double-conversion, pcre2-16, exiv2, quazip, gsl, lcms2,
+          # openexr/imath, unibreak, json-c, deflate, gomp, ...) then ships
+          # INSIDE the zip. The docker clean-host gate below is the proof.
+          BUNDLE_ABS=$(readlink -f "$BUNDLE")
+          for f in $BUNDLE/lib/libkrita*.so* $BUNDLE/lib/libkrita_bridge.so; do
+            ldd "$f" 2>/dev/null
+          done | awk '/=> \// {print $3; next} /^[[:space:]]*\// {print $1}' \
+            | sort -u | while read -r so; do
+            [ -n "$so" ] || continue
+            case "$so" in "$BUNDLE_ABS"/*) continue ;; esac
+            base=$(basename "$so")
+            case "$base" in
+              ld-linux*|libc.so*|libm.so*|libdl.so*|libpthread.so*|librt.so*|libresolv.so*|libcrypt.so*|libutil.so*|libanl.so*) continue ;; # glibc family
+              libstdc++.so*|libgcc_s.so*) continue ;; # toolchain runtime
+              libX*|libxcb*|libxkb*|libwayland*|libdrm*|libglvnd*|libGL*|libEGL*|libOpenGL*|libOSMesa*) continue ;; # X11/GL stack
+              libgtk*|libgdk*|libglib*|libgobject*|libgio*|libgmodule*|libgthread*|libpango*|libcairo*|libatk*|libgdk_pixbuf*|libpixman*|libharfbuzz*|libthai*|libdatrie*) continue ;; # GTK/GLib/font stack
+              libfontconfig*|libfreetype*|libexpat*|libuuid*|libpng*|libbrotli*|libzstd*|liblzma*|libbz2*|libz.so*|libmd*|libbsd*|libdbus*|libsystemd*|libselinux*|libmount*|libffi*|libpcre2-8*|libcap2*|libgcrypt*|liblz4*) continue ;; # ubiquitous system libs
+              *) ;;
+            esac
+            cp -n "$so" "$BUNDLE/lib/" || true
+          done
+          # Every bundled .so resolves its siblings from $ORIGIN — the
+          # Qt5Core -> icu / pcre2-16 / double-conversion chains close
+          # inside bundle/lib.
+          patchelf --set-rpath '$ORIGIN' $BUNDLE/lib/*.so*
+          # Runtime dependency audit (warn-only; the docker clean-host gate
+          # below is the proof).
+          for f in $BUNDLE/lib/*.so*; do
             LDD=$(ldd "$f" 2>/dev/null | grep "not found" || true)
             if [ -n "$LDD" ]; then
               echo "WARNING unresolved deps for $(basename $f):"
               echo "$LDD"
             fi
           done
-          echo "bundle/lib: $(ls $BUNDLE/lib | wc -l) files"
-          ls $BUNDLE/lib | head -20
+          echo "bundle/lib file count (post-closure): $(ls $BUNDLE/lib | wc -l)"
 
       - name: Dart FFI end-to-end smoke (real engine, self-contained)
         run: |
@@ -260,6 +292,40 @@ jobs:
             || echo 'OK: no unresolved deps'
           echo '=== dart FFI smoke WITHOUT LD_LIBRARY_PATH (proves $ORIGIN self-containment) ==='
           env -u LD_LIBRARY_PATH dart run tool/ffi_real_smoke.dart "$(pwd)/build/linux/x64/release/bundle"
+
+      - name: Clean-host runtime closure gate (docker ubuntu:24.04, NO Qt/KF5)
+        # 5-loop-80: the honest proof that the shipped zip is self-contained.
+        # A bare ubuntu:24.04 container (same base as the runner, so glibc
+        # matches) gets ONLY the desktop-stack libs any Linux desktop has
+        # (X11/GL/fontconfig/freetype/glib/...) — NO Qt5, NO KF5, NO
+        # exiv2/quazip/gsl/lcms2/openexr/icu. The gate script
+        # (.github/scripts/fkr_closure_gate.py, mounted) dlopens the bridge,
+        # reports the version, inits a context and loads a REAL preset
+        # fixture purely from bundle/lib ($ORIGIN). The fixture comes from
+        # the app repo at run time (the builder mirror has no test/).
+        run: |
+          BUNDLE=$(pwd)/build/linux/x64/release/bundle
+          curl -sfL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -o /tmp/fkr_gate_fixture.kpp \
+            "https://raw.githubusercontent.com/koenigsegggjesk0o/krita/feather-krita-flutter/test/fixtures/stock_basic_5_size.kpp"
+          test -s /tmp/fkr_gate_fixture.kpp || { echo "FATAL: fixture download failed"; exit 1; }
+          head -c 4 /tmp/fkr_gate_fixture.kpp | od -An -c | head -1
+          docker run --rm \
+            -v "$BUNDLE:/bundle" -v "/tmp/fkr_gate_fixture.kpp:/fixture.kpp:ro" \
+            -v "$(pwd)/.github/scripts/fkr_closure_gate.py:/gate.py:ro" \
+            ubuntu:24.04 bash -e -c '
+              export HOME=/tmp
+              apt-get update -qq
+              (DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+                python3 libgl1 libx11-6 libxcb1 libxext6 libxrender1 libxi6 \
+                libfontconfig1 libfreetype6 libharfbuzz0b libpng16-16t64 \
+                libglib2.0-0t64 libdbus-1-3 libxkbcommon0 libmd0 libbsd0 libbz2-1.0 \
+                || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+                python3 libgl1 libx11-6 libxcb1 libxext6 libxrender1 libxi6 \
+                libfontconfig1 libfreetype6 libharfbuzz0b libpng16-16 \
+                libglib2.0-0 libdbus-1-3 libxkbcommon0 libmd0 libbsd0 libbz2-1.0)
+              python3 /gate.py
+            '
 
       - name: Package Linux zip
         run: |
