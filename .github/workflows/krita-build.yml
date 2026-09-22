@@ -105,7 +105,7 @@ jobs:
         run: |
           set -o pipefail
           cd /opt/krita
-          cmake --build build --target kritaimage kritalibbrush --parallel 2 2>&1 | tail -300
+          cmake --build build --target kritaimage kritalibbrush kritalibpaintop kritaui kritaimpex kritadefaultpaintops kritaspraypaintop kritacolorsmudgepaintop kritahairypaintop kritadeformpaintop kritacurvepaintop kritaexperimentpaintop kritaparticlepaintop kritagridpaintop kritahatchingpaintop kritasketchpaintop kritafilterop kritaroundmarkerpaintop kritatangentnormalpaintop --parallel 2 2>&1 | tail -300
           echo "=== Brush engine .so files ==="
           find build -name "libkrita*.so*" 2>/dev/null | head -40
 
@@ -130,7 +130,12 @@ jobs:
             INC="$INC -I$d"
           done
           QT5=/usr/include/x86_64-linux-gnu/qt5
-          INC="$INC -I$QT5 -I$QT5/QtCore -I$QT5/QtGui -I$QT5/QtXml"
+          INC="$INC -I$QT5 -I$QT5/QtCore -I$QT5/QtGui -I$QT5/QtXml -I$QT5/QtWidgets"
+          # F1 stroke-session ABI: paintop plugin private headers (the
+          # families' op/settings/widget classes + libpaintop's factory).
+          for d in libpaintop defaultpaintops/brush defaultpaintops/duplicate spray colorsmudge hairy deform curvebrush experiment particle gridbrush hatching sketch filterop roundmarker tangentnormal; do
+            INC="$INC -I$KRITA/plugins/paintops/$d"
+          done
           # Bulletproof: reuse the exact include flags CMake configured for
           # libs/brush (boost, Qt5, lager, build-dir generated headers).
           KRITAINCS=$(cd $BUILD && ninja -t commands kritalibbrush 2>/dev/null | grep 'KisBrushModel' | grep -m1 -o '\-I[^ ]*' | sort -u | head -80 | tr '\n' ' ')
@@ -156,7 +161,13 @@ jobs:
             -Lartifact/lib \
             -lkritalibbrush -lkritaimage -lkritapigment -lkritaresources -lkritastore \
             -lkritacommand -lkritaglobal -lkritaversion -lkritaflake -lkritaplugin \
-            -lKF5I18n -lQt5Core -lQt5Gui -lQt5Xml -lz \
+            -lkritalibpaintop -lkritaui -lkritaimpex \
+            -lkritadefaultpaintops -lkritaspraypaintop -lkritacolorsmudgepaintop \
+            -lkritahairypaintop -lkritadeformpaintop -lkritacurvepaintop \
+            -lkritaexperimentpaintop -lkritaparticlepaintop -lkritagridpaintop \
+            -lkritahatchingpaintop -lkritasketchpaintop -lkritafilterop \
+            -lkritaroundmarkerpaintop -lkritatangentnormalpaintop \
+            -lKF5I18n -lQt5Core -lQt5Gui -lQt5Xml -lQt5Widgets -lz \
             -Wl,-rpath,'$ORIGIN' \
             -o artifact/lib/libkrita_bridge_real.so
           echo "=== Compiling smoke test (link also verifies the bridge's full symbol closure) ==="
@@ -173,7 +184,9 @@ jobs:
           FIXDIR=/tmp/fkr-app/test/fixtures
           ./artifact/bin/smoke_test_real \
             $FIXDIR/stock_basic_5_size.kpp \
-            $FIXDIR/stock_eraser_circle.kpp
+            $FIXDIR/stock_eraser_circle.kpp \
+            $FIXDIR/stock_spray_pointillism.kpp \
+            $FIXDIR/stock_smear_blender.kpp
 
       - name: Upload brush engine libs
         if: always()
@@ -427,7 +440,7 @@ jobs:
           # WINDOWS_EXPORT_ALL_SYMBOLS and pre-define each export macro EMPTY
           # so no TU compiles dllexport/dllimport semantics (which force
           # eager member instantiation on incomplete pimpl/adapter types).
-          EMPTY_EXPORTS="-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT= -DKRITARESOURCEWIDGETS_EXPORT= /FI$GITHUB_WORKSPACE/qmin_shim.h"
+          EMPTY_EXPORTS="-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT= -DKRITARESOURCEWIDGETS_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= /FI$GITHUB_WORKSPACE/qmin_shim.h"
           cmake -S "$GITHUB_WORKSPACE/krita" -B "$GITHUB_WORKSPACE/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON \
@@ -509,7 +522,7 @@ jobs:
           # graph incl. app+plugins!). Target-dir names match both / and \
           # paths via the CMakeFiles.(x).dir pattern.
           OBJS=$(ninja -t targets all | grep -E '\.obj:' \
-            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets|libraqm)(_autogen)?\.dir' \
+            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets|kritaui|kritaimpex|kritalibpaintop|kritadefaultpaintops_static|kritadefaultpaintops|kritaspraypaintop|kritacolorsmudgepaintop|kritahairypaintop|kritadeformpaintop|kritacurvepaintop|kritaexperimentpaintop|kritaparticlepaintop|kritagridpaintop|kritahatchingpaintop|kritasketchpaintop|kritafilterop|kritaroundmarkerpaintop|kritatangentnormalpaintop|libraqm)(_autogen|_static)?\.dir' \
             | cut -d: -f1)
           NOBJS_PLAN=$(printf '%s\n' "$OBJS" | wc -l)
           echo "objects planned: $NOBJS_PLAN"
@@ -554,7 +567,10 @@ jobs:
           # belt-and-braces: every lib subdir + every dir containing generated headers
           LIBD=$(find "$WS/krita/libs" -maxdepth 2 -type d | sed 's#^#/I#' | tr '\n' ' ')
           GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -80 | sed 's#^#/I#' | tr '\n' ' ')
-          INCS="$INCS $LIBD $GEND /I$WS/krita /I$BUILD"
+          # F1: paintop plugin private headers (op/settings/widget classes
+          # + libpaintop's factory template).
+          PLUGD=$(find "$WS/krita/plugins/paintops" -maxdepth 2 -type d | sed 's#^#/I#' | tr '\n' ' ')
+          INCS="$INCS $LIBD $GEND $PLUGD /I$WS/krita /I$BUILD"
           # fix45c: EVERY Qt module + EVERY KF5 framework include subdir.
           # The wrapper TU includes krita headers that reach klocalizedstring.h
           # (KI18n) etc. — CMake's per-target -I set on the extracted brush TU
@@ -567,8 +583,8 @@ jobs:
           # ---- collect the CLOSURE krita objects into a rsp (fix45b: the
           # build/libs tree also holds stale objs from earlier over-builds —
           # filter by the same explicit target list as the build step)
-          find "$BUILD/libs" "$BUILD/3rdparty_vendor" -name '*.obj' \
-            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets|libraqm)(_autogen)?\.dir' \
+          find "$BUILD/libs" "$BUILD/plugins" "$BUILD/3rdparty_vendor" -name '*.obj' \
+            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets|kritaui|kritaimpex|kritalibpaintop|kritadefaultpaintops_static|kritadefaultpaintops|kritaspraypaintop|kritacolorsmudgepaintop|kritahairypaintop|kritadeformpaintop|kritacurvepaintop|kritaexperimentpaintop|kritaparticlepaintop|kritagridpaintop|kritahatchingpaintop|kritasketchpaintop|kritafilterop|kritaroundmarkerpaintop|kritatangentnormalpaintop|libraqm)(_autogen|_static)?\.dir' \
             | sort > "$BUILD/krita_objs.rsp"
           NOBJS=$(wc -l < "$BUILD/krita_objs.rsp")
           echo "merging $NOBJS krita objects into ONE engine DLL"
@@ -629,7 +645,9 @@ jobs:
           ls -la /tmp/fkr-app/test/fixtures/
           ./artifact/bin/smoke_test_real.exe \
             "$FIXDIR/stock_basic_5_size.kpp" \
-            "$FIXDIR/stock_eraser_circle.kpp"
+            "$FIXDIR/stock_eraser_circle.kpp" \
+            "$FIXDIR/stock_spray_pointillism.kpp" \
+            "$FIXDIR/stock_smear_blender.kpp"
 
       - name: Save dependency caches
         if: always()
@@ -1217,7 +1235,7 @@ jobs:
           # the closure's object outputs directly; the merged-.so link step
           # consumes them. -k 0 so one bad TU doesn't block the rest.
           OBJS=$(ninja -t targets all | grep -E '\.o:' \
-            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets|libraqm)(_autogen)?\.dir' \
+            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets|kritaui|kritaimpex|kritalibpaintop|kritadefaultpaintops_static|kritadefaultpaintops|kritaspraypaintop|kritacolorsmudgepaintop|kritahairypaintop|kritadeformpaintop|kritacurvepaintop|kritaexperimentpaintop|kritaparticlepaintop|kritagridpaintop|kritahatchingpaintop|kritasketchpaintop|kritafilterop|kritaroundmarkerpaintop|kritatangentnormalpaintop|libraqm)(_autogen|_static)?\.dir' \
             | cut -d: -f1)
           NOBJS_PLAN=$(printf '%s\n' "$OBJS" | wc -l)
           echo "objects planned: $NOBJS_PLAN"
@@ -1254,14 +1272,16 @@ jobs:
           echo "extracted include dirs: $(printf '%s' "$INCS" | wc -w)"
           LIBD=$(find "$WS/krita/libs" -maxdepth 2 -type d | sed 's#^#-I#' | tr '\n' ' ')
           GEND=$(find "$BUILD" -name '*.h' -exec dirname {} \; | sort -u | head -80 | sed 's#^#-I#' | tr '\n' ' ')
+          # F1: paintop plugin private headers.
+          PLUGD=$(find "$WS/krita/plugins/paintops" -maxdepth 2 -type d | sed 's#^#-I#' | tr '\n' ' ')
           QTINC=''; KFINC=''
           for d in "$QT/include"/Qt*; do [ -d "$d" ] && QTINC="$QTINC -I$d"; done
           for d in "$KF5/include/KF5"/*/; do [ -d "$d" ] && KFINC="$KFINC -I$d"; done
-          INCS="$INCS $LIBD $GEND -I$WS/krita -I$BUILD -I$QT/include $QTINC $KFINC -I$VP/include"
+          INCS="$INCS $LIBD $GEND $PLUGD -I$WS/krita -I$BUILD -I$QT/include $QTINC $KFINC -I$VP/include"
           echo "total include dirs: $(printf '%s' "$INCS" | wc -w)"
           # ---- closure objects
-          find "$BUILD/libs" "$BUILD/3rdparty_vendor" -name '*.o' \
-            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets|libraqm)(_autogen)?\.dir' \
+          find "$BUILD/libs" "$BUILD/plugins" "$BUILD/3rdparty_vendor" -name '*.o' \
+            | grep -E 'CMakeFiles.(kritaimage|kritalibbrush|kritapigment|kritaresources|kritastore|kritaglobal|kritawidgets|kritawidgetutils|kritaflake|kritapsdutils|kritametadata|kritacommand|kritamultiarch|kritaversion|kritaplugin|kritaresourcewidgets|kritaui|kritaimpex|kritalibpaintop|kritadefaultpaintops_static|kritadefaultpaintops|kritaspraypaintop|kritacolorsmudgepaintop|kritahairypaintop|kritadeformpaintop|kritacurvepaintop|kritaexperimentpaintop|kritaparticlepaintop|kritagridpaintop|kritahatchingpaintop|kritasketchpaintop|kritafilterop|kritaroundmarkerpaintop|kritatangentnormalpaintop|libraqm)(_autogen|_static)?\.dir' \
             | sort > "$BUILD/krita_objs.rsp"
           NOBJS=$(wc -l < "$BUILD/krita_objs.rsp")
           echo "merging $NOBJS krita objects into ONE engine .so"
@@ -1333,7 +1353,7 @@ jobs:
           # ---- export gate: the extern "C" bridge ABI must be visible
           # ABI symbols are krita_brush_* / krita_image_* (the FILE is
           # libkrita_bridge.so but the extern "C" API uses krita_ prefixes)
-          NEXP=$("$RE" --dyn-syms artifact/lib/libkrita_bridge.so 2>/dev/null | grep -cE 'GLOBAL DEFAULT +[0-9]+ krita_(brush|image|paint|preset|version|last_error|colour)' || true)
+          NEXP=$("$RE" --dyn-syms artifact/lib/libkrita_bridge.so 2>/dev/null | grep -cE 'GLOBAL DEFAULT +[0-9]+ krita_(brush|image|paint|preset|version|last_error|colour|stroke)' || true)
           echo "exported krita_* ABI symbols: $NEXP"
           [ "$NEXP" -ge 5 ] || { echo 'FATAL: bridge ABI exports missing'; exit 1; }
           "$RE" --dyn-syms artifact/lib/libkrita_bridge.so 2>/dev/null | grep -E 'GLOBAL DEFAULT +[0-9]+ krita_' | head -12
