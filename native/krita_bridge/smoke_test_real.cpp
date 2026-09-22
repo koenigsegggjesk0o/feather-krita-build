@@ -338,19 +338,23 @@ extern "C" int smoke_main(int argc, char** argv) {
             // ----------------------------------------------------------------
             // Sensor-curve ABI (milestone (i)): get_curve / set_curve on
             // the "<CurveOption>Sensor" entries. Fixture-dependent BY
-            // NATURE (basic-5 carries 6+ curve entries incl. FlowSensor
-            // with a real pressure curve; stock_eraser_circle carries
-            // none) — so both arms are asserted generically with
-            // fixture-specific pre-existence pins:
-            //   * get_curve(FlowSensor): non-null on basic-5 (replace
-            //     arm follows), null on the eraser (append arm follows).
-            //   * set_curve writes a canonical curve; read-back must
-            //     equal the written bytes EXACTLY (map stores verbatim).
-            //   * the count delta is asserted probe-LOCALLY (the 6.1
-            //     lesson: global count baselines break on fixture
-            //     differences).
-            //   * malformed XML is REJECTED with -1 and leaves the map
-            //     count AND the recorded value untouched.
+            // NATURE, and a fixture can carry a sensor in TWO projected
+            // forms (CI-proven 2026-09-22, run 35708169054):
+            //   * basic-5 FlowSensor = REAL curve (<curve>0,0;...;1,1;
+            //     </curve> inside <params id="pressure">) — replace arm,
+            //     byte-exact restore possible.
+            //   * stock_eraser_circle FlowSensor = EMPTY params form
+            //     (<params id="pressure"/> — NO <curve> child; the raw
+            //     preset XML does carry it, attribute order
+            //     type-before-name — the earlier "eraser ships zero
+            //     curve params" probe note was a regex artifact). The
+            //     empty form is NOT set_curve-writable by contract (the
+            //     validator requires a <curve> child with >= 2 points),
+            //     so its honest gate is the rejection.
+            // Both arms are asserted generically with fixture-specific
+            // pins, and all count deltas are probe-LOCAL (the 6.1
+            // lesson: global count baselines break on fixture
+            // differences).
             // ----------------------------------------------------------------
             {
                 const char* kCurveKey = "FlowSensor";
@@ -363,20 +367,23 @@ extern "C" int smoke_main(int argc, char** argv) {
                 const bool hadCurve = (raw0 != nullptr);
                 const std::string baselineCurve = hadCurve ? std::string(raw0)
                                                            : std::string();
+                const bool baselineHasCurve =
+                    hadCurve && baselineCurve.find("<curve>") !=
+                                    std::string::npos;
                 if (hadCurve) {
                     std::printf("  curve %s baseline: %s\n", kCurveKey,
                                 baselineCurve.c_str());
                 }
-                CHECK(!hadCurve || baselineCurve.find("<curve>") !=
-                                       std::string::npos,
-                      "existing curve entry carries the params/curve shape");
+                CHECK(!hadCurve || baselineCurve.find("<params") !=
+                                           std::string::npos,
+                      "existing curve entry carries the params shape");
                 if (isBasic5) {
-                    CHECK(hadCurve,
-                          "basic-5 FlowSensor pre-exists (curve replace arm)");
+                    CHECK(hadCurve && baselineHasCurve,
+                          "basic-5 FlowSensor pre-exists with a real curve");
                 }
                 if (isEraser) {
-                    CHECK(!hadCurve,
-                          "eraser ships no FlowSensor (curve append arm)");
+                    CHECK(hadCurve && !baselineHasCurve,
+                          "eraser ships FlowSensor as the EMPTY params form");
                 }
 
                 const char* kEdited =
@@ -428,18 +435,28 @@ extern "C" int smoke_main(int argc, char** argv) {
                 CHECK(krita_brush_get_curve(p, nullptr) == nullptr,
                       "get_curve rejects a null key");
 
-                // Restore: when a curve pre-existed, put the baseline back
-                // byte-exact (proves the replace arm twice); the eraser's
-                // appended entry intentionally stays — its context is
-                // destroyed right after this block and load_preset rebuilds
-                // the map from scratch on every load anyway.
-                if (hadCurve) {
+                // Restore: when a REAL curve pre-existed, put the
+                // baseline back byte-exact (proves the replace arm
+                // twice). The EMPTY params form is NOT set_curve-writable
+                // by contract (the validator requires a <curve> child
+                // with >= 2 points — the empty form only ever comes from
+                // load_preset), so for it the honest gate is the
+                // rejection itself; the edited entry then intentionally
+                // stays — its context is destroyed right after this
+                // block and load_preset rebuilds the map from scratch on
+                // every load anyway.
+                if (baselineHasCurve) {
                     CHECK(krita_brush_set_curve(p, kCurveKey,
                                                 baselineCurve.c_str()) == 1,
                           "baseline curve restored via set_curve");
                     CHECK(std::strcmp(krita_brush_get_curve(p, kCurveKey),
                                       baselineCurve.c_str()) == 0,
                           "baseline curve reads back byte-exact");
+                } else if (hadCurve) {
+                    CHECK(krita_brush_set_curve(p, kCurveKey,
+                                                baselineCurve.c_str()) == -1,
+                          "empty-form baseline (no curve child) is "
+                          "set_curve-rejected");
                 }
             }
         }
