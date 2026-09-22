@@ -1,17 +1,3 @@
-<!--
-  =====================================================================
-  STOP NOTICE (2026-09-22 ~11:30 Asia/Jakarta)
-  The autonomous cron loop (job id 395817, every 30 min) has been DELETED
-  by the user so they can switch agents. This worklog is preserved as-is
-  for the handover. The full handover context for the next agent lives in
-  HANDOVER.md at the root of the APP repo (koenigsegggjesk0o/krita,
-  branch feather-krita-flutter). Do NOT resume the loop until the user
-  re-enables it. Last completed state: v0.46-live-param-editing RELEASED,
-  full chain green (krita-build 35678879422, build-app 35680866715,
-  emulator smoke PASSED). Read HANDOVER.md before doing anything.
-  =====================================================================
--->
-
 # Feather-Krita Work Log
 
 ---
@@ -2602,3 +2588,19 @@ Work Log:
 Stage Summary:
 - Roadmap (f) is DONE END TO END and RELEASED: the ACTIVE preset's raw paintop-settings map is user-EDITABLE from the settings panel with engine-authoritative application, the inspector is reachable for the active preset from both picker and panel, old engines degrade gracefully, and every semantic is gated in CI on real Krita v6.0.4 code.
 - NEXT (5-loop-73): (1) no pending CI — chain fully green, release shipped; (2) candidate next features from the goal list: Krita menu/tab feature surface survey (which curated-ABI capabilities remain unexposed — e.g. color/pigment, brush tips mode, opacity/flow curve editors), thumbnail caching if picker scroll perf regresses, or mirror-sync double-dispatch hygiene; (3) remember: mirror code files fire CI, worklog-only syncs silent; legacy pipelines on native/** are informational.
+
+---
+Task ID: 5-resume (agent switch — NOT a loop tick; next tick = 5-loop-73)
+Agent: Z.ai Code (main, handover session)
+Task: User stopped the previous loop agent (cron job 395817 deleted) and switched agents via HANDOVER.md (commit 2738849). This session: read HANDOVER.md top-to-bottom, ran the §7 verification suite, recovered from a box reset, and re-enabled the autonomous cron loop.
+
+Work Log:
+- BOX RESET #4 on arrival: /home/z/fkr-step1 and /home/z/flutter both gone (fresh rootfs; same pattern as BOX RESET #3). No data lost — everything was pushed. Recovery: shallow re-clone (depth 30, single-branch feather-krita-flutter) -> HEAD 2738849 ("handover: add HANDOVER.md for agent switch"), tree clean; git credential store reconfigured (~/.git-credentials, remote URL kept tokenless); Flutter 3.35.3 stable (the version pinned by builder build-app.yml) reinstalled at /home/z/flutter; /home/z/my-project/scripts/release_v46.py restored from the builder mirror (scripts/release_v46.py @ builder main).
+- §7 VERIFICATION — ALL GREEN: (1) app repo HEAD 2738849, tree clean; (2) builder CI latest runs ALL SUCCESS incl. krita-build 35678879422 (4/4 legs), build-app 35680866715 (5/5), Android Emulator Smoke family PASSED — matches the handover exactly; (3) v0.46 release 393430486 assets 3/3 state=uploaded (linux zip 47,505,329 / windows zip 40,226,300 / android apk 191,946,166); (4) flutter analyze = 0 errors / 0 warnings / 75 pre-existing infos (exact baseline).
+- NEW FINDING (evidence for the mirror-sync hygiene milestone): builder .github/workflows/build-app.yml carries a corrupted push branch filter — `branches: ain]` (present at least since d94bbd6; the 521a46e diff did not touch it; origin unknown). EMPIRICALLY HARMLESS so far: push events on main STILL fire build-app (latest proof: 35678925202 push @ 3a9db77, plus 5 more push-fired runs today) — GitHub's parser evidently tolerates the invalid filter rather than disabling the trigger. But this works by leniency, not by design. Recommended 5-loop-73 first move: patch to `branches: [main]` via the builder Contents API (a .github/**-only push fires NOTHING — the paths filter excludes .github/** — so zero double-dispatch risk), then verify via the runs API that no unintended run fired.
+- Cron loop RE-ENABLED per HANDOVER §8: name "Feather-Krita autonomous build loop (every 30 min)", fixed_rate 1800s, tz Asia/Jakarta, payload kind agentTurn carrying the full §4 task book + this session's state. No pre-existing cron jobs remained (verified via list).
+- Krita source untouched (no code changes this session — recovery + verification + loop infrastructure only).
+
+Stage Summary:
+- Handover complete and verified; environment fully recovered from box reset #4; loop infrastructure live again. First tick = 5-loop-73, expected ~30 min after this entry.
+- NEXT (5-loop-73): (1) mirror-sync hygiene first — fix the `branches: ain]` corruption on builder build-app.yml (evidence + safe-patch reasoning above), then assess the native/** double-fire (build-app + legacy pipelines) tightening; (2) then pick the next feature milestone per HANDOVER §5 (feature surface survey / thumbnail caching / Feather-3D); (3) all conventions unchanged — see HANDOVER.md §4/§6/§9.
