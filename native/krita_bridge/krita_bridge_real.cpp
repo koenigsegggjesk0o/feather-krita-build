@@ -108,19 +108,23 @@
 #include "kis_hatching_paintop.h"               // hatching
 #include "kis_hatching_paintop_settings.h"
 #include "kis_hatching_paintop_settings_widget.h"
-// sketch — COLLISION ISOLATION: KisSketchStandardOptionData.h (pulled in
-// by the sketch op/settings headers) redefines `KisLineWidthOptionData`,
-// which curvebrush's KisCurveStandardOptionData.h (included above) already
-// defined. Upstream never compiles the two families in one TU, so the tags
-// are never supposed to coexist. The rename below affects ONLY this TU's
-// view of the tag: the struct's layout is untouched, and every symbol we
-// reference (KisSketchPaintOp / KisSketchPaintOpSettings /
+// sketch — COLLISION ISOLATION: sketch's KisSketchStandardOptionData.h /
+// KisSketchStandardOptions.h (pulled in by the sketch op/settings headers)
+// redefine TWO names that curvebrush's KisCurveStandardOptionData.h /
+// KisCurveStandardOptions.h (included above) already defined — the
+// `KisLineWidthOptionData` struct and the `KisLineWidthOption` alias.
+// Upstream never compiles the two families in one TU, so the tags are
+// never supposed to coexist. The renames below affect ONLY this TU's
+// view of the tags: the struct/alias layouts are untouched, and every
+// symbol we reference (KisSketchPaintOp / KisSketchPaintOpSettings /
 // KisSketchPaintOpSettingsWidget constructors, linked from
 // libkritasketchpaintop) is mangled without the member struct's tag.
 #define KisLineWidthOptionData FkrSketchKisLineWidthOptionData
+#define KisLineWidthOption FkrSketchKisLineWidthOption
 #include "kis_sketch_paintop.h"                 // sketch
 #include "kis_sketch_paintop_settings.h"
 #include "kis_sketch_paintop_settings_widget.h"
+#undef KisLineWidthOption
 #undef KisLineWidthOptionData
 #include "kis_colorsmudgeop.h"                  // colorsmudge
 #include "kis_colorsmudgeop_settings.h"
