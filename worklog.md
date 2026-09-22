@@ -2505,3 +2505,19 @@ Work Log:
 Stage Summary:
 - Code fully shipped and green end to end on current artifacts; the engine rebuild is the only open item. No release cut this tick.
 - NEXT (5-loop-70): (1) poll krita-build 35672627874 — expect GREEN with the set_param smoke block passing; on red, curl -sL the compile/smoke step log for ##[error] (candidates: a C++ slip in set_param, or the count+1 assertion on a fixture whose map already carries ColorSource/Type); (2) on green, workflow_dispatch build-app (no mirror push — no file delta) to stage the NEW engine and re-run the full chain + smoke; (3) then release v0.46 (live param editing + inspector entry); (4) remember legacy pipelines fire on native/** mirrors — informational only, do not gate on them.
+
+---
+Task ID: 5-loop-70 (tick cron-agent-loop-202609220848 — krita-build poll prep: SELF-CAUGHT smoke fixture bug fixed; engine rebuild re-dispatched)
+Agent: Z.ai Code (main, autonomous cron loop)
+Task: Poll krita-build 35672627874 per the 5-loop-69 handoff. 25-min guard (0.5 min mtime) SUPERSEDED — same continuous session, no other agent. Before the poll could matter, a pre-flight review of the in-flight run's smoke block found a REAL bug in my 5-loop-69 code — fixed racing the smoke step.
+
+Work Log:
+- BUG (self-caught, pre-CI): the smoke's unknown-key probe used "ColorSource/Type" — but basic-5's param map ALREADY carries that key (5-loop-65's own evidence: "exposing keys no curated getter has: ColorSource/Type"). set_param would take the REPLACE arm, the map count would stay flat, and the `count == before + 1` assertion would FAIL when the run reached the smoke step (~35 min later). The C++ wrapper itself is correct — the TEST's probe key was not guaranteed absent.
+- FIX: probe key renamed to "FeatherKrita/Probe" (namespaced outside anything Krita writes — guaranteed ABSENT from both stock fixtures), keeping the exact +1 append assertion (stronger: proves insertion; the replace arm is already proven by the Krita/opacity edit). Comment documents the arms. App a798fc1.
+- RUN MANAGEMENT: cancelled the in-flight krita-build 35672627874 (its clone predates the fix; it would have burned ~40 more minutes to fail at the smoke step) and re-dispatched -> 35673977916, which clones feather-krita-flutter @ a798fc1 with the fixed smoke.
+- MIRROR: smoke_test_real.cpp synced to builder (cff446d, 1 file atomic) for tree consistency; expect one build-app re-validation run (proven-green tree) + the two legacy pipelines to fire on the native/** match.
+- flutter analyze N/A (C++-only delta; last Dart gate was green at 5-loop-69 close).
+
+Stage Summary:
+- The in-flight krita-build 35673977916 now carries BOTH the set_param implementation AND a correct smoke. First dispatch self-corrected before wasting a red run.
+- NEXT (5-loop-71): (1) poll krita-build 35673977916 — expect GREEN incl. the set_param smoke block on both fixtures; on red, curl -sL the compile/smoke step log for ##[error]; (2) on green: workflow_dispatch build-app to stage the NEW engine (set_param live) + full chain + smoke — the Dart side is already compat-gated for both engine vintages; (3) then release v0.46 (live param editing + 5-loop-68 inspector entry) via the release_v45.py convention; (4) keep the legacy-pipeline fires on native/** mirrors informational only.
