@@ -116,6 +116,18 @@ jobs:
           find /opt/krita/build -name "libkrita*.so*" 2>/dev/null | while read f; do
             cp -L "$f" "artifact/lib/$(basename "$f")"
           done
+          # F1: paintop plugin MODULES (kritaspraypaintop.so, ...) live in
+          # build/bin WITHOUT the lib- prefix (Qt plugin naming) — collect
+          # them under lib-prefixed names so the bridge's -l flags resolve.
+          # SONAME stamped: modules carry none, and without one GNU ld
+          # embeds the artifact PATH as DT_NEEDED instead of a bare name.
+          (sudo apt-get install -y patchelf >/dev/null 2>&1 || true)
+          for f in /opt/krita/build/bin/krita*paintop.so; do
+            [ -f "$f" ] || continue
+            b=$(basename "$f")
+            cp -L "$f" "artifact/lib/lib$b"
+            patchelf --set-soname "lib$b" "artifact/lib/lib$b" 2>/dev/null || true
+          done
           strip --strip-unneeded artifact/lib/libkrita*.so* 2>/dev/null || true
           ls artifact/lib/ | wc -l
           du -sh artifact/lib
@@ -185,6 +197,8 @@ jobs:
           ./artifact/bin/smoke_test_real \
             $FIXDIR/stock_basic_5_size.kpp \
             $FIXDIR/stock_eraser_circle.kpp \
+            $FIXDIR/stock_spray_pointillism.kpp \
+            $FIXDIR/stock_smear_blender.kpp \
             $FIXDIR/stock_spray_pointillism.kpp \
             $FIXDIR/stock_smear_blender.kpp \
             $FIXDIR/stock_spray_pointillism.kpp \
@@ -442,7 +456,7 @@ jobs:
           # WINDOWS_EXPORT_ALL_SYMBOLS and pre-define each export macro EMPTY
           # so no TU compiles dllexport/dllimport semantics (which force
           # eager member instantiation on incomplete pimpl/adapter types).
-          EMPTY_EXPORTS="-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT= -DKRITARESOURCEWIDGETS_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= /FI$GITHUB_WORKSPACE/qmin_shim.h"
+          EMPTY_EXPORTS="-DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= -DKRITACOMMON_EXPORT= -DKRITARESOURCEWIDGETS_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= /FI$GITHUB_WORKSPACE/qmin_shim.h"
           cmake -S "$GITHUB_WORKSPACE/krita" -B "$GITHUB_WORKSPACE/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON \
@@ -607,18 +621,30 @@ jobs:
           # cross-object references are direct and resolve inside this one
           # image — no dllimport needed anywhere. Only the extern "C" ABI
           # (KRITA_BRIDGE_API dllexport in krita_bridge.h) is exported.
+          # F1: compile the bridge TU separately, then link DIRECTLY with
+          # lld-link. clang-cl's driver expands @rsp into its OWN internal
+          # linker response file — with kritaui+paintops in the merge
+          # (~2900 objects) a line there exceeds MSVC's 131071-char limit
+          # (LNK1170, run 35763705608). lld-link reads the object list
+          # line-by-line (no limit). /FORCE:MULTIPLE tolerates the identical
+          # header-inline symbols several paintop TUs define (qt_plugin_*,
+          # KisPaintOpPluginUtils::* — upstream ships one copy per plugin
+          # DLL; merged: first definition wins, same code).
           clang-cl /nologo /std:c++17 /EHsc /O2 /MD /Zc:__cplusplus /permissive \
             -DKRITAGLOBAL_EXPORT= -DKRITAIMAGE_EXPORT= -DKRITAPIGMENT_EXPORT= -DKRITARESOURCES_EXPORT= \
             -DKRITASTORE_EXPORT= -DKRITAPSDUTILS_EXPORT= -DKRITAMETADATA_EXPORT= -DKRITACOMMAND_EXPORT= \
             -DKRITAMULTIARCH_EXPORT= -DKRITAVERSION_EXPORT= -DBRUSH_EXPORT= -DKRITAPLUGIN_EXPORT= \
             -DKRITAWIDGETS_EXPORT= -DKRITAWIDGETUTILS_EXPORT= -DKRITAFLAKE_EXPORT= \
+            -DPAINTOP_EXPORT= -DKRITADEFAULTPAINTOPS_EXPORT= -DKRITAUI_EXPORT= -DKRITAIMPEX_EXPORT= \
             $INCS \
             /I"$QT/include" \
             /I"$KF5/include" /I"$VP/include" \
-            "$WS/bridge/krita_bridge_real.cpp" \
-            "@$BUILD/krita_objs.rsp" \
-            /LD /Fe:artifact/bin/krita_bridge_real.dll \
-            /link /IMPLIB:artifact/lib/krita_bridge_real.lib /LIBPATH:"$QT/lib" /LIBPATH:"$KF5/lib" /LIBPATH:"$VP/lib" \
+            /c "$WS/bridge/krita_bridge_real.cpp" \
+            /Fo:"$BUILD/bridge_tu.obj"
+          lld-link @"$BUILD/krita_objs.rsp" "$BUILD/bridge_tu.obj" \
+            /DLL /FORCE:MULTIPLE \
+            /OUT:artifact/bin/krita_bridge_real.dll \
+            /IMPLIB:artifact/lib/krita_bridge_real.lib /LIBPATH:"$QT/lib" /LIBPATH:"$KF5/lib" /LIBPATH:"$VP/lib" \
             Qt5Core.lib Qt5Gui.lib Qt5Xml.lib Qt5Svg.lib Qt5Widgets.lib Qt5Sql.lib Qt5Concurrent.lib Qt5Network.lib Qt5PrintSupport.lib Qt5WinExtras.lib \
             ole32.lib shell32.lib user32.lib advapi32.lib uuid.lib gdi32.lib \
             $KFLIBS \
@@ -652,6 +678,8 @@ jobs:
           ./artifact/bin/smoke_test_real.exe \
             "$FIXDIR/stock_basic_5_size.kpp" \
             "$FIXDIR/stock_eraser_circle.kpp" \
+            "$FIXDIR/stock_spray_pointillism.kpp" \
+            "$FIXDIR/stock_smear_blender.kpp" \
             "$FIXDIR/stock_spray_pointillism.kpp" \
             "$FIXDIR/stock_smear_blender.kpp" \
             "$FIXDIR/stock_spray_pointillism.kpp" \
@@ -1342,7 +1370,13 @@ jobs:
             -c "$WS/bridge/krita_bridge_real.cpp" \
             -o "$BUILD/krita_bridge_tu.o"
           echo "bridge TU rc=$? size=$(stat -c %s "$BUILD/krita_bridge_tu.o" 2>/dev/null)"
-          $CLANG -shared -nostdlib++ \
+          # F1: the merged image now contains the paintop plugin objects,
+          # which define identical header-inline symbols (qt_plugin_*,
+          # KisPaintOpPluginUtils::*) in several TUs — upstream ships one
+          # copy per plugin .so; merged into one image the linker needs the
+          # duplicate-strong-symbol allowance (first definition wins; all
+          # copies are the same header code).
+          $CLANG -shared -nostdlib++ -Wl,--allow-multiple-definition \
             "$BUILD/krita_bridge_tu.o" \
             @"$BUILD/krita_objs.rsp" \
             -L"$QT/lib" -L"$KF5/lib" -L"$VP/lib" \
