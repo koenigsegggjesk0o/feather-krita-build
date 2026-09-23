@@ -327,6 +327,45 @@ typedef _KritaBrushSetParamNative = Int32 Function(
 typedef _KritaBrushSetParamDart = int Function(
     Pointer<Void> handle, Pointer<Utf8> name, Pointer<Utf8> value);
 
+// Sensor-curve ABI (milestone (i), 5-loop-76): reads / writes the
+// dynamic-sensor curve XML entries of the loaded preset's param map
+// (keys named "<CurveOption>Sensor", e.g. "FlowSensor"). The REAL
+// bridge returns the handle-owned raw XML for get_curve (NULL when the
+// key is absent / arguments are bad / no preset loaded) and 1 (recorded
+// replace-or-append) / 0 (bad args, no preset) / -1 (validation
+// rejected, map untouched) for set_curve. The portable/fallback bridges
+// return NULL / 0 unconditionally — the Dart side treats that as the
+// capability probe ("curve editing not available on this bridge").
+typedef _KritaBrushGetCurveNative = Pointer<Utf8> Function(
+    Pointer<Void> handle, Pointer<Utf8> key);
+typedef _KritaBrushGetCurveDart = Pointer<Utf8> Function(
+    Pointer<Void> handle, Pointer<Utf8> key);
+typedef _KritaBrushVersionNative = Pointer<Utf8> Function();
+typedef _KritaBrushVersionDart = Pointer<Utf8> Function();
+
+typedef _KritaBrushSetCurveNative = Int32 Function(
+    Pointer<Void> handle, Pointer<Utf8> key, Pointer<Utf8> curveXml);
+typedef _KritaBrushSetCurveDart = int Function(
+    Pointer<Void> handle, Pointer<Utf8> key, Pointer<Utf8> curveXml);
+
+/// Outcome of [KritaBrushEngine.setCurve] (sensor-curve ABI).
+enum CurveEditStatus {
+  /// The (key, xml) pair was recorded on the engine's param map of
+  /// record (replace-or-append) — visible through [presetParams] and
+  /// [getCurve].
+  recorded,
+
+  /// The engine rejected the XML payload (validation) or the edit could
+  /// not be applied (no preset loaded). The map is untouched either way.
+  rejected,
+
+  /// The loaded bridge cannot edit curves: portable/fallback bridges
+  /// return 0 unconditionally, and engine artifacts that predate the
+  /// get_curve/set_curve export fail the symbol lookup. The UI hides
+  /// curve editing in this state.
+  unsupported,
+}
+
 typedef _KritaBrushGetSizeNative = Double Function(Pointer<Void> handle);
 typedef _KritaBrushGetSizeDart = double Function(Pointer<Void> handle);
 
@@ -568,9 +607,18 @@ class KritaBrushEngine {
   late final _KritaBrushSetParamDart _setParam = _lib.lookupFunction<
       _KritaBrushSetParamNative,
       _KritaBrushSetParamDart>('krita_brush_set_param');
+  late final _KritaBrushGetCurveDart _getCurve = _lib
+      .lookupFunction<_KritaBrushGetCurveNative, _KritaBrushGetCurveDart>(
+          'krita_brush_get_curve');
+  late final _KritaBrushSetCurveDart _setCurve = _lib
+      .lookupFunction<_KritaBrushSetCurveNative, _KritaBrushSetCurveDart>(
+          'krita_brush_set_curve');
   late final _KritaBrushGetSmudgeDart _getSmudge = _lib
       .lookupFunction<_KritaBrushGetSmudgeNative, _KritaBrushGetSmudgeDart>(
           'krita_brush_get_smudge');
+  late final _KritaBrushVersionDart _version = _lib
+      .lookupFunction<_KritaBrushVersionNative, _KritaBrushVersionDart>(
+          'krita_brush_version');
 
   /// The brush diameter currently set on the native engine.
   double get currentSize {
@@ -728,6 +776,109 @@ class KritaBrushEngine {
     } finally {
       calloc.free(namePtr);
       calloc.free(valuePtr);
+    }
+  }
+
+  /// Reads the raw sensor-curve XML recorded on the loaded preset's
+  /// param map for [key] (milestone (i) curve editing, 5-loop-76).
+  /// Curve keys are the paintop-settings entries named
+  /// "<CurveOption>Sensor" ("FlowSensor", "SizeSensor", ...) whose
+  /// values are dynamic-sensor params XML — `<!DOCTYPE params>
+  /// <params id="pressure"> <curve>0,0;1,1;</curve> </params>` —
+  /// semicolon-separated x,y point pairs in [0,1]^2. Some sensors ship
+  /// the EMPTY form `<params id="pressure"/>` (no <curve> child): the
+  /// raw string is still returned, callers must handle the missing
+  /// curve element themselves (the curve editor seeds a linear default
+  /// in that case).
+  ///
+  /// Returns null when the key is absent from the map, the arguments
+  /// are bad, no preset is loaded, the loaded bridge is a
+  /// portable/fallback build (returns NULL unconditionally — the
+  /// capability probe), or the loaded engine artifact predates the
+  /// get_curve export (symbol lookup throws [ArgumentError]).
+  String? getCurve(String key) {
+    if (key.trim().isEmpty) return null;
+    _checkAlive();
+    try {
+      final keyPtr = key.toNativeUtf8();
+      try {
+        final ptr = _getCurve(_handle, keyPtr);
+        if (ptr == nullptr) return null;
+        return ptr.toDartString();
+      } finally {
+        calloc.free(keyPtr);
+      }
+    } on ArgumentError {
+      // Engine artifact predates krita_brush_get_curve — curve
+      // reading is not available on this build.
+      return null;
+    }
+  }
+
+  /// Records a validated sensor-curve XML for [key] on the loaded
+  /// preset's param map (replace-or-append, same policy as [setParam];
+  /// milestone (i) curve editing). [curveXml] must be the engine's own
+  /// KisDynamicSensorData shape — root <params> with a non-empty id
+  /// attribute and exactly one <curve> child holding >= 2 semicolon
+  /// separated "x,y;" float pairs, both axes finite in [0,1]. Curves
+  /// are recorded engine-side and applied host-side (no live dab-model
+  /// effect is claimed for them).
+  ///
+  /// Returns [CurveEditStatus.recorded] on success,
+  /// [CurveEditStatus.rejected] when the engine rejects the payload or
+  /// has no preset loaded, and [CurveEditStatus.unsupported] on
+  /// portable/fallback bridges (always 0) or engine artifacts that
+  /// predate the set_curve export (symbol lookup throws
+  /// [ArgumentError]). Throws [ArgumentError] for empty Dart-side
+  /// arguments before touching the engine.
+  CurveEditStatus setCurve(String key, String curveXml) {
+    if (key.trim().isEmpty) {
+      throw ArgumentError.value(key, 'key', 'must not be empty');
+    }
+    if (curveXml.trim().isEmpty) {
+      throw ArgumentError.value(curveXml, 'curveXml', 'must not be empty');
+    }
+    _checkAlive();
+    final keyPtr = key.toNativeUtf8();
+    final xmlPtr = curveXml.toNativeUtf8();
+    try {
+      final rc = _setCurve(_handle, keyPtr, xmlPtr);
+      if (rc == 1) return CurveEditStatus.recorded;
+      if (rc == -1) return CurveEditStatus.rejected;
+      return CurveEditStatus.unsupported;
+    } on ArgumentError {
+      // Engine artifact predates krita_brush_set_curve — curve
+      // editing is not available on this build.
+      return CurveEditStatus.unsupported;
+    } finally {
+      calloc.free(keyPtr);
+      calloc.free(xmlPtr);
+    }
+  }
+
+  /// The loaded bridge's self-identification string, verbatim from
+  /// krita_brush_version — e.g. "FeatherBridge-Krita/2.0 (real engine
+  /// 5.3.4)" on the real bridge (the runtime version inside the
+  /// parens is the engine's own self-report; the upstream v6.0.4
+  /// sources' Qt5 build configuration reports 5.3.x), or the
+  /// portable/fallback builds' own honest labels. The C pointer is
+  /// static for the library's lifetime (krita_bridge.h), so the
+  /// returned Dart string is stable across calls.
+  ///
+  /// Returns null when the loaded engine artifact predates the export
+  /// (symbol lookup throws [ArgumentError]) or the bridge reports a
+  /// null/empty string.
+  String? engineVersion() {
+    _checkAlive();
+    try {
+      final ptr = _version();
+      if (ptr == nullptr) return null;
+      final s = ptr.toDartString();
+      return s.isEmpty ? null : s;
+    } on ArgumentError {
+      // Engine artifact predates krita_brush_version — the badge
+      // collapses to nothing on this build.
+      return null;
     }
   }
 
