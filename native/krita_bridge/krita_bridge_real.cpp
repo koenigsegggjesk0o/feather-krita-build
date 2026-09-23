@@ -140,6 +140,7 @@
 
 #include <QByteArray>
 #include <QColor>
+#include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
 #include <QDomDocument>
@@ -1970,6 +1971,32 @@ const char* krita_brush_preset_path(KritaBrushContext* handle, int32_t index) {
 
 // --- stroke-session ABI (Feather-3D phase F1) ----------------------------
 
+// ---------------------------------------------------------------------------
+// Headless Qt application (stroke-session ABI, phase F1).
+//
+// The session path constructs engine objects with QObject internals —
+// KisImage ctor reaches KisMemoryStatisticsServer::instance(), whose
+// QObject/timer machinery derefs the application object (run 35797460479
+// gdb backtrace: QObject::thread() <- KisMemoryStatisticsServer ctor <-
+// KisImage ctor, plus "QCoreApplication::arguments: Please instantiate
+// the QApplication object first" warnings). A Flutter host will NEVER
+// create a Qt application, so the bridge owns one: lazily constructed on
+// the first session, deliberately LEAKED so it outlives every engine
+// static (Qt's own guidance for library-owned applications — destroying
+// it at exit would race the engine's global-singleton teardown).
+// QCoreApplication (not QGuiApplication): headless, no platform plugin,
+// no display, Android-safe (plain event-loop core only).
+// ---------------------------------------------------------------------------
+QCoreApplication* ensureQtApp() {
+    static QCoreApplication* app = []() {
+        static int argc = 1;
+        static char argv0[] = "krita_bridge_engine";
+        static char* argv[] = { argv0, nullptr };
+        return new QCoreApplication(argc, argv);
+    }();
+    return app;
+}
+
 int32_t krita_stroke_begin(KritaBrushContext* handle, int32_t tex_w,
                            int32_t tex_h) {
     if (!handle || tex_w <= 0 || tex_h <= 0) return -1;
@@ -1979,6 +2006,9 @@ int32_t krita_stroke_begin(KritaBrushContext* handle, int32_t tex_w,
         return -2;
     }
     if (!ensureEngine(handle)) return -4;
+    // The engine's QObject-based singletons need a QCoreApplication
+    // (KisImage -> KisMemoryStatisticsServer; run 35797460479 backtrace).
+    ensureQtApp();
     // An active session is replaced (documented contract).
     destroyStrokeSession(handle);
 
