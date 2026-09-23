@@ -806,6 +806,25 @@ jobs:
           set -e
           kill $WATCHDOG 2>/dev/null
           echo "smoke rc=$RC"
+          if [ "$RC" -ne 0 ]; then
+            echo '=== F1: LoadLibrary probe (126=missing DLL, 1114=init crash, 0=ok) ==='
+            pwsh -NoProfile -Command "Add-Type -MemberDefinition '[DllImport(\"kernel32\", SetLastError=true)] public static extern IntPtr LoadLibrary(string p);' -Name FkrK -PassThu | Out-Null; $r = [FkrK]::LoadLibrary('$(cygpath -w "$GITHUB_WORKSPACE/artifact/bin/krita_bridge_real.dll")'); if ($r -eq [IntPtr]::Zero) { Write-Host ('LoadLibrary FAILED err=' + [Runtime.InteropServices.Marshal]::GetLastWin32Error()) } else { Write-Host 'LoadLibrary OK' }"
+            echo '=== F1: cdb loader diagnosis (names the missing module) ==='
+            CDB='C:/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe'
+            if [ -x "$CDB" ]; then
+              "$CDB" -g -G -c 'g; q' -logo cdb_out.txt \
+                ./artifact/bin/smoke_test_real.exe "$FIXDIR/stock_basic_5_size.kpp" >/dev/null 2>&1 || true
+              grep -i 'cannot find\|not found\|missing\|error:\|exit code' cdb_out.txt | head -20 || true
+            else
+              echo 'cdb unavailable — checking imports exist instead'
+              for d in Qt5Core Qt5Gui Qt5Xml Qt5Svg Qt5Widgets Qt5Sql Qt5Concurrent Qt5Network Qt5PrintSupport; do
+                ls "$QT/bin/$d.dll" >/dev/null 2>&1 || echo "  MISSING: $QT/bin/$d.dll"
+              done
+              for d in KF5CoreAddons KF5I18n KF5Completion KF5ItemViews KF5GuiAddons KF5ConfigCore KF5ConfigGui; do
+                ls "$KF5/bin/$d.dll" >/dev/null 2>&1 || echo "  MISSING: $KF5/bin/$d.dll"
+              done
+            fi
+          fi
           [ "$RC" -eq 0 ] || { echo "FATAL: smoke failed rc=$RC"; exit $RC; }
       - name: Save dependency caches
         if: always()
