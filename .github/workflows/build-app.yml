@@ -108,8 +108,12 @@ jobs:
     # MSVC x64, plus Qt5/KF5/vcpkg runtime DLLs), verified end-to-end via
     # the app's own Dart FFI bindings running on the Dart VM (loop-35,
     # roadmap b). Krita source: real v6.0.4, never modified.
+    # v0.50 full-krita: ALSO bundles the COMPLETE official Krita 6.0.4
+    # portable install from krita.org (download.kde.org), SHA256-pinned
+    # and byte-unmodified, inside krita/ next to the app — the 100%
+    # original application ships with the package (user directive).
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -155,17 +159,41 @@ jobs:
           echo "Release dir: $(ls "$REL" | wc -l) files"
           ls "$REL" | head -12
 
+      - name: Download + bundle the FULL official Krita 6.0.4 (unmodified)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The COMPLETE official Krita portable install from krita.org.
+          # SHA256 pin proves the bytes are exactly what KDE ships —
+          # nothing patched, wrapped or modified.
+          curl -fL --retry 5 --retry-delay 5 --retry-all-errors \
+            -o krita-official.zip \
+            "https://download.kde.org/stable/krita/6.0.4/krita-x64-6.0.4.zip"
+          echo "7150fba732a8ccacee8b2c5ce2bf20eeb9b53d24dda751597b8ec3285a1b5b54  krita-official.zip" | sha256sum -c -
+          unzip -q krita-official.zip -d krita-unpack
+          REL=build/windows/x64/runner/Release
+          mkdir -p "$REL/krita"
+          cp -a krita-unpack/krita-x64-6.0.4/. "$REL/krita/"
+          test -f "$REL/krita/bin/krita.exe"
+          echo "FULL official Krita bundled (SHA256-verified, unmodified):"
+          echo "  files: $(find "$REL/krita" -type f | wc -l)"
+          echo "  size:  $(du -sh "$REL/krita" | cut -f1)"
+
       - name: Dart FFI end-to-end smoke (real engine, self-contained)
         shell: bash
         run: |
           export PATH="$(pwd)/build/windows/x64/runner/Release:$PATH"
           dart run tool/ffi_real_smoke.dart "$(pwd)/build/windows/x64/runner/Release"
 
-      - name: Package Windows zip (real engine)
+      - name: Package Windows zip (real engine, includes full Krita)
         shell: bash
         run: |
           cd build/windows/x64/runner/Release
-          powershell -NoProfile -Command "Compress-Archive -Path * -DestinationPath feather-krita-windows-real-engine.zip -Force"
+          if command -v 7z >/dev/null 2>&1; then
+            7z a -tzip -mx=3 -bso0 feather-krita-windows-real-engine.zip .
+          else
+            powershell -NoProfile -Command "Compress-Archive -Path * -DestinationPath feather-krita-windows-real-engine.zip -Force"
+          fi
           ls -lh feather-krita-windows-real-engine.zip
 
       - name: Upload Windows build (real engine)

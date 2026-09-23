@@ -64,6 +64,7 @@ class EditorState extends ChangeNotifier {
     List<BrushPreset>? presets,
     this.isPro = false,
     this.fileName = 'Untitled.feather',
+    this.tryEngine = true,
   })  : _strokes = strokes ?? StrokeManager(),
         _camera = camera ?? CameraController(),
         texture = texture ?? TexturePainter(),
@@ -93,6 +94,13 @@ class EditorState extends ChangeNotifier {
   final SceneLightRig lightRig = SceneLightRig();
 
   KritaBrushEngine? _brushEngine;
+
+  /// Whether the constructor may try to load the native Krita bridge.
+  /// Set to `false` by the boot screen when the pre-flight probe
+  /// ([probeKritaEngine]) reports the library absent or wedged — the
+  /// editor then runs on the honest synthetic-dab fallback instead of
+  /// risking a frozen `DynamicLibrary.open` on the UI isolate.
+  final bool tryEngine;
 
   // ----- Unified undo journal (loop-20) -----------------------------------
 
@@ -276,6 +284,14 @@ class EditorState extends ChangeNotifier {
   // ----- Brush engine lifecycle -----------------------------------------
 
   void _tryLoadBrushEngine() {
+    // The boot screen pre-probes the native bridge on a throwaway
+    // isolate (engine_probe.dart); when the probe reports the library
+    // unavailable or wedged we skip the load entirely so the UI can
+    // never freeze on a blocking DynamicLibrary.open.
+    if (!tryEngine) {
+      _brushEngine = null;
+      return;
+    }
     try {
       _brushEngine = KritaBrushEngine();
     } catch (_) {
@@ -577,6 +593,60 @@ class EditorState extends ChangeNotifier {
     }
     notifyListeners();
     return true;
+  }
+
+  /// The sensor-curve XML recorded on the LIVE engine for [key]
+  /// (milestone (i) curve editing), or null when the key is absent, no
+  /// engine/preset exists, or the loaded bridge cannot expose curves
+  /// (portable/fallback builds and pre-ABI artifacts both collapse to
+  /// null — the settings panel hides its curve section then).
+  String? activeEngineCurve(String key) {
+    final e = _brushEngine;
+    if (e == null) return null;
+    try {
+      return e.getCurve(key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The paintop-settings parameter value recorded on the LIVE engine
+  /// for [name], or null when absent (used e.g. to read the
+  /// "<Id>UseCurve" sibling flag of a sensor curve).
+  String? activeEngineParamValue(String name) =>
+      activeEngineParams[name];
+
+  /// Records a validated sensor-curve XML on the LIVE engine for [key]
+  /// (milestone (i) curve editing). The write goes to the engine's
+  /// param map of record (visible through [activeEngineParams] and
+  /// [activeEngineCurve]); curves are applied host-side — no live
+  /// dab-model effect is claimed. Returns the engine's tri-state
+  /// outcome so callers can surface "recorded" vs "rejected" vs "not
+  /// supported on this bridge". Listeners are notified only on
+  /// [CurveEditStatus.recorded].
+  CurveEditStatus setEngineCurve(String key, String curveXml) {
+    final e = _brushEngine;
+    if (e == null) return CurveEditStatus.unsupported;
+    final status = e.setCurve(key, curveXml);
+    if (status == CurveEditStatus.recorded) notifyListeners();
+    return status;
+  }
+
+  /// The loaded engine's self-identification string (5-loop-79 honesty
+  /// badge) — verbatim from the bridge's krita_brush_version, e.g.
+  /// "FeatherBridge-Krita/2.0 (real engine 5.3.4)" on the real bridge
+  /// or the portable/fallback builds' own honest labels. Null when no
+  /// engine exists or the loaded artifact predates the symbol — the
+  /// settings panel hides its badge then (same degrade contract as the
+  /// engine param/curve sections).
+  String? get activeEngineVersion {
+    final e = _brushEngine;
+    if (e == null) return null;
+    try {
+      return e.engineVersion();
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Sets the brush-smoothing (stabilizer) strength in [0, 1]. Loop-25.

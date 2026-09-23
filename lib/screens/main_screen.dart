@@ -30,6 +30,8 @@ import 'package:feather_krita/engine/guide_surface.dart';
 import 'package:feather_krita/engine/stroke_manager.dart';
 import 'package:feather_krita/ffi/krita_bindings.dart';
 import 'package:feather_krita/io/app_dirs.dart';
+import 'package:feather_krita/io/krita_launcher.dart';
+import 'package:feather_krita/io/krita_resources.dart';
 import 'package:feather_krita/io/feather_project.dart';
 import 'package:feather_krita/io/recent_projects.dart';
 import 'package:feather_krita/io/gif_exporter.dart';
@@ -51,11 +53,18 @@ import 'package:feather_krita/widgets/open_project_dialog.dart';
 import 'package:feather_krita/widgets/stroke_list_panel.dart';
 
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key, this.state});
+  const MainScreen({super.key, this.state, this.enableEngine = true});
 
   /// Optional injected state (used by tests). When null the screen creates
   /// (and disposes) its own [EditorState].
   final EditorState? state;
+
+  /// Whether the screen's [EditorState] may load the native Krita
+  /// bridge. The boot screen sets this from the hang-proof pre-flight
+  /// probe ([probeKritaEngine]); `false` keeps the editor on the
+  /// synthetic-dab fallback without ever risking a frozen
+  /// `DynamicLibrary.open` on the UI isolate.
+  final bool enableEngine;
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -71,10 +80,16 @@ class _MainScreenState extends State<MainScreen> {
   void initState() {
     super.initState();
     _ownsState = widget.state == null;
-    _state = widget.state ?? EditorState();
+    _state = widget.state ??
+        EditorState(tryEngine: widget.enableEngine);
     // Fire-and-forget: the picker rebuilds via notifyListeners when the
-    // scan completes.
-    _state.loadPresetLibrary().catchError((_) {});
+    // scan completes. The real Krita default library (first-run import,
+    // krita_resources.dart) wins when present; otherwise the legacy
+    // bundled-presets folder is scanned.
+    _state
+        .loadPresetLibrary(
+            directory: KritaResources.importedPresetsDirPath())
+        .catchError((_) {});
   }
 
   @override
@@ -255,9 +270,22 @@ class _MainScreenState extends State<MainScreen> {
           onImport: () =>
               _toast('Copy .kpp files to ${presetsDir().path} — they appear in the picker on the next launch.'),
           onClose: () => Navigator.of(context).pop(),
+          onOpenFullKrita: _openFullKrita,
         ),
       ),
     );
+  }
+
+  /// Launches the FULL official Krita application bundled with the
+  /// package (krita/bin/krita.exe — the complete, unmodified install
+  /// from krita.org). No-op with a toast when the bundle is absent
+  /// (e.g. dev builds).
+  Future<void> _openFullKrita() async {
+    final ok = await KritaLauncher.launch();
+    if (!mounted) return;
+    _toast(ok
+        ? 'Launching the full Krita application…'
+        : 'The full Krita bundle is not present next to this build.');
   }
 
   void _toast(String message) {

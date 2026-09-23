@@ -1,26 +1,26 @@
 // SPDX-FileCopyrightText: 2026 Feather-Krita App Contributors
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// brush_picker_screen.dart — Brush preset picker.
+// brush_picker_screen.dart — 3D floating brush space (Feather-style).
 //
-// A glassmorphism full-screen sheet that browses the available Krita brush
-// presets. Features:
-//   - Searchable grid of preset cards (thumbnail + name + category).
-//   - Category filter chips: Basic, Dry Media, Wet Media, Markers, Erasers,
-//     Custom.
-//   - Sort toggle (5-loop-42): Name (library order) or Family.
-//   - Family-grouped browsing (5-loop-48): with the Family sort active
-//     the grid becomes SECTIONS — one per engine-declared paintop family
-//     ([BrushPreset.paintopId], upgraded with the real engine's
-//     scan-ABI families by EditorState.loadPresetLibrary) — each with a
-//     "family · count" header, alphabetical, undeclared last.
-//     Each card also carries the paintop family badge (5-loop-42).
+// The Krita brush presets float as cards on a curved ring in a starlit
+// 3D space: drag horizontally to fly along the ring, drag vertically to
+// tilt the view, tap a card to pick the preset, long-press for the
+// engine-authoritative preset inspector.
+//
+// Features preserved from the classic picker:
+//   - Search + category chips (Basic, Dry Media, Wet Media, Markers,
+//     Erasers, Custom).
+//   - Sort toggle: Name (library order) or Family — the Family sort
+//     re-orders the ring so each engine-declared paintop family forms a
+//     contiguous cluster, with a legend chip per family ("<family> ·
+//     <count>", alphabetical, undeclared last).
+//   - Paintop family badge on every card with a declared family.
 //   - Import .kpp button (delegates to [onImport]).
-//   - Selecting a preset calls [onPick] and closes the sheet.
-//   - Preset inspector (5-loop-65): LONG-PRESS a preset card to open the
-//     engine-authoritative inspector ([showPresetInspector]) — curated
-//     identity fields plus the full raw paintop-settings map from the
-//     5-loop-63 param-map ABI. Picking still works with a plain tap.
+//   - Real Krita preset thumbnails (every stock .kpp carries its own
+//     PNG thumbnail — the file itself IS the image).
+
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -28,7 +28,7 @@ import 'package:feather_krita/theme/app_theme.dart';
 import 'package:feather_krita/models/brush_preset.dart';
 import 'package:feather_krita/widgets/preset_inspector_sheet.dart';
 
-/// The brush preset picker.
+/// The 3D brush preset picker.
 class BrushPickerScreen extends StatefulWidget {
   const BrushPickerScreen({
     super.key,
@@ -37,6 +37,7 @@ class BrushPickerScreen extends StatefulWidget {
     required this.onPick,
     required this.onImport,
     required this.onClose,
+    this.onOpenFullKrita,
   });
 
   final List<BrushPreset> presets;
@@ -45,16 +46,23 @@ class BrushPickerScreen extends StatefulWidget {
   final VoidCallback onImport;
   final VoidCallback onClose;
 
+  /// Launches the FULL official Krita application bundled with the
+  /// package (complete krita.org install, unmodified). Nullable: when
+  /// absent (dev/test builds without the bundle) the header button is
+  /// hidden.
+  final VoidCallback? onOpenFullKrita;
+
   @override
   State<BrushPickerScreen> createState() => _BrushPickerScreenState();
 }
 
-class _BrushPickerScreenState extends State<BrushPickerScreen> {
+class _BrushPickerScreenState extends State<BrushPickerScreen>
+    with SingleTickerProviderStateMixin {
   String _query = '';
   String _category = 'All';
 
   /// Active sort: 'Name' keeps the library order (file scan), 'Family'
-  /// groups presets by paintop family (5-loop-42).
+  /// clusters the ring by engine-declared paintop family.
   String _sort = 'Name';
 
   static const _sorts = ['Name', 'Family'];
@@ -69,19 +77,34 @@ class _BrushPickerScreenState extends State<BrushPickerScreen> {
     'Custom',
   ];
 
+  /// Ring rotation (radians). Card i sits at angle `i * spacing - spin`.
+  late final AnimationController _spin;
+
+  /// Vertical view tilt (radians) applied to the whole ring plane.
+  double _tilt = 0.0;
+
+  List<BrushPreset> get _ringPresets {
+    final list = _filtered;
+    if (_sort == 'Family') {
+      // Flatten the family groups: each family stays contiguous on the
+      // ring (the same grouping as the legend chips).
+      return [for (final g in _grouped) ...g.value];
+    }
+    return list;
+  }
+
   List<BrushPreset> get _filtered {
     final q = _query.toLowerCase();
     final list = widget.presets.where((p) {
-      if (_category != 'All' && _classifyPreset(p) != _category) return false;
+      if (_category != 'All' && _classifyPreset(p) != _category) {
+        return false;
+      }
       if (q.isEmpty) return true;
       return p.name.toLowerCase().contains(q) ||
           p.paintopId.toLowerCase().contains(q) ||
           p.description.toLowerCase().contains(q);
     }).toList();
     if (_sort == 'Family') {
-      // Group by paintop family: declared families alphabetically, then
-      // name within a family. Undeclared families sort last so presets
-      // without a root attribute never break the grouping up.
       list.sort((a, b) {
         final fa = _familyKey(a);
         final fb = _familyKey(b);
@@ -97,13 +120,8 @@ class _BrushPickerScreenState extends State<BrushPickerScreen> {
     return f.isEmpty ? kNoFamilyKey : f;
   }
 
-  /// Family-grouped browsing (5-loop-48): when the Family sort is active
-  /// the picker renders one section per engine-declared paintop family
-  /// ([BrushPreset.paintopId] — upgraded with the real engine's scan-ABI
-  /// families by [EditorState.loadPresetLibrary]) instead of a flat grid.
-  /// Families alphabetical, the undeclared group last — the same ordering
-  /// contract as the former flat Family sort; within a family, presets
-  /// sort by name.
+  /// Family clustering for the ring order + legend chips: families
+  /// alphabetical, undeclared last, presets by name inside a family.
   List<MapEntry<String, List<BrushPreset>>> get _grouped {
     final map = <String, List<BrushPreset>>{};
     for (final p in _filtered) {
@@ -120,19 +138,57 @@ class _BrushPickerScreenState extends State<BrushPickerScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    // Initial value FIRST (before any listener exists) so centring the
+    // ring can never fire setState during initState.
+    _spin = AnimationController.unbounded(
+      vsync: this,
+      value: ((widget.presets.length - 1) * _kRingSpacing) / 2,
+    );
+    // Start centred on the middle of the (unfiltered) library so the
+    // first thing the user sees is the ring curving away on both sides.
+    _spin.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  double get _maxSpin =>
+      math.max(0.0, (_ringPresets.length - 1) * _kRingSpacing);
+
+  void _recentreSpin() {
+    // Centre the ring on the middle of the current selection.
+    _spin.animateTo(
+      _maxSpin / 2,
+      duration: const Duration(milliseconds: 420),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.all(16),
       child: GlassContainer(
         width: double.infinity,
-        height: 640,
+        height: math.min(640, mq.size.height - 80),
         padding: const EdgeInsets.all(16),
-        color: AppTheme.darkGlass.withOpacity(0.7),
+        color: AppTheme.darkGlass.withValues(alpha: 0.7),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _Header(onClose: widget.onClose),
+            _Header(
+              onClose: widget.onClose,
+              onOpenFullKrita: widget.onOpenFullKrita,
+            ),
             const SizedBox(height: 12),
             _SearchBar(
               value: _query,
@@ -149,34 +205,26 @@ class _BrushPickerScreenState extends State<BrushPickerScreen> {
               sorts: _sorts,
               selected: _sort,
               onSelected: (s) => setState(() => _sort = s),
+              onRecentre: _recentreSpin,
             ),
+            if (_sort == 'Family') ...[
+              const SizedBox(height: 8),
+              _FamilyLegend(groups: _grouped),
+            ],
             const SizedBox(height: 12),
             Expanded(
               child: _filtered.isEmpty
                   ? const _EmptyState()
-                  : _sort == 'Family'
-                      ? _FamilySectionedGrid(
-                          groups: _grouped,
-                          activePresetId: widget.activePresetId,
-                          onPick: widget.onPick,
-                          onInspect: (p) => showPresetInspector(context, p),
-                        )
-                      : GridView.builder(
-                          gridDelegate: _kPresetGridDelegate,
-                          itemCount: _filtered.length,
-                          itemBuilder: (context, index) {
-                            final p = _filtered[index];
-                            return _PresetCard(
-                              preset: p,
-                              category: _classifyPreset(p),
-                              isActive: p.id == widget.activePresetId,
-                              onTap: () {
-                                widget.onPick(p);
-                              },
-                              onInspect: () => showPresetInspector(context, p),
-                            );
-                          },
-                        ),
+                  : _FloatingRing(
+                      presets: _ringPresets,
+                      activePresetId: widget.activePresetId,
+                      spin: _spin,
+                      onTilt: (t) => setState(() => _tilt = t),
+                      tilt: _tilt,
+                      maxSpin: _maxSpin,
+                      onPick: widget.onPick,
+                      onInspect: (p) => showPresetInspector(context, p),
+                    ),
             ),
             const SizedBox(height: 12),
             _BottomBar(
@@ -186,6 +234,379 @@ class _BrushPickerScreenState extends State<BrushPickerScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The 3D floating ring.
+// ---------------------------------------------------------------------------
+
+/// A starlit space with the preset cards floating on a curved ring.
+///
+/// Geometry: the viewer floats OUTSIDE a virtual cylinder whose axis is
+/// vertical. Card i sits at angle `a = i * spacing - spin`; the front
+/// card (a = 0) faces the viewer at full scale, cards toward the arc
+/// edge (|a| → [_kArc]) recede, shrink and fade — the classic 3D
+/// carousel, hand-projected so hit-testing and text finding stay exact.
+class _FloatingRing extends StatefulWidget {
+  const _FloatingRing({
+    required this.presets,
+    required this.activePresetId,
+    required this.spin,
+    required this.tilt,
+    required this.maxSpin,
+    required this.onTilt,
+    required this.onPick,
+    required this.onInspect,
+  });
+
+  final List<BrushPreset> presets;
+  final String? activePresetId;
+  final AnimationController spin;
+  final double tilt;
+  final double maxSpin;
+  final ValueChanged<double> onTilt;
+  final ValueChanged<BrushPreset> onPick;
+  final void Function(BrushPreset) onInspect;
+
+  @override
+  State<_FloatingRing> createState() => _FloatingRingState();
+}
+
+class _FloatingRingState extends State<_FloatingRing> {
+  void _onPanStart(DragStartDetails details) {
+    widget.spin.stop();
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    final spin = widget.spin;
+    spin.value = (spin.value - details.delta.dx * 0.0038)
+        .clamp(0.0, widget.maxSpin);
+    final tilt = (widget.tilt - details.delta.dy * 0.0016)
+        .clamp(-0.22, 0.22);
+    widget.onTilt(tilt);
+  }
+
+  void _onPanEnd(DragEndDetails details) {
+    final v = details.velocity.pixelsPerSecond.dx;
+    final target =
+        (widget.spin.value - v * 0.00028).clamp(0.0, widget.maxSpin);
+    widget.spin.animateTo(
+      target,
+      duration: const Duration(milliseconds: 640),
+      curve: Curves.decelerate,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final h = constraints.maxHeight;
+        if (w.isNaN || h.isNaN || w < 40 || h < 40) {
+          return const SizedBox.shrink();
+        }
+
+        // Ring radius + camera distance scale with the stage.
+        final radius = (w * 0.5).clamp(240.0, 520.0);
+        final camera = w * 1.3;
+        final cardW = (w * 0.155).clamp(88.0, 128.0);
+        final cardH = cardW * 1.24;
+
+        // Spin is clamped at LAYOUT time (never mutated inside build).
+        final spin = widget.spin.value.clamp(0.0, widget.maxSpin);
+        final presets = widget.presets;
+
+        // Project every card; keep the visible arc.
+        final projections = <_CardProjection>[];
+        for (var i = 0; i < presets.length; i++) {
+          final a = i * _kRingSpacing - spin;
+          if (a.abs() > _kRingArc) continue;
+          final z = radius * (1 - math.cos(a));
+          final s = camera / (camera + z);
+          final sx = camera * radius * math.sin(a) / (camera + z);
+          final fade = math.pow(1 - a.abs() / _kRingArc, 1.15).toDouble();
+          projections.add(_CardProjection(
+            preset: presets[i],
+            angle: a,
+            screenX: sx,
+            scale: s,
+            fade: fade,
+            // Gentle alternating vertical float so the ring is not a
+            // flat conveyor — cards drift up/down like feathers.
+            floatY: (i.isEven ? -1.0 : 1.0) * 7.0 * s,
+          ));
+        }
+        // Paint far cards first so the front card wins hit-testing.
+        projections.sort((a, b) => b.angle.abs().compareTo(a.angle.abs()));
+
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: _onPanStart,
+          onPanUpdate: _onPanUpdate,
+          onPanEnd: _onPanEnd,
+          child: ClipRect(
+            child: CustomPaint(
+              painter: _SpaceDust(spin: spin),
+              child: Transform.rotate(
+                angle: widget.tilt,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.center,
+                  children: [
+                    for (final p in projections)
+                      Center(
+                        child: Transform(
+                          alignment: Alignment.center,
+                          transform: Matrix4.identity()
+                            ..setEntry(3, 2, 0.0014)
+                            ..translate(p.screenX, p.floatY)
+                            ..rotateY(p.angle)
+                            ..scale(p.scale),
+                          child: Opacity(
+                            opacity: p.fade.clamp(0.0, 1.0),
+                            child: _FloatingCard(
+                              preset: p.preset,
+                              width: cardW,
+                              height: cardH,
+                              isActive:
+                                  p.preset.id == widget.activePresetId,
+                              onTap: () => widget.onPick(p.preset),
+                              onInspect: () =>
+                                  widget.onInspect(p.preset),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// One projected card on the ring.
+class _CardProjection {
+  const _CardProjection({
+    required this.preset,
+    required this.angle,
+    required this.screenX,
+    required this.scale,
+    required this.fade,
+    required this.floatY,
+  });
+
+  final BrushPreset preset;
+  final double angle;
+  final double screenX;
+  final double scale;
+  final double fade;
+  final double floatY;
+}
+
+/// Angular distance between neighbouring cards on the ring (radians).
+const double _kRingSpacing = 0.35;
+
+/// Half-width of the visible arc (radians).
+const double _kRingArc = 1.15;
+
+/// A single floating preset card: thumbnail, name, category + family
+/// badge. Tap picks; long-press opens the preset inspector.
+class _FloatingCard extends StatelessWidget {
+  const _FloatingCard({
+    required this.preset,
+    required this.width,
+    required this.height,
+    required this.isActive,
+    required this.onTap,
+    required this.onInspect,
+  });
+
+  final BrushPreset preset;
+  final double width;
+  final double height;
+  final bool isActive;
+  final VoidCallback onTap;
+  final VoidCallback onInspect;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = isActive ? AppTheme.toolDraw : AppTheme.glassBorder;
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onInspect,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: isActive
+              ? AppTheme.toolDraw.withValues(alpha: 0.22)
+              : const Color(0xFF202028).withValues(alpha: 0.86),
+          borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+          border: Border.all(
+            color: accent,
+            width: isActive ? 1.6 : 0.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.45),
+              blurRadius: 22,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(AppTheme.radiusMedium - 0.5)),
+                child: _Thumbnail(preset: preset),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(7),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    preset.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: isActive ? Colors.white : AppTheme.textPrimary,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _classifyPreset(preset),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppTheme.textTertiary,
+                            fontSize: 8.5,
+                          ),
+                        ),
+                      ),
+                      if (preset.paintopId.trim().isNotEmpty) ...[
+                        const SizedBox(width: 3),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: AppTheme.accentSoft,
+                            borderRadius:
+                                BorderRadius.circular(AppTheme.radiusSmall),
+                          ),
+                          child: Text(
+                            preset.paintopId.trim(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppTheme.accent,
+                              fontSize: 7.5,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Dim starfield behind the ring. Static dust that parallaxes with the
+/// spin (cheap: no ticking animation — it only moves when the ring
+/// moves).
+class _SpaceDust extends CustomPainter {
+  const _SpaceDust({required this.spin});
+
+  final double spin;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = Colors.white.withValues(alpha: 0.16);
+    final rng = math.Random(7);
+    final drift = (spin * 26.0) % size.width;
+    for (var i = 0; i < 46; i++) {
+      final x = (rng.nextDouble() * size.width - drift) % size.width;
+      final y = rng.nextDouble() * size.height;
+      final r = 0.6 + rng.nextDouble() * 1.6;
+      canvas.drawCircle(
+        Offset(x < 0 ? x + size.width : x, y),
+        r,
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SpaceDust oldDelegate) => oldDelegate.spin != spin;
+}
+
+/// Legend for the Family sort: one chip per engine-declared paintop
+/// family with its preset count ("<family> · <count>"), alphabetical,
+/// the undeclared sentinel group last (rendered as "No family").
+class _FamilyLegend extends StatelessWidget {
+  const _FamilyLegend({required this.groups});
+
+  final List<MapEntry<String, List<BrushPreset>>> groups;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 26,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: groups.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 6),
+        itemBuilder: (context, index) {
+          final group = groups[index];
+          final label =
+              group.key == kNoFamilyKey ? 'No family' : group.key;
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+            decoration: BoxDecoration(
+              color: AppTheme.accentSoft,
+              borderRadius: BorderRadius.circular(AppTheme.radiusCircular),
+              border: Border.all(color: AppTheme.accent.withValues(alpha: 0.5)),
+            ),
+            child: Center(
+              child: Text(
+                '$label · ${group.value.length}',
+                style: const TextStyle(
+                  color: AppTheme.accent,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -209,133 +630,30 @@ String _classifyPreset(BrushPreset p) {
       name.contains('ink') ||
       name.contains('smudge') ||
       name.contains('colorsmudge')) return 'Wet Media';
-  if (name.contains('marker') || name.contains('airbrush')) return 'Markers';
+  if (name.contains('marker') || name.contains('airbrush')) {
+    return 'Markers';
+  }
   if (p.category.toLowerCase() == 'custom' || name.contains('custom')) {
     return 'Custom';
   }
   return 'Basic';
 }
 
-/// Shared grid geometry for the flat browse grid and the per-family
-/// section grids (5-loop-48).
-const SliverGridDelegateWithMaxCrossAxisExtent _kPresetGridDelegate =
-    SliverGridDelegateWithMaxCrossAxisExtent(
-  maxCrossAxisExtent: 160,
-  mainAxisSpacing: 10,
-  crossAxisSpacing: 10,
-  childAspectRatio: 0.85,
-);
-
-/// Sentinel family key used by [_BrushPickerScreenState._familyKey] for
-/// presets with no declared paintop family (sorts last).
+/// Sentinel family key for presets with no declared paintop family
+/// (sorts last).
 const String kNoFamilyKey = '\uFFFD';
-
-/// Family-grouped browsing (5-loop-48): one header + one grid per
-/// engine-declared paintop family, replacing the flat grid while the
-/// Family sort is active. Filtering/search still applies (the groups
-/// come from the picker's filtered list).
-class _FamilySectionedGrid extends StatelessWidget {
-  const _FamilySectionedGrid({
-    required this.groups,
-    required this.activePresetId,
-    required this.onPick,
-    required this.onInspect,
-  });
-
-  final List<MapEntry<String, List<BrushPreset>>> groups;
-  final String? activePresetId;
-  final ValueChanged<BrushPreset> onPick;
-
-  /// Long-press on any card in this family section opens the inspector
-  /// for that preset (5-loop-65).
-  final void Function(BrushPreset) onInspect;
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomScrollView(
-      slivers: [
-        for (final group in groups) ...[
-          SliverToBoxAdapter(
-            child: _FamilyHeader(
-              family: group.key,
-              count: group.value.length,
-            ),
-          ),
-          SliverGrid(
-            gridDelegate: _kPresetGridDelegate,
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final p = group.value[index];
-                return _PresetCard(
-                  preset: p,
-                  category: _classifyPreset(p),
-                  isActive: p.id == activePresetId,
-                  onTap: () => onPick(p),
-                  onInspect: () => onInspect(p),
-                );
-              },
-              childCount: group.value.length,
-            ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 10)),
-        ],
-      ],
-    );
-  }
-}
-
-/// Section header for one paintop family group: an accent bar, the
-/// family name and the preset count ("paintbrush · 2"). The undeclared
-/// sentinel group is displayed as "No family".
-class _FamilyHeader extends StatelessWidget {
-  const _FamilyHeader({required this.family, required this.count});
-
-  final String family;
-  final int count;
-
-  @override
-  Widget build(BuildContext context) {
-    final label = family == kNoFamilyKey ? 'No family' : family;
-    return Padding(
-      padding: const EdgeInsets.only(top: 2, bottom: 6),
-      child: Row(
-        children: [
-          Container(
-            width: 3,
-            height: 12,
-            decoration: BoxDecoration(
-              color: AppTheme.accent,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              '$label · $count',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppTheme.textSecondary,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.3,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Sub-widgets.
 // ---------------------------------------------------------------------------
 
 class _Header extends StatelessWidget {
-  const _Header({required this.onClose});
+  const _Header({required this.onClose, this.onOpenFullKrita});
 
   final VoidCallback onClose;
+
+  /// Launches the bundled full official Krita (hidden when null).
+  final VoidCallback? onOpenFullKrita;
 
   @override
   Widget build(BuildContext context) {
@@ -358,7 +676,33 @@ class _Header extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
+        const SizedBox(width: 10),
+        const Text(
+          'floating in 3D space',
+          style: TextStyle(
+            color: AppTheme.textTertiary,
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
         const Spacer(),
+        if (onOpenFullKrita != null)
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: TextButton.icon(
+              style: TextButton.styleFrom(
+                foregroundColor: AppTheme.toolExport,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10),
+              ),
+              onPressed: onOpenFullKrita,
+              icon: const Icon(Icons.open_in_new_rounded, size: 15),
+              label: const Text(
+                'Open full Krita',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ),
         IconButton(
           icon: const Icon(Icons.close_rounded, color: AppTheme.textTertiary),
           onPressed: onClose,
@@ -431,10 +775,11 @@ class _CategoryRow extends StatelessWidget {
             onTap: () => onSelected(c),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
                 color: active
-                    ? AppTheme.toolDraw.withOpacity(0.3)
+                    ? AppTheme.toolDraw.withValues(alpha: 0.3)
                     : AppTheme.darkGlassLight,
                 borderRadius: BorderRadius.circular(AppTheme.radiusCircular),
                 border: Border.all(
@@ -460,18 +805,21 @@ class _CategoryRow extends StatelessWidget {
   }
 }
 
-/// Sort toggle (5-loop-42): Name keeps the library order, Family groups
-/// presets by paintop family.
+/// Sort toggle: Name keeps the library order, Family clusters the ring
+/// by paintop family (with the legend chips above the ring). The
+/// trailing control recentres the ring on the current selection.
 class _SortRow extends StatelessWidget {
   const _SortRow({
     required this.sorts,
     required this.selected,
     required this.onSelected,
+    required this.onRecentre,
   });
 
   final List<String> sorts;
   final String selected;
   final ValueChanged<String> onSelected;
+  final VoidCallback onRecentre;
 
   @override
   Widget build(BuildContext context) {
@@ -519,121 +867,39 @@ class _SortRow extends StatelessWidget {
             ),
           ),
         ),
+        const Spacer(),
+        const Text(
+          'drag to fly',
+          style: TextStyle(
+            color: AppTheme.textTertiary,
+            fontSize: 9.5,
+          ),
+        ),
+        const SizedBox(width: 4),
+        _RecentreButton(onPressed: onRecentre),
       ],
     );
   }
 }
 
-class _PresetCard extends StatelessWidget {
-  const _PresetCard({
-    required this.preset,
-    required this.category,
-    required this.isActive,
-    required this.onTap,
-    required this.onInspect,
-  });
+/// Small icon control that recentres the floating ring.
+class _RecentreButton extends StatelessWidget {
+  const _RecentreButton({required this.onPressed});
 
-  final BrushPreset preset;
-  final String category;
-  final bool isActive;
-  final VoidCallback onTap;
-
-  /// Long-press: opens the engine-authoritative preset inspector
-  /// ([showPresetInspector]) without picking the preset (5-loop-65).
-  final VoidCallback onInspect;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      onLongPress: onInspect,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
-        decoration: BoxDecoration(
-          color: isActive
-              ? AppTheme.toolDraw.withOpacity(0.22)
-              : AppTheme.darkGlassLight.withOpacity(0.5),
-          borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-          border: Border.all(
-            color: isActive ? AppTheme.toolDraw : AppTheme.glassBorder,
-            width: isActive ? 1.5 : 0.5,
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Thumbnail.
-            Expanded(
-              child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(
-                    top: Radius.circular(AppTheme.radiusMedium - 0.5)),
-                child: _Thumbnail(preset: preset),
-              ),
-            ),
-            // Label.
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    preset.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: isActive ? Colors.white : AppTheme.textPrimary,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 1),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          category,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: AppTheme.textTertiary,
-                            fontSize: 9,
-                          ),
-                        ),
-                      ),
-                      // Paintop family badge (5-loop-42) — mirrors the
-                      // panel chip; hidden for presets without a
-                      // declared family.
-                      if (preset.paintopId.trim().isNotEmpty) ...[
-                        const SizedBox(width: 4),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 5, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: AppTheme.accentSoft,
-                            borderRadius:
-                                BorderRadius.circular(AppTheme.radiusSmall),
-                          ),
-                          child: Text(
-                            preset.paintopId.trim(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppTheme.accent,
-                              fontSize: 8,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.2,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+    return SizedBox(
+      width: 26,
+      height: 26,
+      child: IconButton(
+        padding: EdgeInsets.zero,
+        iconSize: 15,
+        tooltip: 'Centre the ring',
+        icon: const Icon(Icons.filter_center_focus_rounded,
+            color: AppTheme.textTertiary),
+        onPressed: onPressed,
       ),
     );
   }
@@ -677,7 +943,7 @@ class _EmptyState extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.search_off_rounded,
-              size: 40, color: AppTheme.textTertiary.withOpacity(0.5)),
+              size: 40, color: AppTheme.textTertiary.withValues(alpha: 0.5)),
           const SizedBox(height: 8),
           const Text(
             'No brushes match your search.',

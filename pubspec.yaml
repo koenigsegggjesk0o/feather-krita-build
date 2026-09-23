@@ -1,7 +1,7 @@
 name: feather_krita
 description: 3D Drawing app with Krita brush engine - like Feather 3D but for Windows & Android
 publish_to: 'none'
-version: 0.19.0+1
+version: 0.50.0+1
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -64,3 +64,7 @@ flutter:
     - assets/brushes/
     - assets/textures/
     - assets/icons/
+    # The complete, UNMODIFIED krita/data resource tree from the real
+    # Krita source (v6.0.4) — extracted 1:1 into feather_resources/ on
+    # first run (see lib/io/krita_resources.dart).
+    - assets/krita-data.zip
