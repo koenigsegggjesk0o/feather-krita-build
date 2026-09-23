@@ -788,35 +788,25 @@ jobs:
           FIXDIR=$(cygpath -w /tmp/fkr-app/test/fixtures)
           echo "fixture dir: $FIXDIR"
           ls -la /tmp/fkr-app/test/fixtures/
-          # F1: spawn the smoke via NATIVE PowerShell — MSYS bash `wait`
-          # on a backgrounded native exe returns 127 (PID is not a shell
-          # child; runs 35791731483/35797460479). WaitForExit also gives
-          # the 10-minute static-init-hang guard.
-          cat > run_smoke.ps1 <<'PS1'
-          param([string]$FixDir, [int]$TimeoutSec = 600)
-          $fixtureArgs = @(
-            "$FixDir\stock_basic_5_size.kpp",
-            "$FixDir\stock_eraser_circle.kpp",
-            "$FixDir\stock_spray_pointillism.kpp",
-            "$FixDir\stock_smear_blender.kpp"
-          )
-          $p = Start-Process -FilePath ".\artifact\bin\smoke_test_real.exe" `
-              -ArgumentList $fixtureArgs -PassThru -NoNewWindow `
-              -RedirectStandardOutput smoke_out.txt -RedirectStandardError smoke_err.txt
-          if (-not $p.WaitForExit($TimeoutSec * 1000)) {
-              $p.Kill()
-              Write-Host "FATAL: smoke timed out after $TimeoutSec s (static-init hang?)"
-              exit 124
-          }
-          exit $p.ExitCode
-          PS1
+          # F1: DIRECT FOREGROUND run — the proven v0.46-v0.49 pattern.
+          # (Every rc=127 so far came from backgrounding: errexit fired at
+          # `wait` / MSYS `wait` cannot track native children / pwsh
+          # black-boxed it. A foreground native exe is waited correctly.)
+          # Watchdog: a detached taskkill after 10 minutes guards the
+          # static-init-hang class (run 35782502710 evidence).
+          ( sleep 600; taskkill //F //IM smoke_test_real.exe >/dev/null 2>&1 ) &
+          WATCHDOG=$!
           set +e
-          pwsh -NoProfile -File run_smoke.ps1 -FixDir "$FIXDIR"
+          ./artifact/bin/smoke_test_real.exe \
+            "$FIXDIR/stock_basic_5_size.kpp" \
+            "$FIXDIR/stock_eraser_circle.kpp" \
+            "$FIXDIR/stock_spray_pointillism.kpp" \
+            "$FIXDIR/stock_smear_blender.kpp"
           RC=$?
           set -e
-          cat smoke_out.txt smoke_err.txt 2>/dev/null || true
+          kill $WATCHDOG 2>/dev/null
           echo "smoke rc=$RC"
-          [ "$RC" -eq 0 ] || { echo "FATAL: smoke failed rc=$RC (124=timeout)"; exit $RC; }
+          [ "$RC" -eq 0 ] || { echo "FATAL: smoke failed rc=$RC"; exit $RC; }
       - name: Save dependency caches
         if: always()
         uses: actions/cache/save@v4
